@@ -1,0 +1,97 @@
+name: agent-stack
+
+services:
+  sandbox-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    container_name: sandbox-agent
+    restart: unless-stopped
+    networks:
+      - agent-net
+    ports:
+      - "192.168.10.7:8082:8082"
+    # Explicitly writable — agents need to install packages, write files
+    read_only: false
+    user: root
+    working_dir: /workspace
+    volumes:
+      # Persistent workspace — host directory mounted as /workspace
+      - /opt/agent-workspace:/workspace
+      # SSH keys — readable by agent
+      - /opt/agent-workspace/.ssh:/root/.ssh:ro
+      # Search tools — read-only access to existing toolchain
+      - /opt/search:/opt/search:ro
+      # tmpfs for in-container temp files (fast, ephemeral)
+      # Persistent home for installed Python packages and configs
+      - sandbox-agent-home:/root:rw
+      # Persistent apt cache (saves bandwidth + time on rebuilds)
+      - sandbox-agent-apt:/var/cache/apt:rw
+      # Persistent pip cache
+      - sandbox-agent-pip:/root/.cache/pip:rw
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  openapi-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.openapi-proxy
+    container_name: openapi-proxy
+    restart: unless-stopped
+    networks:
+      - agent-net
+    ports:
+      - "192.168.10.7:8090:8090"
+    environment:
+      - SANDBOX_URL=http://sandbox-agent:8082
+      - SEARXNG_URL=http://192.168.10.7:8888
+    depends_on:
+      sandbox-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8090/openapi.json"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    networks:
+      - agent-net
+    ports:
+      - "192.168.10.7:3001:8080"
+    volumes:
+      - /opt/agent-workspace/.open-webui-data:/app/backend/data
+    environment:
+      - WEBUI_AUTH=true
+      - WEBUI_SECRET_KEY=agent-stack-secret-CHANGE-ME-2026
+      - ENABLE_SIGNUP=true
+      - DEFAULT_USER_ROLE=user
+      - ENABLE_WEB_SEARCH=true
+      - WEB_SEARCH_ENGINE=searxng
+      - SEARXNG_URL=http://192.168.10.7:8888
+      - ENABLE_AUDIO_STT=true
+      - AUDIO_STT_ENGINE=openai
+      - AUDIO_STT_OPENAI_API_BASE_URL=http://192.168.10.7:8000/v1
+      - AUDIO_STT_OPENAI_API_KEY=sk-not-needed
+      - SANDBOX_URL=http://sandbox-agent:8082
+      - TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://openapi-proxy:8090","path":"openapi.json","info":{"id":"sandbox-tools","name":"SandboxTools","description":"Persistent shell + file tools + web search for any LLM"},"config":{"enable":true},"auth_type":"none","spec_type":"url"}]
+    depends_on:
+      sandbox-agent:
+        condition: service_healthy
+      openapi-proxy:
+        condition: service_started
+
+volumes:
+  sandbox-agent-home:
+  sandbox-agent-apt:
+  sandbox-agent-pip:
+
+networks:
+  agent-net:
+    driver: bridge
