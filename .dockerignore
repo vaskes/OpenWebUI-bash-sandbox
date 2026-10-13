@@ -1,0 +1,24 @@
+# Exclude development artefacts from the build context
+.git
+.gitignore
+.github
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+*.log
+.env
+.env.*
+tests
+docs
+*.md
+!README.md
+!LICENSE
+.DS_Store
