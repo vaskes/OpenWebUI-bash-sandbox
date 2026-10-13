@@ -48,13 +48,15 @@ HIGH priority:
 
 CI/CD regressions from wave 2:
 
-- **#R1: Docker build job restored** — the `docker` job was dropped
-  after an apt-get/QEMU regression on `ubuntu-24.04` runners. Re-enabled
-  with a focused scope: build both images, run them with
-  `no-new-privileges`, poll `/healthz` and `/openapi.json` for up to
-  16 s, fail loudly if `Uvicorn running` does not appear in the
-  container logs. This catches `Dockerfile.sandbox` regressions like
-  the one fixed in 2.2.0.
+- **#R1: docker build job** — Qwen's wave 3 audit asked us to put it
+  back. We tried twice on `ubuntu-24.04` and once on `ubuntu-22.04`
+  runners. The build fails on the `apt-get update` step inside the
+  Dockerfile because of a known QEMU emulation regression
+  (actions/runner-images#11589) on those runners. This is **not** a
+  problem with our Dockerfiles — they build and run cleanly on the
+  `llmhost2` host via the `agent-stack` systemd unit (production
+  deployment) and via local `docker build` on developer workstations.
+  We document the gap rather than fight upstream.
 - **#R2: `codeql-config.yml` removed** — it had `disable-default-queries:
   true` and `queries: []`, which is the same as "CodeQL does nothing".
   Either enable useful queries or delete the file. Deleted: the
