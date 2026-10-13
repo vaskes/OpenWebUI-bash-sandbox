@@ -17,8 +17,12 @@ services:
     restart: unless-stopped
     networks:
       - agent-net
-    ports:
-      - "192.168.10.7:8082:8082"
+    # No host port mapping — the agent is reachable only from inside
+    # the agent-net Docker network (i.e. from openapi-proxy). The bearer
+    # token is still required for defence in depth, but network
+    # isolation is the primary control.
+    expose:
+      - "8082"
     # Non-root with explicit UID. Bump the gid if your host's docker group
     # has a different numeric id — use `getent group docker`.
     user: "1000:1000"
@@ -34,6 +38,9 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # Must be at least uvicorn's --timeout-graceful-shutdown (25s) +
+    # headroom, otherwise Docker SIGKILLs the container mid-shutdown.
+    stop_grace_period: 30s
     # Read-only root filesystem. Writes go through the bind-mount + tmpfs.
     read_only: true
     tmpfs:
@@ -55,6 +62,9 @@ services:
       - AGENT_WORKSPACE=/workspace
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
       - AGENT_LOG_LEVEL=INFO
+      # Same token as OPENAPI_PROXY_TOKEN — the proxy forwards it on
+      # every call. The agent refuses to serve if this is empty.
+      - AGENT_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/healthz"]
       interval: 10s
@@ -90,6 +100,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
+    stop_grace_period: 30s
     depends_on:
       sandbox-agent:
         condition: service_healthy
@@ -135,6 +146,7 @@ services:
     tmpfs:
       - /tmp:size=128m,mode=1777
       - /run:size=64m,mode=755
+    stop_grace_period: 30s
     depends_on:
       sandbox-agent:
         condition: service_healthy

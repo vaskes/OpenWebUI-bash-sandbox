@@ -49,7 +49,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from agent_core import (
@@ -67,8 +68,14 @@ __version__ = "1.1.0"
 DEFAULT_TIMEOUT = 30          # seconds
 MAX_TIMEOUT = 600             # 10 min hard cap
 MAX_COMMAND_LEN = 1_000_000   # 1 MB hard cap on a single command
+MAX_OUTPUT_BYTES = 1_000_000  # 1 MB hard cap on captured command output
+CAPTURE_PANE_LINES = 5000     # ``tmux capture-pane -S -N`` upper bound
 WORKSPACE = os.environ.get("AGENT_WORKSPACE", "/workspace")
 SESSIONS_FILE = os.environ.get("AGENT_SESSIONS_FILE", "/workspace/.agent-sessions.json")
+# Bearer token for the agent's HTTP API. The agent refuses all traffic
+# if this is unset — fail-closed by design. The proxy and agent must
+# share the same value (mirror via the same secret in your orchestrator).
+AGENT_TOKEN: str = os.environ.get("AGENT_TOKEN", "")
 
 logger = logging.getLogger("sandbox-agent")
 logging.basicConfig(
@@ -81,27 +88,40 @@ logging.basicConfig(
 # Persistent session registry
 # ---------------------------------------------------------------------------
 def _load_sessions() -> dict[str, dict[str, Any]]:
-    """Load the session registry from disk; return empty dict on missing/corrupt."""
+    """Load the session registry from disk; return empty dict on missing/corrupt.
+
+    A corrupt or unreadable file is logged at ``error`` level (not
+    ``warning``) because a missed load means the LLM will lose track of
+    sessions that previously existed — silent data loss.
+    """
     try:
         with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             if isinstance(data, dict):
                 return data
+        logger.error("sessions file root is not an object; starting fresh")
     except FileNotFoundError:
         pass
     except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("sessions file corrupt (%s), starting fresh", exc)
+        logger.error("sessions file unreadable (%s) — possible data loss", exc)
     return {}
 
 
-def _save_sessions() -> None:
-    """Atomically persist the session registry to disk. Best-effort — a
-    failure to write must not break the request path."""
-    try:
+async def _save_sessions() -> None:
+    """Atomically persist the session registry to disk off the event loop.
+
+    Synchronous disk I/O would block every concurrent request — wrap in
+    ``asyncio.to_thread`` so a slow host filesystem doesn't stall the API.
+    Best-effort: a failed write is logged, not raised.
+    """
+    def _do() -> None:
         tmp = f"{SESSIONS_FILE}.tmp.{uuid.uuid4().hex[:8]}"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(SESSIONS, f)
         os.replace(tmp, SESSIONS_FILE)
+
+    try:
+        await asyncio.to_thread(_do)
     except OSError as exc:
         logger.error("failed to persist sessions: %s", exc)
 
@@ -172,10 +192,21 @@ async def tmux_session_exists(name: str) -> bool:
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
-    """Lifespan handler — reaps orphan tmux sessions on shutdown."""
+    """Lifespan handler — startup/shutdown hooks.
+
+    On startup we **do not** touch tmux sessions — the persisted registry
+    in :data:`SESSIONS_FILE` is the source of truth. Existing sessions
+    will be re-attached on the first call to ``/sessions/{id}/exec`` (the
+    auto-create path recreates a tmux backend if the session_id is known
+    but the tmux process has died, using the persisted cwd).
+
+    On shutdown we also **do not** kill tmux sessions. They are owned by
+    the ``tmux`` server process, not by us — if the container is killed
+    abruptly the kernel reaps them; if it shut down cleanly the next
+    process can ``attach`` again. Killing on shutdown was the v2.1
+    behaviour and it broke persistence across restarts.
+    """
     yield
-    for sid, info in list(SESSIONS.items()):
-        await _tmux("kill-session", "-t", info["tmux_name"])
 
 
 app = FastAPI(
@@ -186,23 +217,65 @@ app = FastAPI(
 )
 
 
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+_bearer = HTTPBearer(auto_error=False)
+
+
+def _require_token(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)) -> str:
+    """Bearer-token gate for every endpoint except ``/healthz``.
+
+    The agent refuses to start serving if :data:`AGENT_TOKEN` is empty —
+    fail-closed prevents an accidental unauthenticated deployment.
+    Constant-time compare defeats timing attacks.
+    """
+    if not AGENT_TOKEN:
+        logger.error("auth disabled but AGENT_TOKEN is empty — refusing all requests")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="agent not configured")
+    if creds is None or creds.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    import hmac as _hmac
+    if not _hmac.compare_digest(creds.credentials, AGENT_TOKEN):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return creds.credentials
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
-    """Liveness probe. Reports current session count and workspace root."""
+    """Liveness probe (no auth — required for k8s/docker healthchecks)."""
     return {"status": "ok", "sessions": len(SESSIONS), "workspace": WORKSPACE_REAL}
 
 
-@app.get("/sessions")
+@app.get("/sessions", dependencies=[Depends(_require_token)])
 async def list_sessions() -> dict[str, Any]:
-    """List active sessions, reaping any whose tmux backend has died."""
+    """List active sessions, reaping any whose tmux backend has died.
+
+    Implementation note: a single ``tmux list-sessions -F '#{session_name}'``
+    is O(1) round-trips regardless of how many sessions we know about.
+    A naive O(n) loop of ``tmux has-session`` calls would be slow once
+    the LLM has built up hundreds of chat sessions.
+    """
+    rc, out, _ = await _tmux("list-sessions", "-F", "#{session_name}")
+    alive: set[str] = set()
+    if rc == 0:
+        alive = {line.strip() for line in out.splitlines() if line.strip()}
     dead: list[str] = []
     for sid, info in SESSIONS.items():
-        if not await tmux_session_exists(info["tmux_name"]):
+        if info["tmux_name"] not in alive:
             dead.append(sid)
     for sid in dead:
         SESSIONS.pop(sid, None)
     if dead:
-        _save_sessions()
+        await _save_sessions()
     return {
         "sessions": [
             {
@@ -223,7 +296,7 @@ class CreateSession(BaseModel):
     cwd: Optional[str] = Field(default=None, description="Initial working directory. Must be inside the workspace.")
 
 
-@app.post("/sessions")
+@app.post("/sessions", dependencies=[Depends(_require_token)])
 async def create_session(body: CreateSession) -> dict[str, Any]:
     """Create a new tmux-backed session or attach to an existing one.
 
@@ -240,19 +313,19 @@ async def create_session(body: CreateSession) -> dict[str, Any]:
     if rc != 0:
         raise HTTPException(status_code=500, detail=f"tmux new-session failed: {err}")
     SESSIONS[sid] = {"tmux_name": name, "created": time.time(), "cwd": cwd}
-    _save_sessions()
+    await _save_sessions()
     logger.info("session.create sid=%s cwd=%s", sid, cwd)
     return {"session_id": sid, "tmux_name": name, "existed": False, "cwd": cwd}
 
 
-@app.delete("/sessions/{session_id}")
+@app.delete("/sessions/{session_id}", dependencies=[Depends(_require_token)])
 async def delete_session(session_id: str) -> dict[str, str]:
     """Kill a tmux session and remove it from the registry. Idempotent."""
     sid = safe_id(session_id)
     name = tmux_name(sid)
     await _tmux("kill-session", "-t", name)
     SESSIONS.pop(sid, None)
-    _save_sessions()
+    await _save_sessions()
     logger.info("session.delete sid=%s", sid)
     return {"deleted": sid}
 
@@ -264,7 +337,7 @@ class ExecRequest(BaseModel):
     timeout: int = Field(default=DEFAULT_TIMEOUT, ge=1, le=MAX_TIMEOUT, description="Max seconds to wait for completion.")
 
 
-@app.post("/sessions/{session_id}/exec")
+@app.post("/sessions/{session_id}/exec", dependencies=[Depends(_require_token)])
 async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     """Run a shell command in the session, return captured stdout and exit code.
 
@@ -288,19 +361,27 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         f"__ec=$?\n"
         f"printf '\\n{marker}=%d\\n' \"$__ec\""
     )
-    await _tmux("send-keys", "-t", name, full_cmd, "Enter")
+    # ``send-keys -l`` writes the command as a literal string. Without
+    # ``-l`` tmux interprets special tokens (``C-c``, ``Enter``, ``Tab``,
+    # arrow keys, etc.) which can silently corrupt or terminate the
+    # command — e.g. ``git commit -m "Press Enter to continue"`` would
+    # fire the Enter mid-message. Two-step write avoids the issue
+    # regardless of the command content.
+    await _tmux("send-keys", "-t", name, "-l", full_cmd)
+    await _tmux("send-keys", "-t", name, "Enter")
 
     start = time.time()
     output = ""
     while time.time() - start < body.timeout:
-        rc, out, _ = await _tmux("capture-pane", "-t", name, "-p")
+        rc, out, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", f"-{CAPTURE_PANE_LINES}")
         if rc == 0 and marker in out:
             output = out
             break
         await asyncio.sleep(0.3)
     else:
         # Timed out — return whatever we have so the model can decide.
-        _, output, _ = await _tmux("capture-pane", "-t", name, "-p")
+        _, output, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", f"-{CAPTURE_PANE_LINES}")
+        output = _truncate_output(output)
         duration_ms = int((time.time() - start) * 1000)
         logger.warning(
             "exec.timeout sid=%s duration_ms=%d cmd_len=%d",
@@ -315,10 +396,20 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         }
 
     exit_code: Optional[int] = None
-    match = re.search(rf"{marker}=(-?\d+)", output)
-    if match:
-        exit_code = int(match.group(1))
-        output = re.sub(rf"\n?{marker}=-?\d+\n?", "", output).rstrip()
+    # ``re.findall`` returns every match in order; we want the **last**
+    # one because the real marker is appended after the command output
+    # in the wrapped ``full_cmd`` above. ``re.search`` would pick the
+    # first — and a malicious command could print a fake marker first
+    # to confuse the parser.
+    matches = re.findall(rf"{marker}=(-?\d+)", output)
+    if matches:
+        exit_code = int(matches[-1])
+        # Strip the last marker occurrence (the legitimate one) and
+        # everything after. The earlier fake ones, if any, stay in
+        # stdout so the model can see they were fakes.
+        last_marker_pattern = rf"\n?{marker}={re.escape(matches[-1])}\n?"
+        output = re.sub(last_marker_pattern, "", output).rstrip()
+    output = _truncate_output(output)
     duration_ms = int((time.time() - start) * 1000)
     logger.info(
         "exec sid=%s exit=%s duration_ms=%d cmd_len=%d",
@@ -333,7 +424,21 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     }
 
 
-@app.get("/sessions/{session_id}/capture")
+def _truncate_output(s: str) -> str:
+    """Bound the size of returned stdout to avoid OOM in callers.
+
+    Truncates at the *byte* level, not character level, so we never return
+    more than :data:`MAX_OUTPUT_BYTES` of UTF-8 data — the proxy and
+    Open WebUI would otherwise blow up on ``find /`` or similar.
+    """
+    encoded = s.encode("utf-8", "replace")
+    if len(encoded) <= MAX_OUTPUT_BYTES:
+        return s
+    truncated = encoded[:MAX_OUTPUT_BYTES].decode("utf-8", "replace")
+    return truncated + f"\n\n[output truncated at {MAX_OUTPUT_BYTES} bytes]"
+
+
+@app.get("/sessions/{session_id}/capture", dependencies=[Depends(_require_token)])
 async def capture_pane(session_id: str, lines: int = Query(default=100, ge=1, le=10000)) -> dict[str, str]:
     """Return the last ``lines`` lines of the session's tmux scrollback.
 
@@ -345,11 +450,14 @@ async def capture_pane(session_id: str, lines: int = Query(default=100, ge=1, le
     name = tmux_name(sid)
     if not await tmux_session_exists(name):
         raise HTTPException(status_code=404, detail=f"session not found: {sid}")
-    _, out, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", f"-{lines}")
+    # Cap at CAPTURE_PANE_LINES regardless of what the caller asks for
+    # so a single WebSocket poll can't OOM the container.
+    effective = min(lines, CAPTURE_PANE_LINES)
+    _, out, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", f"-{effective}")
     return {"output": out}
 
 
-@app.get("/sessions/{session_id}/output")
+@app.get("/sessions/{session_id}/output", dependencies=[Depends(_require_token)])
 async def tail_output(session_id: str, lines: int = Query(default=100, ge=1, le=10000)) -> dict[str, str]:
     """Alias of :func:`capture_pane` kept for backwards compatibility."""
     return await capture_pane(session_id, lines=lines)

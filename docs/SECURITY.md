@@ -171,6 +171,38 @@ tmux session when the connection closes.
   user identity and per-user rate limits.
 * **Seccomp/AppArmor.** Not configured. Add a profile in production.
 
+## Trust model (explicit — single operator)
+
+This stack is designed for the **single-operator** deployment shape:
+
+```
+   ┌─────────────────────────────────────────────────────┐
+   │  One admin who owns:                                │
+   │   • the Open WebUI instance                         │
+   │   • the bearer token in TOOL_SERVER_CONNECTIONS     │
+   │   • the AGENT_TOKEN env var on the sandbox-agent    │
+   │   • the /opt/agent-workspace directory               │
+   │   • all SSH keys mounted into the sandbox            │
+   └─────────────────────────────────────────────────────┘
+                          │
+                          ▼
+   The bearer token, the workspace, the SSH keys and the agent
+   are all in the same trust boundary. Anyone with the token can
+   do anything the admin can do.
+```
+
+If you need **multi-tenant**, the right shape is:
+
+* one Open WebUI instance per user (or a proper auth proxy in front)
+* one `sandbox-agent` per user, with its own `AGENT_TOKEN` and
+  `/workspace`
+* one bearer token per user
+* per-user rate limits keyed on the user identity, not the token
+
+We do not implement that here. Bolting multi-tenant auth onto this
+single-token design would be a security anti-pattern — better to fork
+or re-architect.
+
 ## Hardening checklist (for production)
 
 - [ ] Copy `.env.example` to `.env`, fill in real secrets from

@@ -4,6 +4,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-10-13
+
+### Fixed (security audit wave 2)
+
+Critical (7 blockers):
+- **`Dockerfile.sandbox` would not start** — WORKDIR was `/workspace` but source
+  files were in `/home/agent`, so `agent_api` was not on the import path.
+  Added `PYTHONPATH=/home/agent` and set `WORKDIR=/home/agent` before the
+  `COPY` step.
+- **`lifespan` killed all tmux sessions on shutdown** — broke the very
+  persistence it was supposed to enable. Now does nothing on shutdown;
+  the SESSIONS_FILE registry is the single source of truth.
+- **Sandbox-agent port 8082 was exposed to the LAN without auth** — now
+  requires `AGENT_TOKEN` (bearer, constant-time compare) and the port
+  mapping is removed; the agent is reachable only via the Docker network.
+- **`tmux send-keys` without `-l`** interpreted special tokens
+  (`Enter`, `C-a`, arrow keys) — would silently corrupt commands like
+  `git commit -m "Press Enter to continue"`. Now uses `send-keys -l`.
+- **SSH command injection via allowlist bypass** — the allowlist only
+  checked the host. `ssh host ; rm -rf /` would have passed. Now parses
+  args with `shlex`, rejects unsafe characters, and allows only a small
+  whitelist of flags (`-p`, `-l`, `-i`, `-o`, `-q`, `-v`...).
+- **Marker regex picked the first match** — a malicious command could
+  print a fake `__AGENT_DONE_..._=0` to confuse the parser. Now uses
+  `re.findall` and takes the **last** match (the legitimate one).
+- **WebSocket token in query params** — every reverse proxy logs URLs.
+  Removed; token is now only accepted via `Sec-WebSocket-Protocol`.
+
+Architectural (5):
+- **Blocking I/O in `_save_sessions`** — wrapped in `asyncio.to_thread`
+  so a slow host filesystem doesn't stall the event loop.
+- **`capture-pane` returned the whole tmux scrollback** — now
+  `-S -N` (max `CAPTURE_PANE_LINES` lines) and `_truncate_output`
+  caps the response at `MAX_OUTPUT_BYTES`.
+- **Logger format bug `token=%sandbox`** — typo, would log " sandbox"
+  regardless of token state. Fixed to `token=%s`.
+- **`stop_grace_period`** was Docker's 10s default, less than uvicorn's
+  25s graceful shutdown. Set to 30s on all three services.
+- **RateLimiter buckets dict grew unbounded** — added LRU eviction at
+  `OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS` (default 10000).
+
+Minor (8):
+- `list_sessions` was O(n) `tmux has-session` calls; now one
+  `list-sessions` invocation.
+- `_load_sessions` corrupt-file log upgraded from `warning` to `error`.
+- `build-essential` and `sshpass` removed from production image.
+- `Dockerfile.openapi-proxy` now uses multi-stage build with non-root.
+- `WebSocketDisconnect` removed from the httpx-error except clause
+  (httpx never raises it).
+- `EXC_TIMEOUT_SECONDS` now actually used in upstream calls (was
+  hardcoded `60`).
+- Hostname allowlist comparison is now case-insensitive.
+- CI smoke test fails loudly on container-not-started (logs check + curl
+  with `|| exit 1`).
+
+Added:
+- `AGENT_TOKEN` env var + bearer auth on every sandbox-agent endpoint
+  except `/healthz`.
+- `OPENAPI_PROXY_UPSTREAM_TOKEN` (defaults to `OPENAPI_PROXY_TOKEN`) for
+  proxy → agent authentication.
+- `OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS` knob for the LRU cap.
+- 14 new regression tests pinning every fix above (`tests/test_wave2_fixes.py`).
+- Total: **72 tests**, all passing.
+
 ## [2.1.0] - 2026-10-13
 
 ### Fixed (security audit response)

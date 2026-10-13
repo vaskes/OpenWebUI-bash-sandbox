@@ -3,6 +3,12 @@
 # copies only the wheel cache and runs as a non-root user.
 #
 # Sandbox agent — persistent tmux sessions per chat, exposed via HTTP API.
+#
+# IMPORTANT: WORKDIR is /home/agent so the python import path resolves
+# ``agent_api`` and ``agent_core`` from the same directory the source files
+# are copied into. WORKDIR=/workspace caused a ModuleNotFoundError on
+# startup because the source files live in /home/agent. The bind-mount for
+# /workspace happens at runtime; we don't need it on the import path.
 
 # ---- builder ----
 FROM ubuntu:24.04 AS builder
@@ -23,17 +29,16 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PATH="/home/agent/.local/bin:${PATH}" \
-    PYTHONPATH="/usr/lib/python3/dist-packages"
+    PYTHONPATH="/home/agent"
 
-# System packages. sshpass is included for ``ssh user@host`` from the agent.
+# Production system packages. No build-essential, no sshpass —
+# see comments in agent_api.py for what gets installed vs runtime needs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash tmux \
-        openssh-client sshpass \
-        git curl wget ca-certificates gnupg \
+        openssh-client \
+        git curl ca-certificates gnupg \
         jq ripgrep fd-find tree htop \
-        python3 python3-venv \
-        build-essential \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the pip install from the builder.
@@ -44,13 +49,21 @@ COPY --from=builder /install /usr/local
 RUN groupadd -g 1000 agent \
     && useradd -u 1000 -g 1000 -m -d /home/agent -s /bin/bash agent
 
-WORKDIR /workspace
+WORKDIR /home/agent
 
 # Agent HTTP API. Both the FastAPI app and the pure-function core module
 # must be present in the same directory so ``from agent_core import …``
-# resolves at runtime.
+# resolves at runtime. We COPY them into /home/agent, and PYTHONPATH=/home/agent
+# makes the import work regardless of the runtime CWD.
 COPY --chown=agent:agent agent_core.py /home/agent/agent_core.py
 COPY --chown=agent:agent agent_api.py  /home/agent/agent_api.py
+
+# Workspace directory — created and chmod'd here so the bind-mount at
+# runtime overlays a populated tree. The sandbox agent treats this as its
+# read/write surface; it is owned by ``agent`` so the non-root user can
+# write to it without surprises.
+RUN mkdir -p /workspace && chown agent:agent /workspace
+WORKDIR /workspace
 
 USER agent
 EXPOSE 8082
@@ -59,6 +72,9 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8082/healthz || exit 1
 
 # Use exec form so SIGTERM is forwarded to uvicorn (graceful shutdown).
+# Set a high --timeout-graceful-shutdown — the docker-compose ``stop_grace_period``
+# must be set to at least this many seconds + headroom, otherwise Docker
+# SIGKILLs the container mid-shutdown.
 CMD ["python3", "-m", "uvicorn", "agent_api:app", \
      "--host", "0.0.0.0", "--port", "8082", \
      "--timeout-graceful-shutdown", "25"]
