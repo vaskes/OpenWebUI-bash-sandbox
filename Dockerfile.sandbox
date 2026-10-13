@@ -1,8 +1,30 @@
-# Sandbox agent — persistent tmux sessions per chat, exposed via HTTP API
+# syntax=docker/dockerfile:1.6
+# Multi-stage build: builder stage installs pip deps, runtime stage
+# copies only the wheel cache and runs as a non-root user.
+#
+# Sandbox agent — persistent tmux sessions per chat, exposed via HTTP API.
+
+# ---- builder ----
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages \
+        --prefix=/install -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
+
+# ---- runtime ----
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PATH="/home/agent/.local/bin:${PATH}" \
+    PYTHONPATH="/usr/lib/python3/dist-packages"
 
 # System packages. sshpass is included for ``ssh user@host`` from the agent.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -10,28 +32,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-client sshpass \
         git curl wget ca-certificates gnupg \
         jq ripgrep fd-find tree htop \
-        python3 python3-pip python3-venv \
+        python3 python3-venv \
         build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Python dependencies are pinned in requirements.txt for reproducibility.
-COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+# Copy the pip install from the builder.
+COPY --from=builder /install /usr/local
 
-# Workspace layout
-RUN mkdir -p /workspace /opt/sandbox && chmod 755 /workspace /opt/sandbox
+# Create the unprivileged ``agent`` user with a fixed UID so the bind-mount
+# permissions on the host are predictable.
+RUN groupadd -g 1000 agent \
+    && useradd -u 1000 -g 1000 -m -d /home/agent -s /bin/bash agent
+
 WORKDIR /workspace
 
 # Agent HTTP API. Both the FastAPI app and the pure-function core module
 # must be present in the same directory so ``from agent_core import …``
 # resolves at runtime.
-COPY agent_core.py /opt/sandbox/agent_core.py
-COPY agent_api.py  /opt/sandbox/agent_api.py
+COPY --chown=agent:agent agent_core.py /home/agent/agent_core.py
+COPY --chown=agent:agent agent_api.py  /home/agent/agent_api.py
 
+USER agent
 EXPOSE 8082
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8082/healthz || exit 1
 
-CMD ["python3", "/opt/sandbox/agent_api.py"]
+# Use exec form so SIGTERM is forwarded to uvicorn (graceful shutdown).
+CMD ["python3", "-m", "uvicorn", "agent_api:app", \
+     "--host", "0.0.0.0", "--port", "8082", \
+     "--timeout-graceful-shutdown", "25"]

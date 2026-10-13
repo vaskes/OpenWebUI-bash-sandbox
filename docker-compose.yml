@@ -1,5 +1,13 @@
 name: agent-stack
 
+# Production-shaped compose file. Notes:
+# * Secrets live in .env (not committed) — see .env.example for the shape.
+# * `sandbox-agent` runs as non-root with resource caps and dropped caps.
+# * `openapi-proxy` is the only public-facing API; it requires a bearer
+#   token via the OPENAPI_PROXY_TOKEN env var.
+# * `open-webui` is reachable only inside the agent-net bridge; expose
+#   to the host only if you want LAN access.
+
 services:
   sandbox-agent:
     build:
@@ -11,29 +19,48 @@ services:
       - agent-net
     ports:
       - "192.168.10.7:8082:8082"
-    # Explicitly writable — agents need to install packages, write files
-    read_only: false
-    user: root
+    # Non-root with explicit UID. Bump the gid if your host's docker group
+    # has a different numeric id — use `getent group docker`.
+    user: "1000:1000"
     working_dir: /workspace
+    # Resource caps — adjust for your hardware. ``pids_limit`` matters most:
+    # it stops a fork-bomb from killing the host kernel.
+    mem_limit: 2g
+    cpus: "2.0"
+    pids_limit: 256
+    # Drop all capabilities, then re-add only what's needed. tmux, ssh,
+    # and basic networking do not need any of the dropped caps.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Read-only root filesystem. Writes go through the bind-mount + tmpfs.
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+      - /run:size=64m,mode=755
     volumes:
-      # Persistent workspace — host directory mounted as /workspace
+      # Persistent workspace — host directory mounted as /workspace.
+      # The agent's home is read-only because we run as non-root.
       - /opt/agent-workspace:/workspace
-      # SSH keys — readable by agent
-      - /opt/agent-workspace/.ssh:/root/.ssh:ro
-      # Search tools — read-only access to existing toolchain
+      - /opt/agent-workspace/.ssh:/home/agent/.ssh:ro
       - /opt/search:/opt/search:ro
-      # tmpfs for in-container temp files (fast, ephemeral)
-      # Persistent home for installed Python packages and configs
-      - sandbox-agent-home:/root:rw
-      # Persistent apt cache (saves bandwidth + time on rebuilds)
+      # Persistent home for installed Python packages and configs.
+      - sandbox-agent-home:/home/agent:rw
+      # Persistent apt cache (saves bandwidth + time on rebuilds).
       - sandbox-agent-apt:/var/cache/apt:rw
-      # Persistent pip cache
-      - sandbox-agent-pip:/root/.cache/pip:rw
+      # Persistent pip cache.
+      - sandbox-agent-pip:/home/agent/.cache/pip:rw
+    environment:
+      - AGENT_WORKSPACE=/workspace
+      - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
+      - AGENT_LOG_LEVEL=INFO
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3
+      start_period: 10s
 
   openapi-proxy:
     build:
@@ -48,6 +75,21 @@ services:
     environment:
       - SANDBOX_URL=http://sandbox-agent:8082
       - SEARXNG_URL=http://192.168.10.7:8888
+      - OPENAPI_PROXY_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
+      - OPENAPI_PROXY_CORS_ORIGINS=${OPENAPI_PROXY_CORS_ORIGINS:-}
+      - OPENAPI_PROXY_SSH_ALLOWLIST=${OPENAPI_PROXY_SSH_ALLOWLIST:-}
+      - OPENAPI_PROXY_RATE_LIMIT_RPM=${OPENAPI_PROXY_RATE_LIMIT_RPM:-120}
+      - OPENAPI_PROXY_LOG_LEVEL=INFO
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     depends_on:
       sandbox-agent:
         condition: service_healthy
@@ -56,6 +98,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+      start_period: 10s
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
@@ -68,19 +111,30 @@ services:
     volumes:
       - /opt/agent-workspace/.open-webui-data:/app/backend/data
     environment:
-      - WEBUI_AUTH=true
-      - WEBUI_SECRET_KEY=agent-stack-secret-CHANGE-ME-2026
-      - ENABLE_SIGNUP=true
-      - DEFAULT_USER_ROLE=user
+      # All secrets come from .env — see .env.example.
+      - WEBUI_AUTH=${WEBUI_AUTH:-true}
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:?WEBUI_SECRET_KEY must be set}
+      - ENABLE_SIGNUP=${ENABLE_SIGNUP:-false}
+      - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-user}
       - ENABLE_WEB_SEARCH=true
       - WEB_SEARCH_ENGINE=searxng
       - SEARXNG_URL=http://192.168.10.7:8888
       - ENABLE_AUDIO_STT=true
       - AUDIO_STT_ENGINE=openai
       - AUDIO_STT_OPENAI_API_BASE_URL=http://192.168.10.7:8000/v1
-      - AUDIO_STT_OPENAI_API_KEY=sk-not-needed
-      - SANDBOX_URL=http://sandbox-agent:8082
-      - TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://openapi-proxy:8090","path":"openapi.json","info":{"id":"sandbox-tools","name":"SandboxTools","description":"Persistent shell + file tools + web search for any LLM"},"config":{"enable":true},"auth_type":"none","spec_type":"url"}]
+      - AUDIO_STT_OPENAI_API_KEY=${WHISPER_API_KEY:-sk-not-needed}
+      - TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://openapi-proxy:8090","path":"openapi.json","info":{"id":"sandbox-tools","name":"SandboxTools","description":"Persistent shell + web search"},"config":{"enable":true},"auth_type":"bearer","key":"${OPENAPI_PROXY_TOKEN}","spec_type":"url"}]
+    mem_limit: 1g
+    cpus: "1.0"
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      - /run:size=64m,mode=755
     depends_on:
       sandbox-agent:
         condition: service_healthy
