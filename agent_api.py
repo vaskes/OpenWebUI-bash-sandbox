@@ -55,7 +55,6 @@ from pydantic import BaseModel, Field
 
 from agent_core import (
     SESSION_ID_MAX_LEN,
-    TMUX_PREFIX,
     safe_id,
     tmux_name,
 )
