@@ -9,7 +9,7 @@ on:
 jobs:
   lint:
     name: Lint (ruff)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,7 +22,7 @@ jobs:
 
   test:
     name: Tests (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
@@ -46,7 +46,7 @@ jobs:
 
   sast:
     name: SAST (ruff B-rules)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -62,7 +62,7 @@ jobs:
 
   secrets:
     name: Secret scan (gitleaks)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: gitleaks/gitleaks-action@v2
@@ -75,7 +75,7 @@ jobs:
     # apt-get QEMU regression on ubuntu-24.04 runners
     # (actions/runner-images#11589). Re-enabled with a minimal scope:
     # build + smoke-test both images, fail loudly on any error.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - name: Build sandbox-agent image
