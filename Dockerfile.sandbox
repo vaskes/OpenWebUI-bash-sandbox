@@ -1,35 +1,37 @@
 # Sandbox agent — persistent tmux sessions per chat, exposed via HTTP API
 FROM ubuntu:24.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1
 
-# System packages
+# System packages. sshpass is included for ``ssh user@host`` from the agent.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash tmux \
-    openssh-client sshpass \
-    git curl wget \
-    jq ripgrep fd-find \
-    python3 python3-pip python3-venv \
-    ca-certificates gnupg \
-    htop tree \
-    build-essential \
+        bash tmux \
+        openssh-client sshpass \
+        git curl wget ca-certificates gnupg \
+        jq ripgrep fd-find tree htop \
+        python3 python3-pip python3-venv \
+        build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Python packages
-RUN pip3 install --no-cache-dir --break-system-packages \
-    fastapi 'uvicorn[standard]' pydantic httpx
+# Python dependencies are pinned in requirements.txt for reproducibility.
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
 # Workspace layout
-RUN mkdir -p /workspace && chmod 755 /workspace
+RUN mkdir -p /workspace /opt/sandbox && chmod 755 /workspace /opt/sandbox
 WORKDIR /workspace
 
-# Agent HTTP API
-COPY agent_api.py /opt/agent_api.py
+# Agent HTTP API. Both the FastAPI app and the pure-function core module
+# must be present in the same directory so ``from agent_core import …``
+# resolves at runtime.
+COPY agent_core.py /opt/sandbox/agent_core.py
+COPY agent_api.py  /opt/sandbox/agent_api.py
+
 EXPOSE 8082
 
-# Healthcheck
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8082/healthz || exit 1
 
-CMD ["python3", "/opt/agent_api.py"]
+CMD ["python3", "/opt/sandbox/agent_api.py"]
