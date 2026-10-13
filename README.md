@@ -192,6 +192,7 @@ curl -X POST http://localhost:8090/bash \
 
 ```python
 import httpx
+
 with httpx.Client() as client:
     r = client.post(
         "http://localhost:8090/bash",

@@ -4,6 +4,7 @@ Separated from :mod:`agent_api` so it can be unit-tested without pulling in
 FastAPI, Pydantic, or tmux. Anything security-relevant (session-id
 sanitization, naming conventions) lives here.
 """
+
 from __future__ import annotations
 
 import re

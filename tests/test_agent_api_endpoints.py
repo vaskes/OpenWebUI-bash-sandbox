@@ -10,6 +10,7 @@ marker on every call, so the mock has to produce output that contains
 helper below handles this by reading the send-keys call and embedding the
 real marker into a follow-up capture-pane response.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,6 +38,7 @@ def _fresh_app():
     if "agent_api" in sys.modules:
         del sys.modules["agent_api"]
     from agent_api import SESSIONS, WORKSPACE_REAL, app  # noqa: E402
+
     SESSIONS.clear()
     return app, SESSIONS, tmpdir, WORKSPACE_REAL
 
@@ -113,7 +114,9 @@ class TestCreateSessionRejectsBadCwd(_Base):
     """Path-traversal protection — the headline security fix."""
 
     def test_absolute_path_outside_workspace_rejected(self) -> None:
-        r = self.client.post("/sessions", json={"session_id": "x", "cwd": "/etc"}, headers=self.auth)
+        r = self.client.post(
+            "/sessions", json={"session_id": "x", "cwd": "/etc"}, headers=self.auth
+        )
         self.assertEqual(r.status_code, 400)
         self.assertIn("outside workspace", r.json()["detail"])
 
@@ -126,7 +129,9 @@ class TestCreateSessionRejectsBadCwd(_Base):
         self.assertEqual(r.status_code, 400)
 
     def test_nonexistent_path_rejected(self) -> None:
-        r = self.client.post("/sessions", json={"session_id": "x", "cwd": "/this/does/not/exist"}, headers=self.auth)
+        r = self.client.post(
+            "/sessions", json={"session_id": "x", "cwd": "/this/does/not/exist"}, headers=self.auth
+        )
         self.assertEqual(r.status_code, 400)
 
     def test_valid_cwd_accepted(self) -> None:
@@ -134,7 +139,11 @@ class TestCreateSessionRejectsBadCwd(_Base):
         mock.schedule("has-session", rc=1)  # not found
         mock.schedule("new-session", rc=0)  # success
         with patch("agent_api._tmux", new=mock):
-            r = self.client.post("/sessions", json={"session_id": "valid", "cwd": self.workspace_real}, headers=self.auth)
+            r = self.client.post(
+                "/sessions",
+                json={"session_id": "valid", "cwd": self.workspace_real},
+                headers=self.auth,
+            )
             self.assertEqual(r.status_code, 200, r.text)
             self.assertFalse(r.json()["existed"])
 
@@ -145,14 +154,22 @@ class TestCreateSessionHappyPath(_Base):
         mock.schedule("has-session", rc=1)  # not found (first call)
         mock.schedule("new-session", rc=0)
         with patch("agent_api._tmux", new=mock):
-            r1 = self.client.post("/sessions", json={"session_id": "abc", "cwd": self.workspace_real}, headers=self.auth)
+            r1 = self.client.post(
+                "/sessions",
+                json={"session_id": "abc", "cwd": self.workspace_real},
+                headers=self.auth,
+            )
             self.assertEqual(r1.status_code, 200, r1.text)
             self.assertFalse(r1.json()["existed"])
 
         mock2 = _make_tmux_mock()
         mock2.schedule("has-session", rc=0)  # exists
         with patch("agent_api._tmux", new=mock2):
-            r2 = self.client.post("/sessions", json={"session_id": "abc", "cwd": self.workspace_real}, headers=self.auth)
+            r2 = self.client.post(
+                "/sessions",
+                json={"session_id": "abc", "cwd": self.workspace_real},
+                headers=self.auth,
+            )
             self.assertEqual(r2.status_code, 200)
             self.assertTrue(r2.json()["existed"])
 
@@ -163,13 +180,15 @@ class TestExecAutoCreatesSession(_Base):
         # the sequence is: has-session, new-session, send-keys, capture-pane
         # (which must contain the real marker). Use {marker} placeholder.
         mock = _make_tmux_mock()
-        mock.schedule("has-session", rc=1)   # not found
+        mock.schedule("has-session", rc=1)  # not found
         mock.schedule("new-session", rc=0)
         mock.schedule("send-keys", rc=0)
         # Template — ``{marker}`` is replaced with whatever was sent above.
         mock.schedule("capture-pane", stdout="$ pwd\n/workspace\n\n{marker}=0\n")
         with patch("agent_api._tmux", new=mock):
-            r = self.client.post("/sessions/auto-1/exec", json={"command": "pwd", "timeout": 5}, headers=self.auth)
+            r = self.client.post(
+                "/sessions/auto-1/exec", json={"command": "pwd", "timeout": 5}, headers=self.auth
+            )
             self.assertEqual(r.status_code, 200, r.text)
             body = r.json()
             self.assertFalse(body["timed_out"], body)
@@ -181,6 +200,7 @@ class TestExecAutoCreatesSession(_Base):
 class TestExecTimeout(_Base):
     def test_timeout_returns_partial_output(self) -> None:
         import agent_api  # noqa: PLC0415
+
         original = agent_api.DEFAULT_TIMEOUT
         agent_api.DEFAULT_TIMEOUT = 1
         self.addCleanup(lambda: setattr(agent_api, "DEFAULT_TIMEOUT", original))
@@ -190,7 +210,9 @@ class TestExecTimeout(_Base):
         mock.schedule("send-keys", rc=0)
         mock.schedule("capture-pane", stdout="partial output without marker")
         with patch("agent_api._tmux", new=mock):
-            r = self.client.post("/sessions/to-1/exec", json={"command": "sleep 99", "timeout": 1}, headers=self.auth)
+            r = self.client.post(
+                "/sessions/to-1/exec", json={"command": "sleep 99", "timeout": 1}, headers=self.auth
+            )
             self.assertEqual(r.status_code, 200)
             body = r.json()
             self.assertTrue(body["timed_out"])
@@ -203,7 +225,11 @@ class TestSessionPersistence(_Base):
         mock.schedule("has-session", rc=1)
         mock.schedule("new-session", rc=0)
         with patch("agent_api._tmux", new=mock):
-            r = self.client.post("/sessions", json={"session_id": "persist-1", "cwd": self.workspace_real}, headers=self.auth)
+            r = self.client.post(
+                "/sessions",
+                json={"session_id": "persist-1", "cwd": self.workspace_real},
+                headers=self.auth,
+            )
             self.assertEqual(r.status_code, 200, r.text)
 
         sessions_file = Path(os.environ["AGENT_SESSIONS_FILE"])
@@ -214,6 +240,7 @@ class TestSessionPersistence(_Base):
         # Simulate restart: clear in-memory dict, then call _load_sessions.
         self.sessions.clear()
         from agent_api import _load_sessions  # noqa: PLC0415
+
         reloaded = _load_sessions()
         self.assertIn("persist-1", reloaded)
         self.assertEqual(reloaded["persist-1"]["cwd"], self.workspace_real)
@@ -235,15 +262,21 @@ class TestExecValidation(_Base):
         self.assertEqual(r.status_code, 422)
 
     def test_oversized_command_rejected(self) -> None:
-        r = self.client.post("/sessions/x/exec", json={"command": "a" * 2_000_000}, headers=self.auth)
+        r = self.client.post(
+            "/sessions/x/exec", json={"command": "a" * 2_000_000}, headers=self.auth
+        )
         self.assertEqual(r.status_code, 422)
 
     def test_negative_timeout_rejected(self) -> None:
-        r = self.client.post("/sessions/x/exec", json={"command": "ls", "timeout": -1}, headers=self.auth)
+        r = self.client.post(
+            "/sessions/x/exec", json={"command": "ls", "timeout": -1}, headers=self.auth
+        )
         self.assertEqual(r.status_code, 422)
 
     def test_huge_timeout_rejected(self) -> None:
-        r = self.client.post("/sessions/x/exec", json={"command": "ls", "timeout": 99999}, headers=self.auth)
+        r = self.client.post(
+            "/sessions/x/exec", json={"command": "ls", "timeout": 99999}, headers=self.auth
+        )
         self.assertEqual(r.status_code, 422)
 
 
