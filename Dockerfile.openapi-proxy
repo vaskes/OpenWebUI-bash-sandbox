@@ -1,25 +1,42 @@
+# syntax=docker/dockerfile:1.6
+# Multi-stage build: builder installs pip deps, runtime image is a small
+# python:3.11-slim with only the installed wheels and the app code.
+#
 # OpenAPI 3.0 proxy — wraps sandbox-agent in a single ``bash`` tool that
 # Open WebUI can consume as an External Tool Server.
+
+# ---- builder ----
+FROM python:3.11-slim AS builder
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
+
+# ---- runtime ----
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 1000 proxy \
+    && useradd -u 1000 -g 1000 -m -d /home/proxy -s /bin/bash proxy
 
-# Pinned dependencies for reproducibility.
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+# Copy the pip install from the builder.
+COPY --from=builder /install /usr/local
 
 WORKDIR /app
 
 # Both the FastAPI app and the pure-function core module must be present
 # in the same directory so ``from proxy_core import …`` resolves.
-COPY proxy_core.py    /app/proxy_core.py
-COPY openapi_proxy.py /app/openapi_proxy.py
+COPY --chown=proxy:proxy proxy_core.py    /app/proxy_core.py
+COPY --chown=proxy:proxy openapi_proxy.py /app/openapi_proxy.py
 
+USER proxy
 EXPOSE 8090
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8090/openapi.json || exit 1
+    CMD curl -fsS http://127.0.0.1:8090/healthz || exit 1
 
-CMD ["python", "/app/openapi_proxy.py"]
+# Use exec form so SIGTERM is forwarded to uvicorn (graceful shutdown).
+CMD ["python", "-m", "uvicorn", "openapi_proxy:app", \
+     "--host", "0.0.0.0", "--port", "8090", \
+     "--timeout-graceful-shutdown", "25"]
