@@ -155,7 +155,9 @@ _rate_limiter = _RateLimiter(RATE_LIMIT_RPM, RATE_LIMIT_MAX_KEYS)
 _bearer = HTTPBearer(auto_error=False)
 
 
-def _require_token(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> str:
+def _require_token(
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),  # noqa: B008
+) -> str:
     """FastAPI dependency: validate ``Authorization: Bearer <token>``.
 
     Rejects the request with 401 if the proxy has no token configured (we

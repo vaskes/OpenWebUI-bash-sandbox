@@ -228,7 +228,9 @@ app = FastAPI(
 _bearer = HTTPBearer(auto_error=False)
 
 
-def _require_token(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> str:
+def _require_token(
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),  # noqa: B008
+) -> str:
     """Bearer-token gate for every endpoint except ``/healthz``.
 
     The agent refuses to start serving if :data:`AGENT_TOKEN` is empty —
