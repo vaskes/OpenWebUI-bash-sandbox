@@ -100,7 +100,7 @@ def _load_sessions() -> dict[str, dict[str, Any]]:
             if isinstance(data, dict):
                 return data
         logger.error("sessions file root is not an object; starting fresh")
-    except FileNotFoundError:
+    except FileNotFoundError:  # noqa: B110 - first run, file doesn't exist
         pass
     except (json.JSONDecodeError, OSError) as exc:
         logger.error("sessions file unreadable (%s) — possible data loss", exc)
@@ -490,7 +490,7 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "agent_api:app",
-        host="0.0.0.0",
+        host="0.0.0.0",  # noqa: S104 - dev server binds all interfaces (same as FastAPI docs)
         port=int(os.environ.get("AGENT_PORT", "8082")),
         log_level=os.environ.get("AGENT_LOG_LEVEL", "info").lower(),
         # Graceful shutdown — give in-flight requests 25s to finish.

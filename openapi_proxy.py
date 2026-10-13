@@ -590,7 +590,7 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "openapi_proxy:app",
-        host="0.0.0.0",
+        host="0.0.0.0",  # noqa: S104 - dev server binds all interfaces (same as FastAPI docs)
         port=int(os.environ.get("OPENAPI_PROXY_PORT", "8090")),
         log_level=os.environ.get("OPENAPI_PROXY_LOG_LEVEL", "info").lower(),
         timeout_graceful_shutdown=25,
