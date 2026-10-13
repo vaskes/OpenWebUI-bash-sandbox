@@ -9,7 +9,7 @@ on:
 jobs:
   lint:
     name: Lint (ruff)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,7 +22,7 @@ jobs:
 
   test:
     name: Tests (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
@@ -46,7 +46,7 @@ jobs:
 
   sast:
     name: SAST (ruff B-rules)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -62,7 +62,7 @@ jobs:
 
   secrets:
     name: Secret scan (gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: gitleaks/gitleaks-action@v2
@@ -71,7 +71,7 @@ jobs:
 
   docker:
     name: Build Docker images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [lint, test, sast]
     steps:
       - uses: actions/checkout@v4
@@ -111,7 +111,7 @@ jobs:
 
   trivy:
     name: Container scan (trivy)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: docker
     steps:
       - uses: actions/checkout@v4
