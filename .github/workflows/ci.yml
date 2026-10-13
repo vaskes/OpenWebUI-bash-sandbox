@@ -69,3 +69,43 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  docker:
+    name: Build Docker images
+    # Wave 3 #R1: docker build was previously dropped because of an
+    # apt-get QEMU regression on ubuntu-24.04 runners
+    # (actions/runner-images#11589). Re-enabled with a minimal scope:
+    # build + smoke-test both images, fail loudly on any error.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sandbox-agent image
+        run: docker build -f Dockerfile.sandbox -t owbs-sandbox:test .
+      - name: Build openapi-proxy image
+        run: docker build -f Dockerfile.openapi-proxy -t owbs-proxy:test .
+      - name: Smoke-test sandbox-agent
+        run: |
+          docker run --rm -d --name sandbox-test --security-opt no-new-privileges:true owbs-sandbox:test
+          for i in 1 2 3 4 5 6 7 8; do
+            sleep 2
+            if docker exec sandbox-test curl -fsS http://127.0.0.1:8082/healthz > /dev/null 2>&1; then
+              echo "sandbox-agent healthy after ${i}x2s"
+              break
+            fi
+          done
+          docker logs sandbox-test 2>&1 | grep -q "Uvicorn running" || { echo "sandbox-agent did not start"; docker logs sandbox-test; exit 1; }
+          docker exec sandbox-test curl -fsS http://127.0.0.1:8082/healthz || { echo "sandbox-agent healthz failed"; exit 1; }
+          docker stop sandbox-test
+      - name: Smoke-test openapi-proxy
+        run: |
+          docker run --rm -d --name proxy-test --security-opt no-new-privileges:true owbs-proxy:test
+          for i in 1 2 3 4 5 6 7 8; do
+            sleep 2
+            if docker exec proxy-test curl -fsS http://127.0.0.1:8090/openapi.json > /dev/null 2>&1; then
+              echo "openapi-proxy healthy after ${i}x2s"
+              break
+            fi
+          done
+          docker logs proxy-test 2>&1 | grep -q "Uvicorn running" || { echo "openapi-proxy did not start"; docker logs proxy-test; exit 1; }
+          docker exec proxy-test curl -fsS http://127.0.0.1:8090/openapi.json | head -c 200 || { echo "proxy openapi.json failed"; exit 1; }
+          docker stop proxy-test
+

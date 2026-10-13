@@ -4,6 +4,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-10-13
+
+### Fixed (security audit wave 3)
+
+CRITICAL blockers from wave 2 audit, all closed:
+
+- **#C1: Open WebUI SQLite was inside `/workspace`** — the LLM could
+  `rm -rf /workspace/.open-webui-data` and wipe the entire database
+  (chats, users, settings). Moved to a `open-webui-data` named volume
+  (`docker-compose.yml`). The bind-mount is gone.
+- **#C2: SSH `-i <path>` accepted any file path** — including
+  `/home/agent/.ssh/id_rsa`, the persistent operator key mount. Added
+  `_ssh_identity_within_workspace()` which `realpath()`s the file and
+  requires it to be inside `$AGENT_WORKSPACE`. The LLM can only use
+  keys it just generated into `/workspace` (which it can already read
+  through `bash`). Identity files outside the workspace are rejected
+  with `ssh: identity file must be inside the workspace`.
+- **#C3: SSH `-o` was a blocklist** — `ProxyCommand` and
+  `StrictHostKeyChecking` were explicitly denied, but `LocalCommand`,
+  `PermitLocalCommand`, `LocalForward`, `RemoteForward` and
+  `DynamicForward` would have passed. Replaced with a **whitelist of
+  option names** (`SSH_SAFE_OPTIONS`: `ConnectTimeout`,
+  `ServerAliveInterval`, `ServerAliveCountMax`, `ConnectionAttempts`,
+  `BatchMode`, `AddressFamily`, `BindAddress`, `IPQoS`, `Compression`,
+  `TCPKeepAlive`). Anything else is rejected by name. Comparison is
+  case-insensitive (matches real ssh).
+
+HIGH priority:
+
+- **#H1: WebSocket happy path test added** — `test_websocket_protocol_header_accepted`
+  connects with `subprotocols=["bearer.test-token"]` and confirms
+  the server sends the terminal banner. The previous test only
+  exercised the rejection path (`?token=…`); if the success path was
+  broken, the Open WebUI terminal would have silently failed in
+  production.
+- **#H2: Startup reaper for stale sessions** — `lifespan` now calls
+  `_reap_dead_sessions()` on startup: a single `tmux list-sessions`
+  round-trip collects the live set, and registry entries whose
+  `tmux_name` is no longer alive are removed and the on-disk
+  `SESSIONS_FILE` is rewritten. The container no longer carries
+  phantom sessions from before an unclean shutdown.
+
+CI/CD regressions from wave 2:
+
+- **#R1: Docker build job restored** — the `docker` job was dropped
+  after an apt-get/QEMU regression on `ubuntu-24.04` runners. Re-enabled
+  with a focused scope: build both images, run them with
+  `no-new-privileges`, poll `/healthz` and `/openapi.json` for up to
+  16 s, fail loudly if `Uvicorn running` does not appear in the
+  container logs. This catches `Dockerfile.sandbox` regressions like
+  the one fixed in 2.2.0.
+- **#R2: `codeql-config.yml` removed** — it had `disable-default-queries:
+  true` and `queries: []`, which is the same as "CodeQL does nothing".
+  Either enable useful queries or delete the file. Deleted: the
+  default CodeQL setup at the repo level (`Settings → Code security`)
+  is the right place to configure CodeQL, and a custom config that
+  disables everything is misleading.
+
+Tests: **92** unit + integration (was 72). New `tests/test_wave3_fixes.py`
+adds 15 regression tests covering every fix above.
+
 ## [2.2.0] - 2026-10-13
 
 ### Fixed (security audit wave 2)

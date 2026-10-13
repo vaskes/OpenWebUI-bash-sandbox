@@ -120,7 +120,12 @@ services:
     ports:
       - "192.168.10.7:3001:8080"
     volumes:
-      - /opt/agent-workspace/.open-webui-data:/app/backend/data
+      # Named volume — NOT bind-mounted into /workspace. The Open WebUI
+      # SQLite (chats, users, settings) must stay out of the agent's
+      # writable surface, otherwise the LLM can do ``rm -rf
+      # /workspace/.open-webui-data`` and wipe the database.
+      # See docs/SECURITY.md → Trust model.
+      - open-webui-data:/app/backend/data
     environment:
       # All secrets come from .env — see .env.example.
       - WEBUI_AUTH=${WEBUI_AUTH:-true}
@@ -157,6 +162,7 @@ volumes:
   sandbox-agent-home:
   sandbox-agent-apt:
   sandbox-agent-pip:
+  open-webui-data:
 
 networks:
   agent-net:

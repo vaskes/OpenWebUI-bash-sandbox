@@ -7,7 +7,7 @@ command syntax that the LLM sees.
 
 from __future__ import annotations
 
-__version__ = "2.1.0"
+__version__ = "2.3.0"
 
 WEB_SEARCH_PREFIX = "web_search "
 SSH_PREFIX = "ssh "
