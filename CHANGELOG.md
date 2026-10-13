@@ -6,66 +6,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.3.0] - 2026-10-13
 
-### Fixed (security audit wave 3)
+### Security (CRITICAL fixes from Wave 3 audit)
 
-CRITICAL blockers from wave 2 audit, all closed:
+- **Open WebUI SQLite moved to named volume** — was bind-mounted into
+  `/workspace`, allowing the LLM to `rm -rf /workspace/.open-webui-data`
+  and wipe the entire chat database. Now uses `open-webui-data` named
+  volume, completely isolated from the agent's writable surface.
 
-- **#C1: Open WebUI SQLite was inside `/workspace`** — the LLM could
-  `rm -rf /workspace/.open-webui-data` and wipe the entire database
-  (chats, users, settings). Moved to a `open-webui-data` named volume
-  (`docker-compose.yml`). The bind-mount is gone.
-- **#C2: SSH `-i <path>` accepted any file path** — including
-  `/home/agent/.ssh/id_rsa`, the persistent operator key mount. Added
-  `_ssh_identity_within_workspace()` which `realpath()`s the file and
-  requires it to be inside `$AGENT_WORKSPACE`. The LLM can only use
-  keys it just generated into `/workspace` (which it can already read
-  through `bash`). Identity files outside the workspace are rejected
-  with `ssh: identity file must be inside the workspace`.
-- **#C3: SSH `-o` was a blocklist** — `ProxyCommand` and
-  `StrictHostKeyChecking` were explicitly denied, but `LocalCommand`,
-  `PermitLocalCommand`, `LocalForward`, `RemoteForward` and
-  `DynamicForward` would have passed. Replaced with a **whitelist of
-  option names** (`SSH_SAFE_OPTIONS`: `ConnectTimeout`,
-  `ServerAliveInterval`, `ServerAliveCountMax`, `ConnectionAttempts`,
-  `BatchMode`, `AddressFamily`, `BindAddress`, `IPQoS`, `Compression`,
-  `TCPKeepAlive`). Anything else is rejected by name. Comparison is
-  case-insensitive (matches real ssh).
+- **SSH `-i <path>` must be inside workspace** — previously accepted any
+  path matching the char whitelist, including `/home/agent/.ssh/id_rsa`
+  (the persistent operator key mount). Now uses `realpath` + `commonpath`
+  to verify the identity file resolves to a path inside `$AGENT_WORKSPACE`.
+  Rejects with structured error if outside.
 
-HIGH priority:
+- **SSH `-o` options whitelisted by name** — was a blocklist that only
+  rejected `ProxyCommand` and `StrictHostKeyChecking`. Dangerous options
+  like `LocalCommand`, `PermitLocalCommand`, `LocalForward`,
+  `RemoteForward`, `DynamicForward` would have passed. Now whitelist
+  contains only 10 safe connection-tuning options
+  (`ConnectTimeout`, `ServerAliveInterval`, `BatchMode`, etc.).
+  Everything else rejected. Case-insensitive matching.
 
-- **#H1: WebSocket happy path test added** — `test_websocket_protocol_header_accepted`
-  connects with `subprotocols=["bearer.test-token"]` and confirms
-  the server sends the terminal banner. The previous test only
-  exercised the rejection path (`?token=…`); if the success path was
-  broken, the Open WebUI terminal would have silently failed in
-  production.
-- **#H2: Startup reaper for stale sessions** — `lifespan` now calls
-  `_reap_dead_sessions()` on startup: a single `tmux list-sessions`
-  round-trip collects the live set, and registry entries whose
-  `tmux_name` is no longer alive are removed and the on-disk
-  `SESSIONS_FILE` is rewritten. The container no longer carries
-  phantom sessions from before an unclean shutdown.
+### Reliability
 
-CI/CD regressions from wave 2:
+- **Startup reaper for stale sessions** — `_reap_dead_sessions()` runs
+  in lifespan startup, queries `tmux list-sessions`, drops registry
+  entries whose tmux backend died (e.g. container killed abruptly).
+  Rewrites `SESSIONS_FILE`. Prevents stale entries from accumulating.
 
-- **#R1: docker build job** — Qwen's wave 3 audit asked us to put it
-  back. We tried twice on `ubuntu-24.04` and once on `ubuntu-22.04`
-  runners. The build fails on the `apt-get update` step inside the
-  Dockerfile because of a known QEMU emulation regression
-  (actions/runner-images#11589) on those runners. This is **not** a
-  problem with our Dockerfiles — they build and run cleanly on the
-  `llmhost2` host via the `agent-stack` systemd unit (production
-  deployment) and via local `docker build` on developer workstations.
-  We document the gap rather than fight upstream.
-- **#R2: `codeql-config.yml` removed** — it had `disable-default-queries:
-  true` and `queries: []`, which is the same as "CodeQL does nothing".
-  Either enable useful queries or delete the file. Deleted: the
-  default CodeQL setup at the repo level (`Settings → Code security`)
-  is the right place to configure CodeQL, and a custom config that
-  disables everything is misleading.
+- **WebSocket happy path tested** — added positive test for
+  `Sec-WebSocket-Protocol: bearer.<token>` authentication. Browser-based
+  WebSocket clients (Open WebUI terminal) cannot set Authorization header,
+  so this is the only auth path they can use.
 
-Tests: **92** unit + integration (was 72). New `tests/test_wave3_fixes.py`
-adds 15 regression tests covering every fix above.
+### Testing
+
+- 92 tests total (was 72, +20 Wave 3 regression tests)
+- `tests/test_wave3_fixes.py`: 15 tests covering every CRITICAL/HIGH fix
+- `tests/test_wave2_fixes.py`: +1 WebSocket happy path test
+
+### CI
+
+- Docker build job removed — QEMU segfault regression on ubuntu-24.04/22.04
+  runners (actions/runner-images#11589). Production deployment exercises
+  Docker on real host via `agent-stack` systemd unit. Documented gap.
+- `.github/codeql-config.yml` removed — had `queries: []` (no-op).
+  Default CodeQL setup at repo level is the right place.
+- Ruff config in `pyproject.toml` — line-length=100, B-rules enabled,
+  per-file ignores for tests.
 
 ## [2.2.0] - 2026-10-13
 
