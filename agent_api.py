@@ -36,6 +36,7 @@ GET  /sessions/{session_id}/capture?lines=N
 GET  /sessions/{session_id}/output?lines=N
     Alias of ``/capture`` kept for backwards compatibility.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -47,7 +48,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -64,11 +65,11 @@ __version__ = "1.1.0"
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-DEFAULT_TIMEOUT = 30          # seconds
-MAX_TIMEOUT = 600             # 10 min hard cap
-MAX_COMMAND_LEN = 1_000_000   # 1 MB hard cap on a single command
+DEFAULT_TIMEOUT = 30  # seconds
+MAX_TIMEOUT = 600  # 10 min hard cap
+MAX_COMMAND_LEN = 1_000_000  # 1 MB hard cap on a single command
 MAX_OUTPUT_BYTES = 1_000_000  # 1 MB hard cap on captured command output
-CAPTURE_PANE_LINES = 5000     # ``tmux capture-pane -S -N`` upper bound
+CAPTURE_PANE_LINES = 5000  # ``tmux capture-pane -S -N`` upper bound
 WORKSPACE = os.environ.get("AGENT_WORKSPACE", "/workspace")
 SESSIONS_FILE = os.environ.get("AGENT_SESSIONS_FILE", "/workspace/.agent-sessions.json")
 # Bearer token for the agent's HTTP API. The agent refuses all traffic
@@ -94,7 +95,7 @@ def _load_sessions() -> dict[str, dict[str, Any]]:
     sessions that previously existed — silent data loss.
     """
     try:
-        with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
+        with open(SESSIONS_FILE, encoding="utf-8") as f:
             data = json.load(f)
             if isinstance(data, dict):
                 return data
@@ -113,6 +114,7 @@ async def _save_sessions() -> None:
     ``asyncio.to_thread`` so a slow host filesystem doesn't stall the API.
     Best-effort: a failed write is logged, not raised.
     """
+
     def _do() -> None:
         tmp = f"{SESSIONS_FILE}.tmp.{uuid.uuid4().hex[:8]}"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -177,7 +179,11 @@ async def _tmux(*args: str) -> tuple[int, str, str]:
         stderr=asyncio.subprocess.PIPE,
     )
     stdout, stderr = await proc.communicate()
-    return proc.returncode or 0, stdout.decode("utf-8", "replace"), stderr.decode("utf-8", "replace")
+    return (
+        proc.returncode or 0,
+        stdout.decode("utf-8", "replace"),
+        stderr.decode("utf-8", "replace"),
+    )
 
 
 async def tmux_session_exists(name: str) -> bool:
@@ -222,7 +228,7 @@ app = FastAPI(
 _bearer = HTTPBearer(auto_error=False)
 
 
-def _require_token(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)) -> str:
+def _require_token(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> str:
     """Bearer-token gate for every endpoint except ``/healthz``.
 
     The agent refuses to start serving if :data:`AGENT_TOKEN` is empty —
@@ -231,7 +237,9 @@ def _require_token(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bear
     """
     if not AGENT_TOKEN:
         logger.error("auth disabled but AGENT_TOKEN is empty — refusing all requests")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="agent not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="agent not configured"
+        )
     if creds is None or creds.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -239,6 +247,7 @@ def _require_token(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bear
             headers={"WWW-Authenticate": "Bearer"},
         )
     import hmac as _hmac
+
     if not _hmac.compare_digest(creds.credentials, AGENT_TOKEN):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -292,7 +301,9 @@ class CreateSession(BaseModel):
     """Request body for ``POST /sessions``."""
 
     session_id: str = Field(default="default", max_length=SESSION_ID_MAX_LEN)
-    cwd: Optional[str] = Field(default=None, description="Initial working directory. Must be inside the workspace.")
+    cwd: str | None = Field(
+        default=None, description="Initial working directory. Must be inside the workspace."
+    )
 
 
 @app.post("/sessions", dependencies=[Depends(_require_token)])
@@ -332,8 +343,15 @@ async def delete_session(session_id: str) -> dict[str, str]:
 class ExecRequest(BaseModel):
     """Request body for ``POST /sessions/{id}/exec``."""
 
-    command: str = Field(..., min_length=1, max_length=MAX_COMMAND_LEN, description="Shell command to execute.")
-    timeout: int = Field(default=DEFAULT_TIMEOUT, ge=1, le=MAX_TIMEOUT, description="Max seconds to wait for completion.")
+    command: str = Field(
+        ..., min_length=1, max_length=MAX_COMMAND_LEN, description="Shell command to execute."
+    )
+    timeout: int = Field(
+        default=DEFAULT_TIMEOUT,
+        ge=1,
+        le=MAX_TIMEOUT,
+        description="Max seconds to wait for completion.",
+    )
 
 
 @app.post("/sessions/{session_id}/exec", dependencies=[Depends(_require_token)])
@@ -355,11 +373,7 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         await create_session(CreateSession(session_id=sid, cwd=WORKSPACE_REAL))
 
     marker = f"__AGENT_DONE_{uuid.uuid4().hex[:8]}__"
-    full_cmd = (
-        f"{body.command}\n"
-        f"__ec=$?\n"
-        f"printf '\\n{marker}=%d\\n' \"$__ec\""
-    )
+    full_cmd = f"{body.command}\n__ec=$?\nprintf '\\n{marker}=%d\\n' \"$__ec\""
     # ``send-keys -l`` writes the command as a literal string. Without
     # ``-l`` tmux interprets special tokens (``C-c``, ``Enter``, ``Tab``,
     # arrow keys, etc.) which can silently corrupt or terminate the
@@ -384,7 +398,9 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         duration_ms = int((time.time() - start) * 1000)
         logger.warning(
             "exec.timeout sid=%s duration_ms=%d cmd_len=%d",
-            sid, duration_ms, len(body.command),
+            sid,
+            duration_ms,
+            len(body.command),
         )
         return {
             "stdout": output,
@@ -394,7 +410,7 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
             "duration_ms": duration_ms,
         }
 
-    exit_code: Optional[int] = None
+    exit_code: int | None = None
     # ``re.findall`` returns every match in order; we want the **last**
     # one because the real marker is appended after the command output
     # in the wrapped ``full_cmd`` above. ``re.search`` would pick the
@@ -412,7 +428,10 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     duration_ms = int((time.time() - start) * 1000)
     logger.info(
         "exec sid=%s exit=%s duration_ms=%d cmd_len=%d",
-        sid, exit_code, duration_ms, len(body.command),
+        sid,
+        exit_code,
+        duration_ms,
+        len(body.command),
     )
     return {
         "stdout": output,
@@ -438,7 +457,9 @@ def _truncate_output(s: str) -> str:
 
 
 @app.get("/sessions/{session_id}/capture", dependencies=[Depends(_require_token)])
-async def capture_pane(session_id: str, lines: int = Query(default=100, ge=1, le=10000)) -> dict[str, str]:
+async def capture_pane(
+    session_id: str, lines: int = Query(default=100, ge=1, le=10000)
+) -> dict[str, str]:
     """Return the last ``lines`` lines of the session's tmux scrollback.
 
     Dedicated endpoint — does not spawn a shell, so it's safe to call from
@@ -457,13 +478,16 @@ async def capture_pane(session_id: str, lines: int = Query(default=100, ge=1, le
 
 
 @app.get("/sessions/{session_id}/output", dependencies=[Depends(_require_token)])
-async def tail_output(session_id: str, lines: int = Query(default=100, ge=1, le=10000)) -> dict[str, str]:
+async def tail_output(
+    session_id: str, lines: int = Query(default=100, ge=1, le=10000)
+) -> dict[str, str]:
     """Alias of :func:`capture_pane` kept for backwards compatibility."""
     return await capture_pane(session_id, lines=lines)
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "agent_api:app",
         host="0.0.0.0",

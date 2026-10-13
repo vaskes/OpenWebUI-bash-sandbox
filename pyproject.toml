@@ -3,18 +3,21 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-# F401 - unused imports
-# E501 - line too long (we set 100)
-# W291 - trailing whitespace
-# B008 - function call in default argument
-# B904 - raise from
 select = ["E", "F", "W", "I", "B", "UP", "N"]
 ignore = [
     "E501",   # line length — we keep 100 by config but allow slight overflow for docstrings/comments
     "B008",   # FastAPI uses `Path()` etc in defaults — false positive
     "B904",   # raise in except is OK for our use
+    "N812",   # we explicitly use _PROXY_CORE_VERSION, _AGENT_CORE_VERSION to avoid clobbering local __version__
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["B011"]  # asserts in tests are fine
+"tests/*" = [
+    "E402",   # tests have sys.path manipulation before imports — by design
+    "E701",   # mock helpers with compact if/return
+    "B011",   # asserts in tests are fine
+    "F401",   # dynamic imports in tests (try/except)
+    "PLC0415", # we explicitly use try/except ImportError for optional deps
+    "N812",   # same as main
+]
 "__init__.py" = ["F401"]

@@ -4,6 +4,7 @@ Separated from :mod:`openapi_proxy` so it can be unit-tested without
 pulling in FastAPI/Pydantic/httpx. The constants here define the public
 command syntax that the LLM sees.
 """
+
 from __future__ import annotations
 
 __version__ = "2.1.0"

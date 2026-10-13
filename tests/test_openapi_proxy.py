@@ -4,6 +4,7 @@ The full OpenAPI app pulls in httpx + FastAPI which aren't available in the
 unit-test environment. These tests target the stable surface — the prefix
 constants that define the public command syntax the LLM sees.
 """
+
 from __future__ import annotations
 
 import sys
@@ -19,9 +20,11 @@ from proxy_core import (  # noqa: E402
     EXEC_TIMEOUT_SECONDS,
     SEARXNG_TIMEOUT_SECONDS,
     SSH_PREFIX,
+    WEB_SEARCH_PREFIX,
     WEBSOCKET_POLL_INTERVAL,
     WEBSOCKET_SESSION_ID,
-    WEB_SEARCH_PREFIX,
+)
+from proxy_core import (
     __version__ as PROXY_CORE_VERSION,
 )
 

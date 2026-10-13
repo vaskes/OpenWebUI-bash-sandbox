@@ -3,6 +3,7 @@
 Each test pins one bug from the review so a future refactor can't
 silently reintroduce it.
 """
+
 from __future__ import annotations
 
 import os
@@ -29,6 +30,7 @@ def _fresh_app():
     if "agent_api" in sys.modules:
         del sys.modules["agent_api"]
     from agent_api import SESSIONS, app  # noqa: E402
+
     SESSIONS.clear()
     return app, SESSIONS, tmp
 
@@ -54,9 +56,12 @@ class TestSendKeysLiteral(_AgentBase):
         async def fake_tmux(*args):
             captured_args.append(args)
             cmd = args[0]
-            if cmd == "has-session": return (1, "", "")
-            if cmd == "new-session": return (0, "", "")
-            if cmd == "send-keys": return (0, "", "")
+            if cmd == "has-session":
+                return (1, "", "")
+            if cmd == "new-session":
+                return (0, "", "")
+            if cmd == "send-keys":
+                return (0, "", "")
             if cmd == "capture-pane":
                 return (0, "$ Press Enter to continue\n__AGENT_DONE_abc12345__=0\n", "")
             return (0, "", "")
@@ -90,7 +95,8 @@ class TestMarkerRegexLastWins(_AgentBase):
 
         async def fake_tmux(*args):
             cmd = args[0]
-            if cmd == "has-session": return (0, "", "")
+            if cmd == "has-session":
+                return (0, "", "")
             if cmd == "send-keys":
                 # Extract the marker from the wrapped full_cmd.
                 payload = " ".join(str(a) for a in args)
@@ -128,6 +134,7 @@ class TestOutputTruncation(_AgentBase):
 
     def test_truncate_huge_output(self) -> None:
         import agent_api  # noqa: PLC0415
+
         original = agent_api.MAX_OUTPUT_BYTES
         agent_api.MAX_OUTPUT_BYTES = 100
         self.addCleanup(lambda: setattr(agent_api, "MAX_OUTPUT_BYTES", original))
@@ -136,15 +143,19 @@ class TestOutputTruncation(_AgentBase):
 
         async def fake_tmux(*args):
             cmd = args[0]
-            if cmd == "has-session": return (0, "", "")
-            if cmd == "send-keys": return (0, "", "")
+            if cmd == "has-session":
+                return (0, "", "")
+            if cmd == "send-keys":
+                return (0, "", "")
             if cmd == "capture-pane":
                 return (0, huge + "\n__AGENT_DONE_abc12345__=0\n", "")
             return (0, "", "")
 
         with patch("agent_api._tmux", new=fake_tmux):
             r = self.client.post(
-                "/sessions/x/exec", json={"command": "echo huge", "timeout": 5}, headers=self.auth,
+                "/sessions/x/exec",
+                json={"command": "echo huge", "timeout": 5},
+                headers=self.auth,
             )
             self.assertEqual(r.status_code, 200)
             self.assertIn("[output truncated at 100 bytes]", r.json()["stdout"])
@@ -168,8 +179,13 @@ class TestLifespanNoLongerKillsSessions(_AgentBase):
             with patch("agent_api._tmux", new=fake_tmux):
                 # Pre-populate the registry so there's something to kill
                 # if the old behaviour was still in place.
-                from agent_api import SESSIONS, _tmux  # noqa: PLC0415
-                SESSIONS["preserved"] = {"tmux_name": "agent_preserved", "created": 0.0, "cwd": "/tmp"}
+                from agent_api import SESSIONS  # noqa: PLC0415
+
+                SESSIONS["preserved"] = {
+                    "tmux_name": "agent_preserved",
+                    "created": 0.0,
+                    "cwd": "/tmp",
+                }
                 # Trigger the lifespan exit.
                 with self.client:
                     pass  # entering __enter__ runs startup, exiting __exit__ runs shutdown
@@ -194,8 +210,10 @@ def _fresh_proxy_app(env_overrides=None):
         os.environ[k] = v
     if "openapi_proxy" in sys.modules:
         del sys.modules["openapi_proxy"]
-    from openapi_proxy import app, _rate_limiter  # noqa: E402
     from fastapi.testclient import TestClient  # noqa: E402
+
+    from openapi_proxy import _rate_limiter, app  # noqa: E402
+
     _rate_limiter._buckets.clear()
     return app, _rate_limiter, TestClient(app)
 
@@ -216,6 +234,7 @@ class TestSshCommandInjection(_ProxyBase):
         """Return an AsyncMock that pretends to be the sandbox-agent.
         Records every forwarded command so tests can assert on it."""
         from unittest.mock import AsyncMock, MagicMock
+
         response = MagicMock()
         response.raise_for_status = MagicMock()
         response.json = MagicMock(return_value={"stdout": "ok", "exit_code": 0})
@@ -227,7 +246,8 @@ class TestSshCommandInjection(_ProxyBase):
         client = self._make_upstream_mock()
         with patch("openapi_proxy._client", new=lambda _req: client):
             body = self.client.post(
-                "/bash", json={"command": "ssh lab.local ; rm -rf /", "session_id": "x"},
+                "/bash",
+                json={"command": "ssh lab.local ; rm -rf /", "session_id": "x"},
                 headers=self.headers,
             ).json()
         # Either the flag validator or the shlex parser rejects this.
@@ -239,6 +259,7 @@ class TestSshCommandInjection(_ProxyBase):
 
     def test_proxy_command_rejected(self) -> None:
         from unittest.mock import AsyncMock, MagicMock
+
         response = MagicMock()
         response.raise_for_status = MagicMock()
         response.json = MagicMock(return_value={"stdout": "ok", "exit_code": 0})
@@ -254,6 +275,7 @@ class TestSshCommandInjection(_ProxyBase):
 
     def test_jump_host_rejected(self) -> None:
         from unittest.mock import AsyncMock, MagicMock
+
         response = MagicMock()
         response.raise_for_status = MagicMock()
         response.json = MagicMock(return_value={"stdout": "ok", "exit_code": 0})
@@ -269,6 +291,7 @@ class TestSshCommandInjection(_ProxyBase):
 
     def test_port_forward_rejected(self) -> None:
         from unittest.mock import AsyncMock, MagicMock
+
         response = MagicMock()
         response.raise_for_status = MagicMock()
         response.json = MagicMock(return_value={"stdout": "ok", "exit_code": 0})
@@ -287,7 +310,8 @@ class TestSshCommandInjection(_ProxyBase):
         client = self._make_upstream_mock()
         with patch("openapi_proxy._client", new=lambda _req: client):
             body = self.client.post(
-                "/bash", json={"command": "ssh lab.local", "session_id": "x"},
+                "/bash",
+                json={"command": "ssh lab.local", "session_id": "x"},
                 headers=self.headers,
             ).json()
         self.assertEqual(body.get("exit_code"), 0, body)
@@ -315,6 +339,7 @@ class TestHostnameCaseInsensitive(_ProxyBase):
 
     def test_uppercase_hostname_matches_lowercase_allowlist(self) -> None:
         from openapi_proxy import _ssh_host_allowed  # noqa: PLC0415
+
         self.assertTrue(_ssh_host_allowed("Lab.Local"))
         self.assertTrue(_ssh_host_allowed("LAB.LOCAL"))
 
@@ -339,6 +364,7 @@ class TestLoggerFormatFix(_ProxyBase):
 
     def test_startup_log_message_does_not_contain_stray_andbox(self) -> None:
         import logging
+
         records: list[str] = []
 
         class _Capture(logging.Handler):
@@ -370,6 +396,7 @@ class TestWebSocketNoTokenInQuery(_ProxyBase):
         frame, which is the expected behaviour.
         """
         from starlette.websockets import WebSocketDisconnect
+
         with self.assertRaises(WebSocketDisconnect) as ctx:
             with self.client.websocket_connect("/ws?token=test-token"):
                 pass

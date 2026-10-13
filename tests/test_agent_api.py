@@ -5,6 +5,7 @@ and are safe to run anywhere Python 3.10+ is available. They target
 :mod:`agent_core` directly to keep the test surface independent of the
 FastAPI app defined in :mod:`agent_api`.
 """
+
 from __future__ import annotations
 
 import sys
@@ -17,7 +18,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent_core import SESSION_ID_MAX_LEN, TMUX_PREFIX, __version__ as AGENT_CORE_VERSION, safe_id, tmux_name  # noqa: E402
+from agent_core import SESSION_ID_MAX_LEN, TMUX_PREFIX, safe_id, tmux_name  # noqa: E402
+from agent_core import __version__ as AGENT_CORE_VERSION
 
 
 class TestSafeId(unittest.TestCase):

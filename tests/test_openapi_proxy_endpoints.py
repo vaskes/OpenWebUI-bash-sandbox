@@ -5,6 +5,7 @@ rate limiting, SSH host allowlist, the bash command dispatch, and the
 ``web_search`` shortcut. The singleton httpx client is patched per-test
 so the upstream sandbox-agent is never actually called.
 """
+
 from __future__ import annotations
 
 import os
@@ -33,8 +34,10 @@ def _fresh_app(env_overrides: dict[str, str] | None = None):
         os.environ[k] = v
     if "openapi_proxy" in sys.modules:
         del sys.modules["openapi_proxy"]
-    from openapi_proxy import app  # noqa: E402
     from fastapi.testclient import TestClient  # noqa: E402
+
+    from openapi_proxy import app  # noqa: E402
+
     return app, TestClient(app)
 
 
@@ -108,9 +111,11 @@ class TestCors(_Base):
         self.assertNotIn("access-control-allow-origin", {k.lower() for k in r.headers})
 
     def test_cors_allowlist_enforced(self) -> None:
-        self.app, raw = _fresh_app({
-            "OPENAPI_PROXY_CORS_ORIGINS": "https://app.example.com,http://localhost:3000",
-        })
+        self.app, raw = _fresh_app(
+            {
+                "OPENAPI_PROXY_CORS_ORIGINS": "https://app.example.com,http://localhost:3000",
+            }
+        )
         self.client = raw.__enter__()
         self.addCleanup(raw.__exit__, None, None, None)
         # Allowed origin gets the header.
@@ -209,6 +214,7 @@ class TestBashDispatch(_Base):
 
     def test_bash_upstream_error(self) -> None:
         import httpx as _httpx  # noqa: PLC0415
+
         mock_client = AsyncMock()
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock(side_effect=_httpx.HTTPError("connection refused"))
@@ -225,9 +231,11 @@ class TestBashDispatch(_Base):
         mock_client = AsyncMock()
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(return_value={
-            "results": [{"title": "t", "url": "u"}],
-        })
+        mock_resp.json = MagicMock(
+            return_value={
+                "results": [{"title": "t", "url": "u"}],
+            }
+        )
         mock_client.get = AsyncMock(return_value=mock_resp)
         with patch("openapi_proxy._client", new=lambda _req: mock_client):
             body = self.client.post(
@@ -261,18 +269,22 @@ class TestBashDispatch(_Base):
 # ---------------------------------------------------------------------------
 class TestRateLimit(_Base):
     def test_rate_limit_returns_429(self) -> None:
-        self.app, raw = _fresh_app({
-            "OPENAPI_PROXY_RATE_LIMIT_RPM": "3",  # 3 requests / min
-        })
+        self.app, raw = _fresh_app(
+            {
+                "OPENAPI_PROXY_RATE_LIMIT_RPM": "3",  # 3 requests / min
+            }
+        )
         self.client = raw.__enter__()
         self.addCleanup(raw.__exit__, None, None, None)
         # Reset the global rate limiter so prior tests don't poison the bucket.
         from openapi_proxy import _rate_limiter  # noqa: PLC0415
+
         _rate_limiter._buckets.clear()
         # Fire 4 requests rapidly.
         statuses = [
             self.client.post(
-                "/bash", json={"command": "echo x", "session_id": "x"},
+                "/bash",
+                json={"command": "echo x", "session_id": "x"},
                 headers=self.headers,
             ).status_code
             for _ in range(4)
@@ -287,13 +299,17 @@ class TestRateLimit(_Base):
 class TestInputValidation(_Base):
     def test_empty_command_rejected(self) -> None:
         r = self.client.post(
-            "/bash", json={"command": "", "session_id": "x"}, headers=self.headers,
+            "/bash",
+            json={"command": "", "session_id": "x"},
+            headers=self.headers,
         )
         self.assertEqual(r.status_code, 422)
 
     def test_missing_command_rejected(self) -> None:
         r = self.client.post(
-            "/bash", json={"session_id": "x"}, headers=self.headers,
+            "/bash",
+            json={"session_id": "x"},
+            headers=self.headers,
         )
         self.assertEqual(r.status_code, 422)
 

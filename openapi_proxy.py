@@ -31,6 +31,7 @@ command is forwarded to the sandbox:
 For everything else the command is forwarded to ``POST /sessions/{id}/exec``
 on the upstream sandbox-agent.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -41,9 +42,10 @@ import os
 import re
 import shlex
 import time
+import uuid
 from collections import OrderedDict
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 from fastapi import (
@@ -63,8 +65,10 @@ from proxy_core import (
     DEFAULT_SESSION_ID,
     EXEC_TIMEOUT_SECONDS,
     SSH_PREFIX,
-    WEBSOCKET_POLL_INTERVAL,
     WEB_SEARCH_PREFIX,
+    WEBSOCKET_POLL_INTERVAL,
+)
+from proxy_core import (
     __version__ as _PROXY_CORE_VERSION,
 )
 
@@ -120,7 +124,7 @@ class _RateLimiter:
         self.rpm = requests_per_minute
         self.max_keys = max_keys
         # OrderedDict so we can popitem(last=False) to evict the LRU.
-        self._buckets: "OrderedDict[str, tuple[float, float]]" = OrderedDict()
+        self._buckets: OrderedDict[str, tuple[float, float]] = OrderedDict()
 
     def check(self, key: str) -> bool:
         if self.rpm <= 0:
@@ -151,7 +155,7 @@ _rate_limiter = _RateLimiter(RATE_LIMIT_RPM, RATE_LIMIT_MAX_KEYS)
 _bearer = HTTPBearer(auto_error=False)
 
 
-def _require_token(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)) -> str:
+def _require_token(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> str:
     """FastAPI dependency: validate ``Authorization: Bearer <token>``.
 
     Rejects the request with 401 if the proxy has no token configured (we
@@ -160,7 +164,9 @@ def _require_token(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bear
     """
     if not PROXY_TOKEN:
         logger.error("auth disabled but OPENAPI_PROXY_TOKEN is empty — refusing all requests")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="proxy not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="proxy not configured"
+        )
     if creds is None or creds.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -214,7 +220,7 @@ def _ssh_host_allowed(host: str) -> bool:
     return host.lower() in {h.lower() for h in SSH_ALLOWLIST}
 
 
-def _validate_ssh_args(rest: str) -> tuple[Optional[str], Optional[str]]:
+def _validate_ssh_args(rest: str) -> tuple[str | None, str | None]:
     """Parse the ``ssh …`` payload and return ``(host, safe_argv_string)``.
 
     Defence-in-depth: we accept only a small whitelist of ssh flags
@@ -241,7 +247,7 @@ def _validate_ssh_args(rest: str) -> tuple[Optional[str], Optional[str]]:
     # (which may be ``user@host``). Flags must come from
     # :data:`SSH_ALLOWED_FLAGS` and ``-o`` may only set safe options.
     i = 0
-    host: Optional[str] = None
+    host: str | None = None
     while i < len(tokens):
         tok = tokens[i]
         if not tok.startswith("-"):
@@ -336,8 +342,15 @@ def _client(request: Request) -> httpx.AsyncClient:
 class BashReq(BaseModel):
     """Request body for ``POST /bash``."""
 
-    command: str = Field(..., min_length=1, max_length=1_000_000, description="Shell command. Persistent state preserved across calls within same session_id.")
-    session_id: str = Field(default=DEFAULT_SESSION_ID, max_length=128, description="Session ID for persistent shell.")
+    command: str = Field(
+        ...,
+        min_length=1,
+        max_length=1_000_000,
+        description="Shell command. Persistent state preserved across calls within same session_id.",
+    )
+    session_id: str = Field(
+        default=DEFAULT_SESSION_ID, max_length=128, description="Session ID for persistent shell."
+    )
 
 
 @app.get("/healthz")
@@ -369,8 +382,7 @@ async def _do_web_search(client: httpx.AsyncClient, query: str) -> dict[str, Any
         results = r.json().get("results", [])[:5]
         return {
             "results": [
-                {"title": item.get("title", ""), "url": item.get("url", "")}
-                for item in results
+                {"title": item.get("title", ""), "url": item.get("url", "")} for item in results
             ]
         }
     except httpx.HTTPError as exc:
@@ -444,10 +456,10 @@ async def run_bash(
     """
     stripped = command.strip()
     if stripped.startswith(WEB_SEARCH_PREFIX):
-        query = stripped[len(WEB_SEARCH_PREFIX):].strip()
+        query = stripped[len(WEB_SEARCH_PREFIX) :].strip()
         return await _do_web_search(client, query)
     if stripped.startswith(SSH_PREFIX):
-        rest = stripped[len(SSH_PREFIX):]
+        rest = stripped[len(SSH_PREFIX) :]
         return await _do_ssh(client, rest, session_id)
     return await _do_exec(client, command, session_id)
 
@@ -461,7 +473,9 @@ async def bash(req: BashReq, request: Request, _: str = Depends(_require_token))
 
 
 @app.post("/shell_exec", operation_id="shell_exec", dependencies=[Depends(_rate_limit)])
-async def shell_exec(req: BashReq, request: Request, _: str = Depends(_require_token)) -> dict[str, Any]:
+async def shell_exec(
+    req: BashReq, request: Request, _: str = Depends(_require_token)
+) -> dict[str, Any]:
     """Alias for :func:`bash`, kept for compatibility with older Open WebUI
     tool-server configurations that look for ``shell_exec`` instead of ``bash``."""
     client = _client(request)
@@ -493,7 +507,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     for proto in websocket.headers.get("sec-websocket-protocol", "").split(","):
         proto = proto.strip()
         if proto.startswith("bearer."):
-            token = proto[len("bearer."):]
+            token = proto[len("bearer.") :]
             break
     if not token or not hmac.compare_digest(token, PROXY_TOKEN):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="unauthorized")
@@ -531,7 +545,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 r.raise_for_status()
                 output = r.json().get("output", "")
                 if output != last_output:
-                    new = output[len(last_output):] if output.startswith(last_output) else output
+                    new = output[len(last_output) :] if output.startswith(last_output) else output
                     if new:
                         await websocket.send_text(new)
                     last_output = output
@@ -573,6 +587,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "openapi_proxy:app",
         host="0.0.0.0",

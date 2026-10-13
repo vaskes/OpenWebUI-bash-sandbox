@@ -1,5 +1,6 @@
 """Pytest configuration — adds the project root to sys.path so we can import
 the application modules without a package layout."""
+
 from __future__ import annotations
 
 import os
