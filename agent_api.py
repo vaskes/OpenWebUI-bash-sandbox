@@ -199,9 +199,15 @@ async def tmux_session_exists(name: str) -> bool:
 async def lifespan(app: FastAPI):  # noqa: ARG001
     """Lifespan handler — startup/shutdown hooks.
 
-    On startup we **do not** touch tmux sessions — the persisted registry
-    in :data:`SESSIONS_FILE` is the source of truth. Existing sessions
-    will be re-attached on the first call to ``/sessions/{id}/exec`` (the
+    On **startup** we run a *reaper* pass: any session_id in
+    :data:`SESSIONS` whose underlying tmux session has died is removed
+    from the in-memory registry and the on-disk file is rewritten. This
+    keeps stale entries from accumulating when the container is killed
+    abruptly and the tmux server takes the sessions with it.
+
+    On startup we do **not** kill tmux sessions either — the persisted
+    registry is the source of truth and existing sessions will be
+    re-attached on the first call to ``/sessions/{id}/exec`` (the
     auto-create path recreates a tmux backend if the session_id is known
     but the tmux process has died, using the persisted cwd).
 
@@ -211,7 +217,41 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     process can ``attach`` again. Killing on shutdown was the v2.1
     behaviour and it broke persistence across restarts.
     """
-    yield
+    reaped = await _reap_dead_sessions()
+    if reaped:
+        logger.info("startup reaper dropped %d stale session(s): %s", reaped, ",".join(reaped))
+    try:
+        yield
+    finally:
+        # Best-effort flush so an in-flight session add doesn't get lost
+        # on a clean restart. Skip if the loop is already shutting down.
+        if SESSIONS:
+            try:
+                await _save_sessions()
+            except Exception as exc:  # noqa: BLE001
+                logger.error("final sessions flush failed: %s", exc)
+
+
+async def _reap_dead_sessions() -> list[str]:
+    """Drop registry entries whose tmux backend no longer exists.
+
+    Returns the list of session_ids that were removed. Single
+    ``tmux list-sessions -F '#{session_name}'`` is O(1) round-trips
+    regardless of registry size — the LLM can build up hundreds of
+    chat sessions and we don't want startup to take seconds.
+    """
+    rc, out, _ = await _tmux("list-sessions", "-F", "#{session_name}")
+    alive: set[str] = set()
+    if rc == 0:
+        alive = {line.strip() for line in out.splitlines() if line.strip()}
+    dead: list[str] = []
+    for sid, info in list(SESSIONS.items()):
+        if info.get("tmux_name") not in alive:
+            SESSIONS.pop(sid, None)
+            dead.append(sid)
+    if dead:
+        await _save_sessions()
+    return dead
 
 
 app = FastAPI(

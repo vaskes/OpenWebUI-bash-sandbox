@@ -100,6 +100,24 @@ RATE_LIMIT_MAX_KEYS: int = int(os.environ.get("OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS
 # injection via ``ProxyCommand`` and friends). Anything not in this set
 # is rejected.
 SSH_ALLOWED_FLAGS: set[str] = {"-p", "-l", "-i", "-o", "-q", "-v", "-vv", "-vvv"}
+# Allowlist of ``-o key=value`` options the proxy will forward. We deny
+# everything else — including ``ProxyCommand`` (RCE), ``LocalCommand`` /
+# ``PermitLocalCommand`` (local execution), ``LocalForward`` /
+# ``RemoteForward`` (port forwarding to arbitrary hosts) and
+# ``DynamicForward`` (SOCKS proxy). The list only contains options that
+# adjust connection behaviour, not what the connection does.
+SSH_SAFE_OPTIONS: set[str] = {
+    "ConnectTimeout",
+    "ServerAliveInterval",
+    "ServerAliveCountMax",
+    "ConnectionAttempts",
+    "BatchMode",
+    "AddressFamily",
+    "BindAddress",
+    "IPQoS",
+    "Compression",
+    "TCPKeepAlive",
+}
 
 logger = logging.getLogger("openapi-proxy")
 logging.basicConfig(
@@ -222,6 +240,41 @@ def _ssh_host_allowed(host: str) -> bool:
     return host.lower() in {h.lower() for h in SSH_ALLOWLIST}
 
 
+def _ssh_identity_within_workspace(path: str) -> bool:
+    """Return True if ``path`` resolves to a file inside the workspace root.
+
+    The workspace root is whatever the sandbox-agent bind-mounts at
+    ``/workspace`` — and that's the only filesystem the LLM is supposed
+    to touch. If the LLM passes ``-i /home/agent/.ssh/id_rsa`` we'd hand
+    it the operator's persistent SSH key (mounted read-only from
+    ``/opt/agent-workspace/.ssh``). Rejecting identity files outside the
+    workspace means the LLM can only use keys it just generated into the
+    workspace, which it can already read through ``bash``.
+
+    Files that do not exist on the host are still rejected — the proxy
+    has no way to verify they won't materialise as a symlink to
+    ``/home/agent/.ssh/...`` later.
+    """
+    if not path:
+        return False
+    try:
+        real = os.path.realpath(path)
+    except (OSError, ValueError):
+        return False
+    if not os.path.isfile(real):
+        return False
+    workspace = os.environ.get("AGENT_WORKSPACE", "/workspace")
+    try:
+        workspace_real = os.path.realpath(workspace)
+    except (OSError, ValueError):
+        return False
+    try:
+        common = os.path.commonpath([real, workspace_real])
+    except ValueError:
+        return False
+    return common == workspace_real
+
+
 def _validate_ssh_args(rest: str) -> tuple[str | None, str | None]:
     """Parse the ``ssh …`` payload and return ``(host, safe_argv_string)``.
 
@@ -229,13 +282,23 @@ def _validate_ssh_args(rest: str) -> tuple[str | None, str | None]:
     (``-p``, ``-l``, ``-i``, ``-o``, ``-q``, ``-v…``) plus an optional
     ``user@host`` or ``host`` token. Anything else — ``-J`` (jump host),
     ``-W`` (netcat mode), ``-L``/``-R`` (port forwards), ``-F`` (config
-    override), ``-o ProxyCommand=…`` injection — is rejected with a
-    structured error. Returns ``(None, error)`` on failure.
+    override), ``-o ProxyCommand=…`` injection, ``-o LocalCommand=…``
+    local execution, ``-o LocalForward=…`` arbitrary tunnelling — is
+    rejected with a structured error. Returns ``(None, error)`` on
+    failure.
     """
     try:
         tokens = shlex.split(rest)
     except ValueError as exc:
         return None, f"ssh: failed to parse: {exc}"
+    if not tokens:
+        return None, "ssh: missing host"
+    # The caller passes the whole ``ssh …`` string — drop the literal
+    # ``ssh`` command word if it's there. The shell_exec endpoint sends
+    # ``command="ssh -p 22 host"`` and the first token is the program
+    # name, not a positional argument.
+    if tokens and tokens[0] == "ssh":
+        tokens = tokens[1:]
     if not tokens:
         return None, "ssh: missing host"
     # Reject shell metacharacters — they're valid shlex tokens but
@@ -247,7 +310,8 @@ def _validate_ssh_args(rest: str) -> tuple[str | None, str | None]:
 
     # Walk the whole token list. The only non-flag token is the host
     # (which may be ``user@host``). Flags must come from
-    # :data:`SSH_ALLOWED_FLAGS` and ``-o`` may only set safe options.
+    # :data:`SSH_ALLOWED_FLAGS`, ``-i`` must point inside the workspace,
+    # and ``-o`` may only set options from :data:`SSH_SAFE_OPTIONS`.
     i = 0
     host: str | None = None
     while i < len(tokens):
@@ -261,16 +325,29 @@ def _validate_ssh_args(rest: str) -> tuple[str | None, str | None]:
         if tok not in SSH_ALLOWED_FLAGS:
             return None, f"ssh: flag not allowed: {tok}"
         # Flags that take a value consume the next token.
-        if tok in {"-p", "-l", "-i"} and i + 1 < len(tokens):
+        if tok in {"-p", "-l"} and i + 1 < len(tokens):
+            i += 2
+            continue
+        if tok == "-i" and i + 1 < len(tokens):
+            identity = tokens[i + 1]
+            if not _ssh_identity_within_workspace(identity):
+                return None, (f"ssh: identity file must be inside the workspace: {identity!r}")
             i += 2
             continue
         if tok == "-o" and i + 1 < len(tokens):
             opt = tokens[i + 1]
-            opt_lower = opt.lower()
-            if opt_lower.startswith("proxycommand="):
-                return None, "ssh: ProxyCommand is not allowed"
-            if opt_lower.startswith("stricthostkeychecking="):
-                return None, "ssh: StrictHostKeyChecking override is not allowed"
+            if "=" not in opt:
+                return None, f"ssh: invalid -o option (missing =): {opt!r}"
+            key = opt.split("=", 1)[0]
+            # Whitelist by option *name*, case-insensitive — ssh itself
+            # is case-insensitive on option names. A blocklist would
+            # still let through new dangerous options we haven't
+            # thought of.
+            # SSH option names are case-insensitive — match real ssh.
+            if key not in SSH_SAFE_OPTIONS and key.lower() not in {
+                o.lower() for o in SSH_SAFE_OPTIONS
+            }:
+                return None, f"ssh: -o {key}=… not allowed"
             i += 2
             continue
         i += 1
@@ -280,10 +357,8 @@ def _validate_ssh_args(rest: str) -> tuple[str | None, str | None]:
     if not _ssh_host_allowed(bare_host):
         return None, f"ssh host not in allowlist: {bare_host}"
 
-    # Re-assemble the command. We pin ``StrictHostKeyChecking=accept-new``
-    # (already the default) and forbid every other ``-o`` from the user.
-    # Only the ``tokens[0..i]`` slice is forwarded — anything after the
-    # host is dropped.
+    # Re-assemble the command. StrictHostKeyChecking=accept-new is the
+    # default; we don't need to override it.
     return bare_host, " ".join(shlex.quote(t) for t in tokens[: i + 1])
 
 

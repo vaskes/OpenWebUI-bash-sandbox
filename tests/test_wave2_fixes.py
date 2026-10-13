@@ -320,14 +320,25 @@ class TestSshCommandInjection(_ProxyBase):
         self.assertIn("lab.local", sent)
 
     def test_ssh_with_known_flag_accepted(self) -> None:
-        """``-p`` (port) and ``-i`` (key file) are whitelisted flags."""
-        client = self._make_upstream_mock()
-        with patch("openapi_proxy._client", new=lambda _req: client):
-            body = self.client.post(
-                "/bash",
-                json={"command": "ssh -p 2222 -i /tmp/key lab.local", "session_id": "x"},
-                headers=self.headers,
-            ).json()
+        """``-p`` (port) is whitelisted. ``-i <key>`` is also whitelisted
+        when the key file lives inside the workspace."""
+        import tempfile  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as tmp:
+            key = os.path.join(tmp, "id_ed25519")
+            with open(key, "w") as f:
+                f.write("fake")
+            with patch.dict(os.environ, {"AGENT_WORKSPACE": tmp}):
+                client = self._make_upstream_mock()
+                with patch("openapi_proxy._client", new=lambda _req: client):
+                    body = self.client.post(
+                        "/bash",
+                        json={
+                            "command": f"ssh -p 2222 -i {key} lab.local",
+                            "session_id": "x",
+                        },
+                        headers=self.headers,
+                    ).json()
         self.assertEqual(body.get("exit_code"), 0, body)
         sent = client.post.call_args.kwargs["json"]["command"]
         self.assertIn("-p", sent)
@@ -404,6 +415,28 @@ class TestWebSocketNoTokenInQuery(_ProxyBase):
         # because FastAPI/Starlette versions format it differently, but
         # 1008 (policy violation) is the expected close code.
         self.assertIn(ctx.exception.code, (1008, 1006))
+
+    def test_websocket_protocol_header_accepted(self) -> None:
+        """Happy path: Sec-WebSocket-Protocol: bearer.<token> must be accepted.
+
+        Browser-based WebSocket clients (Open WebUI terminal) cannot set
+        the Authorization header. They send the token via
+        ``Sec-WebSocket-Protocol: bearer.<token>`` and the server must
+        accept the connection. If this is broken, the terminal never
+        works in production.
+        """
+        with self.client.websocket_connect(
+            "/ws",
+            subprotocols=["bearer.test-token"],
+        ) as ws:
+            # First message is the terminal banner — proves the connection
+            # was authenticated and the server started the session loop.
+            banner = ws.receive_text()
+            self.assertIn("sandbox-agent terminal", banner)
+            self.assertIn("session=", banner)
+            # Starlette echoes the chosen subprotocol back in headers; we
+            # don't pin the exact wire format — just that the token was
+            # accepted (no disconnect, no 1008 close).
 
 
 if __name__ == "__main__":
