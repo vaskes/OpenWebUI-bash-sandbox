@@ -264,15 +264,31 @@ issue above. Almost always means `SANDBOX_URL` is unset inside the proxy.
 
 ## Limitations
 
-- **No user-level isolation at the sandbox layer.** All users share the
-  same `sandbox-agent` container, which means all users share the same
-  tmux server. Per-user containers is the only complete mitigation;
-  that's out of scope here. See [docs/SECURITY.md](docs/SECURITY.md).
-- **Bearer token is shared across all users** of Open WebUI. Multi-tenant
-  auth would need a JWT layer with per-user identity and per-user rate
-  limits. Out of scope.
+### Single trust boundary (by design, not by accident)
+
+This stack assumes **one operator controls the Open WebUI instance and
+the agents behind it**. It is **not** a multi-tenant system. Concretely:
+
+* **One bearer token** is shared between the UI, the proxy and the agent.
+  Anyone who can talk to the UI can talk to the agent with the same
+  privileges.
+* **One tmux server** backs all chat sessions. Users can guess each
+  other's `session_id` and `tmux attach` to it.
+* **No per-user rate limits.** The rate limiter keys on the bearer
+  token, which is shared.
+
+If you need multi-tenant, the right answer is **per-user containers** —
+run a separate `sandbox-agent` per user, each with its own
+`AGENT_TOKEN`, its own `/workspace`, its own volumes. That is
+intentionally out of scope here. Trying to bolt multi-tenant auth onto
+this stack would be the wrong abstraction.
+
+### Other limitations
+
 - **No external network isolation by default.** The container can reach
   any host the host can. Use a firewall or run inside a network namespace.
+- **No resource isolation between users.** A user who runs `fork()` in
+  a loop will exhaust the per-container `pids_limit` and stop everyone.
 
 ## License
 

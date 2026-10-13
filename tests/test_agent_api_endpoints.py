@@ -20,7 +20,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -33,6 +33,7 @@ def _fresh_app():
     tmpdir = tempfile.mkdtemp(prefix="agent-test-")
     os.environ["AGENT_SESSIONS_FILE"] = os.path.join(tmpdir, "sessions.json")
     os.environ["AGENT_WORKSPACE"] = tmpdir
+    os.environ["AGENT_TOKEN"] = "test-agent-token-xyz"
     os.makedirs(tmpdir, exist_ok=True)
     if "agent_api" in sys.modules:
         del sys.modules["agent_api"]
@@ -66,23 +67,23 @@ def _make_tmux_mock():
         nonlocal last_send_keys
         calls.append(args)
         cmd = args[0] if args else ""
-        # Stash send-keys payload for later capture-pane matching.
         if cmd == "send-keys":
-            last_send_keys = " ".join(args[3:-1]) if len(args) >= 4 else ""
-        # Find the most recent matching schedule.
+            try:
+                li = args.index("-l")
+                end = len(args) - 1 if args and args[-1] == "Enter" else len(args)
+                last_send_keys = " ".join(args[li + 1 : end])
+            except ValueError:
+                pass
         for needle, rc, stdout, stderr in reversed(schedules):
             if cmd.startswith(needle):
-                # Special: if stdout contains {marker}, substitute the
-                # real marker that was sent in the last send-keys call.
                 if "{marker}" in stdout:
                     m = re.search(r"__AGENT_DONE_([0-9a-f]{8})__", last_send_keys)
                     if m:
-                        real_marker = m.group(0)
-                        stdout = stdout.replace("{marker}", real_marker)
+                        stdout = stdout.replace("{marker}", m.group(0))
                 return (rc, stdout, stderr)
         return (0, "", "")
 
-    mock = AsyncMock(side_effect=_side_effect)
+    mock = _side_effect
     mock.schedule = schedule
     mock.calls = calls
     return mock
@@ -96,6 +97,7 @@ class _Base(unittest.TestCase):
             self.skipTest("fastapi.testclient not available")
         self.app, self.sessions, self.tmpdir, self.workspace_real = _fresh_app()
         self.client = TestClient(self.app)
+        self.auth = {"Authorization": "Bearer test-agent-token-xyz"}
 
 
 class TestHealthz(_Base):
@@ -111,16 +113,20 @@ class TestCreateSessionRejectsBadCwd(_Base):
     """Path-traversal protection — the headline security fix."""
 
     def test_absolute_path_outside_workspace_rejected(self) -> None:
-        r = self.client.post("/sessions", json={"session_id": "x", "cwd": "/etc"})
+        r = self.client.post("/sessions", json={"session_id": "x", "cwd": "/etc"}, headers=self.auth)
         self.assertEqual(r.status_code, 400)
         self.assertIn("outside workspace", r.json()["detail"])
 
     def test_dotdot_traversal_rejected(self) -> None:
-        r = self.client.post("/sessions", json={"session_id": "x", "cwd": str(Path(self.tmpdir) / ".." / "etc")})
+        r = self.client.post(
+            "/sessions",
+            json={"session_id": "x", "cwd": str(Path(self.tmpdir) / ".." / "etc")},
+            headers=self.auth,
+        )
         self.assertEqual(r.status_code, 400)
 
     def test_nonexistent_path_rejected(self) -> None:
-        r = self.client.post("/sessions", json={"session_id": "x", "cwd": "/this/does/not/exist"})
+        r = self.client.post("/sessions", json={"session_id": "x", "cwd": "/this/does/not/exist"}, headers=self.auth)
         self.assertEqual(r.status_code, 400)
 
     def test_valid_cwd_accepted(self) -> None:
@@ -128,7 +134,7 @@ class TestCreateSessionRejectsBadCwd(_Base):
         mock.schedule("has-session", rc=1)  # not found
         mock.schedule("new-session", rc=0)  # success
         with patch("agent_api._tmux", new=mock):
-            r = self.client.post("/sessions", json={"session_id": "valid", "cwd": self.workspace_real})
+            r = self.client.post("/sessions", json={"session_id": "valid", "cwd": self.workspace_real}, headers=self.auth)
             self.assertEqual(r.status_code, 200, r.text)
             self.assertFalse(r.json()["existed"])
 
@@ -139,14 +145,14 @@ class TestCreateSessionHappyPath(_Base):
         mock.schedule("has-session", rc=1)  # not found (first call)
         mock.schedule("new-session", rc=0)
         with patch("agent_api._tmux", new=mock):
-            r1 = self.client.post("/sessions", json={"session_id": "abc", "cwd": self.workspace_real})
+            r1 = self.client.post("/sessions", json={"session_id": "abc", "cwd": self.workspace_real}, headers=self.auth)
             self.assertEqual(r1.status_code, 200, r1.text)
             self.assertFalse(r1.json()["existed"])
 
         mock2 = _make_tmux_mock()
         mock2.schedule("has-session", rc=0)  # exists
         with patch("agent_api._tmux", new=mock2):
-            r2 = self.client.post("/sessions", json={"session_id": "abc", "cwd": self.workspace_real})
+            r2 = self.client.post("/sessions", json={"session_id": "abc", "cwd": self.workspace_real}, headers=self.auth)
             self.assertEqual(r2.status_code, 200)
             self.assertTrue(r2.json()["existed"])
 
@@ -163,7 +169,7 @@ class TestExecAutoCreatesSession(_Base):
         # Template — ``{marker}`` is replaced with whatever was sent above.
         mock.schedule("capture-pane", stdout="$ pwd\n/workspace\n\n{marker}=0\n")
         with patch("agent_api._tmux", new=mock):
-            r = self.client.post("/sessions/auto-1/exec", json={"command": "pwd", "timeout": 5})
+            r = self.client.post("/sessions/auto-1/exec", json={"command": "pwd", "timeout": 5}, headers=self.auth)
             self.assertEqual(r.status_code, 200, r.text)
             body = r.json()
             self.assertFalse(body["timed_out"], body)
@@ -184,7 +190,7 @@ class TestExecTimeout(_Base):
         mock.schedule("send-keys", rc=0)
         mock.schedule("capture-pane", stdout="partial output without marker")
         with patch("agent_api._tmux", new=mock):
-            r = self.client.post("/sessions/to-1/exec", json={"command": "sleep 99", "timeout": 1})
+            r = self.client.post("/sessions/to-1/exec", json={"command": "sleep 99", "timeout": 1}, headers=self.auth)
             self.assertEqual(r.status_code, 200)
             body = r.json()
             self.assertTrue(body["timed_out"])
@@ -197,7 +203,7 @@ class TestSessionPersistence(_Base):
         mock.schedule("has-session", rc=1)
         mock.schedule("new-session", rc=0)
         with patch("agent_api._tmux", new=mock):
-            r = self.client.post("/sessions", json={"session_id": "persist-1", "cwd": self.workspace_real})
+            r = self.client.post("/sessions", json={"session_id": "persist-1", "cwd": self.workspace_real}, headers=self.auth)
             self.assertEqual(r.status_code, 200, r.text)
 
         sessions_file = Path(os.environ["AGENT_SESSIONS_FILE"])
@@ -218,26 +224,26 @@ class TestDeleteSession(_Base):
         mock = _make_tmux_mock()
         mock.schedule("kill-session", rc=0)
         with patch("agent_api._tmux", new=mock):
-            r = self.client.delete("/sessions/does-not-exist")
+            r = self.client.delete("/sessions/does-not-exist", headers=self.auth)
             self.assertEqual(r.status_code, 200)
             self.assertEqual(r.json()["deleted"], "does-not-exist")
 
 
 class TestExecValidation(_Base):
     def test_empty_command_rejected_by_pydantic(self) -> None:
-        r = self.client.post("/sessions/x/exec", json={"command": ""})
+        r = self.client.post("/sessions/x/exec", json={"command": ""}, headers=self.auth)
         self.assertEqual(r.status_code, 422)
 
     def test_oversized_command_rejected(self) -> None:
-        r = self.client.post("/sessions/x/exec", json={"command": "a" * 2_000_000})
+        r = self.client.post("/sessions/x/exec", json={"command": "a" * 2_000_000}, headers=self.auth)
         self.assertEqual(r.status_code, 422)
 
     def test_negative_timeout_rejected(self) -> None:
-        r = self.client.post("/sessions/x/exec", json={"command": "ls", "timeout": -1})
+        r = self.client.post("/sessions/x/exec", json={"command": "ls", "timeout": -1}, headers=self.auth)
         self.assertEqual(r.status_code, 422)
 
     def test_huge_timeout_rejected(self) -> None:
-        r = self.client.post("/sessions/x/exec", json={"command": "ls", "timeout": 99999})
+        r = self.client.post("/sessions/x/exec", json={"command": "ls", "timeout": 99999}, headers=self.auth)
         self.assertEqual(r.status_code, 422)
 
 
@@ -248,7 +254,7 @@ class TestCaptureEndpoint(_Base):
         mock = _make_tmux_mock()
         mock.schedule("has-session", rc=1)  # not found
         with patch("agent_api._tmux", new=mock):
-            r = self.client.get("/sessions/missing/capture")
+            r = self.client.get("/sessions/missing/capture", headers=self.auth)
             self.assertEqual(r.status_code, 404)
 
     def test_capture_returns_output(self) -> None:
@@ -256,7 +262,7 @@ class TestCaptureEndpoint(_Base):
         mock.schedule("has-session", rc=0)
         mock.schedule("capture-pane", stdout="the output")
         with patch("agent_api._tmux", new=mock):
-            r = self.client.get("/sessions/s1/capture?lines=50")
+            r = self.client.get("/sessions/s1/capture?lines=50", headers=self.auth)
             self.assertEqual(r.status_code, 200)
             self.assertEqual(r.json()["output"], "the output")
 

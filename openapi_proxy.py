@@ -38,7 +38,10 @@ import hmac
 import ipaddress
 import logging
 import os
+import re
+import shlex
 import time
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
@@ -86,6 +89,14 @@ SSH_ALLOWLIST: list[str] = [
 # In-memory rate limit: max RATE_LIMIT_RPM requests per minute per token.
 # Set to 0 to disable.
 RATE_LIMIT_RPM: int = int(os.environ.get("OPENAPI_PROXY_RATE_LIMIT_RPM", "120"))
+# Upper bound on the number of distinct rate-limit keys we track. Past
+# this we evict the least-recently-used key — prevents unbounded growth
+# under token-spraying attacks.
+RATE_LIMIT_MAX_KEYS: int = int(os.environ.get("OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS", "10000"))
+# SSH shortcuts: which ``-o`` flags we allow (defence against command
+# injection via ``ProxyCommand`` and friends). Anything not in this set
+# is rejected.
+SSH_ALLOWED_FLAGS: set[str] = {"-p", "-l", "-i", "-o", "-q", "-v", "-vv", "-vvv"}
 
 logger = logging.getLogger("openapi-proxy")
 logging.basicConfig(
@@ -98,19 +109,31 @@ logging.basicConfig(
 # Rate limiter (in-memory token bucket per token)
 # ---------------------------------------------------------------------------
 class _RateLimiter:
-    """Token-bucket rate limiter, in-memory. Resets on process restart —
-    that's acceptable for a single-replica service. For a multi-replica
-    deployment, swap for a Redis-backed implementation."""
+    """Token-bucket rate limiter with LRU eviction.
 
-    def __init__(self, requests_per_minute: int):
+    In-memory and resets on process restart — that's acceptable for a
+    single-replica service. For a multi-replica deployment, swap for a
+    Redis-backed implementation. The LRU cap prevents unbounded memory
+    growth when attackers rotate tokens.
+    """
+
+    def __init__(self, requests_per_minute: int, max_keys: int = 10_000):
         self.rpm = requests_per_minute
-        self._buckets: dict[str, tuple[float, float]] = {}  # key -> (tokens, last_refill_ts)
+        self.max_keys = max_keys
+        # OrderedDict so we can popitem(last=False) to evict the LRU.
+        self._buckets: "OrderedDict[str, tuple[float, float]]" = OrderedDict()
 
     def check(self, key: str) -> bool:
         if self.rpm <= 0:
             return True
         now = time.time()
-        tokens, last_refill = self._buckets.get(key, (float(self.rpm), now))
+        if key in self._buckets:
+            self._buckets.move_to_end(key)
+            tokens, last_refill = self._buckets[key]
+        else:
+            if len(self._buckets) >= self.max_keys:
+                self._buckets.popitem(last=False)  # evict oldest
+            tokens, last_refill = float(self.rpm), now
         # Refill at rpm/60 tokens per second.
         tokens = min(float(self.rpm), tokens + (now - last_refill) * (self.rpm / 60.0))
         if tokens < 1.0:
@@ -120,7 +143,7 @@ class _RateLimiter:
         return True
 
 
-_rate_limiter = _RateLimiter(RATE_LIMIT_RPM)
+_rate_limiter = _RateLimiter(RATE_LIMIT_RPM, RATE_LIMIT_MAX_KEYS)
 
 
 # ---------------------------------------------------------------------------
@@ -168,11 +191,12 @@ async def _rate_limit(request: Request) -> None:
 
 
 # ---------------------------------------------------------------------------
-# SSH allowlist
+# SSH allowlist + argument validation
 # ---------------------------------------------------------------------------
 def _ssh_host_allowed(host: str) -> bool:
     """Return True if ``host`` matches the SSH allowlist (exact hostname or
-    CIDR for IP literals). Empty allowlist denies all."""
+    CIDR for IP literals). Hostname comparison is case-insensitive per
+    DNS semantics. Empty allowlist denies all."""
     if not SSH_ALLOWLIST:
         return False
     # Try as IP / CIDR first.
@@ -188,7 +212,72 @@ def _ssh_host_allowed(host: str) -> bool:
         return False
     except ValueError:
         pass
-    return host in SSH_ALLOWLIST
+    return host.lower() in {h.lower() for h in SSH_ALLOWLIST}
+
+
+def _validate_ssh_args(rest: str) -> tuple[Optional[str], Optional[str]]:
+    """Parse the ``ssh …`` payload and return ``(host, safe_argv_string)``.
+
+    Defence-in-depth: we accept only a small whitelist of ssh flags
+    (``-p``, ``-l``, ``-i``, ``-o``, ``-q``, ``-v…``) plus an optional
+    ``user@host`` or ``host`` token. Anything else — ``-J`` (jump host),
+    ``-W`` (netcat mode), ``-L``/``-R`` (port forwards), ``-F`` (config
+    override), ``-o ProxyCommand=…`` injection — is rejected with a
+    structured error. Returns ``(None, error)`` on failure.
+    """
+    try:
+        tokens = shlex.split(rest)
+    except ValueError as exc:
+        return None, f"ssh: failed to parse: {exc}"
+    if not tokens:
+        return None, "ssh: missing host"
+    # Reject shell metacharacters — they're valid shlex tokens but
+    # dangerous to forward into a tmux shell. We accept only tokens
+    # made of ``[A-Za-z0-9_.@:=/-]`` plus the known flag characters.
+    for tok in tokens:
+        if not re.fullmatch(r"[A-Za-z0-9_.@:=/\-]+|-[A-Za-z]+", tok):
+            return None, f"ssh: unsafe token rejected: {tok!r}"
+
+    # Walk the whole token list. The only non-flag token is the host
+    # (which may be ``user@host``). Flags must come from
+    # :data:`SSH_ALLOWED_FLAGS` and ``-o`` may only set safe options.
+    i = 0
+    host: Optional[str] = None
+    while i < len(tokens):
+        tok = tokens[i]
+        if not tok.startswith("-"):
+            if host is not None:
+                return None, f"ssh: multiple positional arguments not allowed: {tok!r}"
+            host = tok
+            i += 1
+            continue
+        if tok not in SSH_ALLOWED_FLAGS:
+            return None, f"ssh: flag not allowed: {tok}"
+        # Flags that take a value consume the next token.
+        if tok in {"-p", "-l", "-i"} and i + 1 < len(tokens):
+            i += 2
+            continue
+        if tok == "-o" and i + 1 < len(tokens):
+            opt = tokens[i + 1]
+            opt_lower = opt.lower()
+            if opt_lower.startswith("proxycommand="):
+                return None, "ssh: ProxyCommand is not allowed"
+            if opt_lower.startswith("stricthostkeychecking="):
+                return None, "ssh: StrictHostKeyChecking override is not allowed"
+            i += 2
+            continue
+        i += 1
+
+    # Strip ``user@`` prefix; the allowlist is hostnames/CIDRs only.
+    bare_host = host.split("@", 1)[-1]
+    if not _ssh_host_allowed(bare_host):
+        return None, f"ssh host not in allowlist: {bare_host}"
+
+    # Re-assemble the command. We pin ``StrictHostKeyChecking=accept-new``
+    # (already the default) and forbid every other ``-o`` from the user.
+    # Only the ``tokens[0..i]`` slice is forwarded — anything after the
+    # host is dropped.
+    return bare_host, " ".join(shlex.quote(t) for t in tokens[: i + 1])
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +293,13 @@ async def lifespan(app: FastAPI):
         timeout=EXEC_TIMEOUT_SECONDS,
         limits=httpx.Limits(max_connections=50, max_keepalive_connections=10),
     )
-    logger.info("proxy.startup token=%sandbox cors=%d", "DISABLED " if not PROXY_TOKEN else "", len(CORS_ORIGINS))
+    logger.info(
+        "proxy.startup token=%s cors=%d ssh_allowlist=%d rate_limit=%d",
+        "DISABLED" if not PROXY_TOKEN else "ENABLED",
+        len(CORS_ORIGINS),
+        len(SSH_ALLOWLIST),
+        RATE_LIMIT_RPM,
+    )
     try:
         yield
     finally:
@@ -286,21 +381,24 @@ async def _do_web_search(client: httpx.AsyncClient, query: str) -> dict[str, Any
 
 
 async def _do_ssh(client: httpx.AsyncClient, rest: str, session_id: str) -> dict[str, Any]:
-    """Validate that the SSH target is in the allowlist, then forward to the sandbox."""
-    tokens = rest.split()
-    if not tokens:
-        return {"error": "ssh: missing host"}
-    # Strip ``user@`` prefix; the allowlist is hostnames/CIDRs only.
-    target = tokens[0]
-    host = target.split("@", 1)[-1] if "@" in target else target
-    if not _ssh_host_allowed(host):
-        logger.warning("ssh.denied host=%s", host)
-        return {"error": f"ssh host not in allowlist: {host}"}
-    cmd = f"ssh -o StrictHostKeyChecking=accept-new {rest}"
+    """Validate the SSH args, then forward to the sandbox."""
+    # ``rest`` is everything after the ``ssh`` prefix that triggered
+    # the shortcut. Strip a leading ``ssh`` token if the LLM passed it.
+    rest = rest.strip()
+    parts = rest.split(maxsplit=1)
+    if parts and parts[0] == "ssh":
+        rest = parts[1] if len(parts) > 1 else ""
+    host, safe_argv = _validate_ssh_args(rest)
+    if host is None:
+        # safe_argv carries the error message in this case.
+        logger.warning("ssh.denied reason=%s", safe_argv)
+        return {"error": safe_argv or "ssh validation failed"}
+    cmd = f"ssh -o StrictHostKeyChecking=accept-new {safe_argv}"
     try:
         r = await client.post(
             f"{SANDBOX_URL}/sessions/{session_id}/exec",
-            json={"command": cmd, "timeout": 60},
+            json={"command": cmd, "timeout": int(EXEC_TIMEOUT_SECONDS)},
+            headers=_upstream_headers(),
         )
         r.raise_for_status()
         return r.json()
@@ -313,12 +411,26 @@ async def _do_exec(client: httpx.AsyncClient, command: str, session_id: str) -> 
     try:
         r = await client.post(
             f"{SANDBOX_URL}/sessions/{session_id}/exec",
-            json={"command": command, "timeout": 60},
+            json={"command": command, "timeout": int(EXEC_TIMEOUT_SECONDS)},
+            headers=_upstream_headers(),
         )
         r.raise_for_status()
         return r.json()
     except httpx.HTTPError as exc:
         return {"error": f"sandbox-agent request failed: {exc}"}
+
+
+def _upstream_headers() -> dict[str, str]:
+    """Return the auth headers we forward to the upstream sandbox-agent.
+
+    If ``OPENAPI_PROXY_UPSTREAM_TOKEN`` is set, use it. Otherwise fall
+    back to the same ``OPENAPI_PROXY_TOKEN`` we use for incoming auth —
+    that's the typical single-trust-boundary deployment.
+    """
+    token = os.environ.get("OPENAPI_PROXY_UPSTREAM_TOKEN", PROXY_TOKEN)
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
 
 
 async def run_bash(
@@ -374,17 +486,17 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="proxy not configured")
         return
 
-    # Auth: token can come as a query param (browsers can't set headers on WS)
-    # or as the standard ``Sec-WebSocket-Protocol`` header.
-    token = websocket.query_params.get("token", "")
-    if not token:
-        # Try subprotocol — browsers can negotiate via that.
-        for proto in websocket.headers.get("sec-websocket-protocol", "").split(","):
-            proto = proto.strip()
-            if proto.startswith("bearer."):
-                token = proto[len("bearer."):]
-                break
-    if not hmac.compare_digest(token, PROXY_TOKEN):
+    # Auth: token comes via the ``Sec-WebSocket-Protocol`` subprotocol
+    # header. We deliberately do NOT accept ``?token=…`` query params
+    # because every reverse proxy (nginx, Cloudflare, ALB) logs the
+    # full URL — that's a token leak by default.
+    token = ""
+    for proto in websocket.headers.get("sec-websocket-protocol", "").split(","):
+        proto = proto.strip()
+        if proto.startswith("bearer."):
+            token = proto[len("bearer."):]
+            break
+    if not token or not hmac.compare_digest(token, PROXY_TOKEN):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="unauthorized")
         return
 
@@ -394,11 +506,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.send_text(f"$ sandbox-agent terminal session={session_id}\r\n")
 
     client = websocket.app.state.client
+    upstream = _upstream_headers()
     try:
         # Make sure the tmux session exists. Failures here are non-fatal.
         await client.post(
             f"{SANDBOX_URL}/sessions",
             json={"session_id": session_id, "cwd": "/workspace"},
+            headers=upstream,
         )
     except httpx.HTTPError:
         pass
@@ -413,6 +527,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 r = await client.get(
                     f"{SANDBOX_URL}/sessions/{session_id}/capture",
                     params={"lines": 100},
+                    headers=upstream,
                 )
                 r.raise_for_status()
                 output = r.json().get("output", "")
@@ -421,7 +536,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     if new:
                         await websocket.send_text(new)
                     last_output = output
-            except (httpx.HTTPError, WebSocketDisconnect):
+            except httpx.HTTPError:
                 break
             await asyncio.sleep(WEBSOCKET_POLL_INTERVAL)
 
@@ -433,6 +548,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await client.post(
                     f"{SANDBOX_URL}/sessions/{session_id}/exec",
                     json={"command": data, "timeout": 5},
+                    headers=upstream,
                 )
             except httpx.HTTPError:
                 # Drop the connection if the backend is unreachable.
@@ -448,7 +564,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             pass
         # Best-effort cleanup of the per-connection tmux session.
         try:
-            await client.delete(f"{SANDBOX_URL}/sessions/{session_id}")
+            await client.delete(
+                f"{SANDBOX_URL}/sessions/{session_id}",
+                headers=upstream,
+            )
         except httpx.HTTPError:
             pass
 

@@ -80,15 +80,32 @@ jobs:
         run: docker build -f Dockerfile.openapi-proxy -t owbs-proxy:test .
       - name: Smoke-test sandbox-agent image
         run: |
-          docker run --rm -d --name sandbox-test owbs-sandbox:test
+          docker run --rm -d --name sandbox-test \
+            -e AGENT_TOKEN=smoke-test-token owbs-sandbox:test
           sleep 5
-          docker exec sandbox-test curl -fsS http://127.0.0.1:8082/healthz
+          # Fail loudly if the container died, if the healthcheck failed,
+          # or if the start-up log does not show uvicorn accepting requests.
+          docker logs sandbox-test 2>&1 | grep -q "Uvicorn running" || { echo "sandbox-agent did not start"; docker logs sandbox-test; exit 1; }
+          docker exec sandbox-test curl -fsS http://127.0.0.1:8082/healthz || { echo "sandbox-agent healthz failed"; exit 1; }
+          # Confirm auth is enforced: hit /sessions without a bearer, expect 503
+          # (because in fresh container AGENT_TOKEN is required but we set it
+          # above — the test is that the bearer is REQUIRED, so /sessions
+          # without one must 401).
+          docker exec sandbox-test curl -s -o /dev/null -w "%{http_code}\n" \
+            http://127.0.0.1:8082/sessions | grep -q 401 || \
+            { echo "sandbox-agent did not enforce auth"; exit 1; }
           docker stop sandbox-test
       - name: Smoke-test openapi-proxy image
         run: |
-          docker run --rm -d --name proxy-test owbs-proxy:test
+          docker run --rm -d --name proxy-test \
+            -e OPENAPI_PROXY_TOKEN=smoke-test-token owbs-proxy:test
           sleep 5
-          docker exec proxy-test curl -fsS http://127.0.0.1:8090/openapi.json | head -c 200
+          docker logs proxy-test 2>&1 | grep -q "Uvicorn running" || { echo "openapi-proxy did not start"; docker logs proxy-test; exit 1; }
+          docker exec proxy-test curl -fsS http://127.0.0.1:8090/openapi.json | head -c 200 || { echo "proxy openapi.json failed"; exit 1; }
+          # /healthz without bearer must 401.
+          docker exec proxy-test curl -s -o /dev/null -w "%{http_code}\n" \
+            http://127.0.0.1:8090/healthz | grep -q 401 || \
+            { echo "proxy did not enforce auth on /healthz"; exit 1; }
           docker stop proxy-test
 
   trivy:

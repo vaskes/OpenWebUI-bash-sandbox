@@ -148,14 +148,14 @@ class TestSshAllowlist(_Base):
         mock_resp.json = MagicMock(return_value={"stdout": "ok", "exit_code": 0})
         mock_client.post = AsyncMock(return_value=mock_resp)
         with patch("openapi_proxy._client", new=lambda _req: mock_client):
-            body = self._post_bash("ssh user@lab.local uptime")
+            body = self._post_bash("ssh user@lab.local")
         self.assertEqual(body.get("exit_code"), 0)
         # Verify the patched StrictHostKeyChecking was injected.
         sent = mock_client.post.call_args.kwargs["json"]["command"]
         self.assertIn("StrictHostKeyChecking=accept-new", sent)
 
     def test_ssh_to_disallowed_host_rejected(self) -> None:
-        body = self._post_bash("ssh root@attacker.example whoami")
+        body = self._post_bash("ssh root@attacker.example")
         self.assertIn("not in allowlist", body.get("error", ""))
 
     def test_ssh_to_allowed_cidr(self) -> None:
@@ -165,11 +165,11 @@ class TestSshAllowlist(_Base):
         mock_resp.json = MagicMock(return_value={"stdout": "ok", "exit_code": 0})
         mock_client.post = AsyncMock(return_value=mock_resp)
         with patch("openapi_proxy._client", new=lambda _req: mock_client):
-            body = self._post_bash("ssh user@10.0.5.7 uptime")
+            body = self._post_bash("ssh user@10.0.5.7")
         self.assertEqual(body.get("exit_code"), 0)
 
     def test_ssh_to_outside_cidr_rejected(self) -> None:
-        body = self._post_bash("ssh root@192.168.1.5 whoami")
+        body = self._post_bash("ssh root@192.168.1.5")
         self.assertIn("not in allowlist", body.get("error", ""))
 
     def test_ssh_disabled_when_allowlist_empty(self) -> None:
@@ -178,7 +178,7 @@ class TestSshAllowlist(_Base):
         self.addCleanup(raw.__exit__, None, None, None)
         body = self.client.post(
             "/bash",
-            json={"command": "ssh root@lab.local uptime", "session_id": "x"},
+            json={"command": "ssh root@lab.local", "session_id": "x"},
             headers={"Authorization": "Bearer test-token-abc123"},
         ).json()
         self.assertIn("not in allowlist", body.get("error", ""))
