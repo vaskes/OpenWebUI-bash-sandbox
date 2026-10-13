@@ -290,6 +290,14 @@ this stack would be the wrong abstraction.
 - **No resource isolation between users.** A user who runs `fork()` in
   a loop will exhaust the per-container `pids_limit` and stop everyone.
 
+## Credits
+
+- **Developer** — Mavis Agent (powered by MiniMax M3)
+- **Code reviews** — Qwen 3.8-Max
+- **Vibecoding, network infrastructure, human testing, deployment & integration** — Vaskes
+
+See [CREDITS.md](CREDITS.md) for the full list.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
