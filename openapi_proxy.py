@@ -62,7 +62,6 @@ from pydantic import BaseModel, Field
 from proxy_core import (
     DEFAULT_SESSION_ID,
     EXEC_TIMEOUT_SECONDS,
-    SEARXNG_TIMEOUT_SECONDS,
     SSH_PREFIX,
     WEBSOCKET_POLL_INTERVAL,
     WEB_SEARCH_PREFIX,
