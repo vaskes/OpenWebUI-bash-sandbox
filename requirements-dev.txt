@@ -1,7 +1,7 @@
 # Development/test dependencies (additive to requirements.txt).
 -r requirements.txt
 pytest>=7.0
-pytest-asyncio>=0.21
+pytest-asyncio>=1.4.0
 pytest-cov>=4.0
 ruff>=0.1
 # Bandit was replaced by ruff B-rules (ruff check . --select B) in v2.3.0
