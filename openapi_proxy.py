@@ -49,6 +49,7 @@ from typing import Any
 
 import httpx
 from fastapi import (
+    Response,
     Depends,
     FastAPI,
     HTTPException,
@@ -416,6 +417,46 @@ app = FastAPI(
     openapi_version="3.0.0",
     lifespan=lifespan,
 )
+
+
+# ---------------------------------------------------------------------------
+# Request body size limit — defense in depth
+# ---------------------------------------------------------------------------
+# Same rationale as agent_api: cap the *body*, not just the field.
+# The BashReq ``command`` field is already capped at 1 MB by Pydantic;
+# this guard rejects the *whole* body if it would exceed 2 MB before
+# Pydantic ever sees it.
+MAX_BODY_BYTES = 2 * 1024 * 1024
+
+
+@app.middleware("http")
+async def _body_size_limit(request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > MAX_BODY_BYTES:
+                return Response(
+                    status_code=413,
+                    content=b'{"detail":"request body too large"}',
+                    media_type="application/json",
+                )
+        except ValueError:
+            pass
+    return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
+# Security headers — defense in depth
+# ---------------------------------------------------------------------------
+# Same rationale as agent_api: bearer-token JSON API, no browser surface.
+# nosniff stops MIME-sniffing; no-store stops intermediate caches from
+# holding bearer-token responses.
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 if CORS_ORIGINS:
     app.add_middleware(

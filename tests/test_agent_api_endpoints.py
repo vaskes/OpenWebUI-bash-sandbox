@@ -105,9 +105,11 @@ class TestHealthz(_Base):
     def test_returns_ok(self) -> None:
         r = self.client.get("/healthz")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json()["status"], "ok")
-        self.assertEqual(r.json()["sessions"], 0)
-        self.assertEqual(r.json()["workspace"], self.workspace_real)
+        body = r.json()
+        # /healthz is unauthenticated — must return only "status" to
+        # avoid leaking the workspace path or session count to an
+        # unauthenticated prober. Tripwire for wave 2 #H1.
+        self.assertEqual(body, {"status": "ok"})
 
 
 class TestCreateSessionRejectsBadCwd(_Base):
