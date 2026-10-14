@@ -1,5 +1,12 @@
 name: CI
 
+# Least-privilege: default to read-only token permissions, override
+# per-job only when a job needs write access (none currently do —
+# lint, test, SAST, and gitleaks all just read the repo).
+# Resolves CodeQL alert `actions/missing-workflow-permissions`.
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
