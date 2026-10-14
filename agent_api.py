@@ -50,7 +50,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Response, Depends, FastAPI, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -262,6 +262,55 @@ app = FastAPI(
 
 
 # ---------------------------------------------------------------------------
+# Request body size limit — defense in depth
+# ---------------------------------------------------------------------------
+# Reject any request whose body exceeds :data:`MAX_BODY_BYTES` with
+# HTTP 413. The Pydantic ``max_length`` on the command field caps the
+# *command* at 1 MB, but a hostile client could send a body that
+# *parses* to a small command and yet weighs megabytes of padding.
+# Without this guard the body lands in memory before Pydantic sees
+# it. 2 MB is a generous ceiling (command is capped at 1 MB; the rest
+# is JSON overhead).
+MAX_BODY_BYTES = 2 * 1024 * 1024
+
+
+@app.middleware("http")
+async def _body_size_limit(request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > MAX_BODY_BYTES:
+                return Response(
+                    status_code=413,
+                    content=b'{"detail":"request body too large"}',
+                    media_type="application/json",
+                )
+        except ValueError:
+            pass
+    return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
+# Security headers — defense in depth
+# ---------------------------------------------------------------------------
+# The agent is bearer-token-authed and serves a tiny JSON surface, so most
+# of the OWASP header set is irrelevant. We add the two that matter:
+#   * X-Content-Type-Options: nosniff — stops the browser from MIME-sniffing
+#     a JSON response into something executable if an attacker tricks a
+#     user into opening the URL directly.
+#   * Cache-Control: no-store — bearer-token responses must not be cached
+#     by an intermediate proxy.
+# X-Frame-Options / CSP / HSTS are intentionally omitted: this service
+# has no UI and is not loaded in a browser.
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
+# ---------------------------------------------------------------------------
 # Authentication
 # ---------------------------------------------------------------------------
 _bearer = HTTPBearer(auto_error=False)
@@ -300,8 +349,17 @@ def _require_token(
 
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
-    """Liveness probe (no auth — required for k8s/docker healthchecks)."""
-    return {"status": "ok", "sessions": len(SESSIONS), "workspace": WORKSPACE_REAL}
+    """Liveness probe (no auth — required for k8s/docker healthchecks).
+
+    Returns the minimum information needed for a probe to determine
+    liveness. The workspace path and active-session count are *not*
+    exposed here because the endpoint is unauthenticated — leaking
+    the workspace path to an unauthenticated prober is a minor info
+    leak that costs us nothing to remove. Operators who need the
+    full diagnostic should hit :func:`list_sessions` with a bearer
+    token instead.
+    """
+    return {"status": "ok"}
 
 
 @app.get("/sessions", dependencies=[Depends(_require_token)])
