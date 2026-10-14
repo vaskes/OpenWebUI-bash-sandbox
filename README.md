@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 58](https://img.shields.io/badge/tests-58_passing-brightgreen)](tests/)
+[![Tests: 103](https://img.shields.io/badge/tests-103_passing-brightgreen)](tests/)
 
 ---
 
@@ -43,8 +43,8 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **58 unit + integration tests** (stdlib `unittest`, no pytest required)
-- ✅ **CI: ruff + bandit + gitleaks + trivy + coverage threshold**
+- ✅ **103 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
 
@@ -114,6 +114,9 @@ The most important knobs:
   the proxy will forward `ssh <host>` to. Empty = ssh shortcut disabled.
 - **`OPENAPI_PROXY_RATE_LIMIT_RPM`** — per-token requests per minute.
   0 = disabled.
+- **`OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT`** — close `/ws` connections
+  idle for this many seconds (default 300). 0 = disabled. Prevents a
+  forgotten browser tab from pinning a tmux session forever.
 - **`/workspace` mount** — bind-mount `/opt/agent-workspace` to put files
   on the host that survive container restarts.
 
@@ -135,7 +138,7 @@ the full development workflow.
 
 ## API quick reference
 
-### `sandbox-agent` (port 8082, no auth — internal network only)
+### `sandbox-agent` (port 8082, no host port mapping — internal network only; bearer token required)
 
 | Method | Path                              | Purpose                                |
 |--------|-----------------------------------|----------------------------------------|
@@ -156,7 +159,11 @@ the full development workflow.
 | GET    | `/openapi.json`  | OpenAPI 3.0 spec (consumed by Open WebUI)               |
 | POST   | `/bash`          | Run a shell command (the `bash` tool)                   |
 | POST   | `/shell_exec`    | Alias of `/bash`                                        |
-| WS     | `/ws?token=...`  | Experimental terminal (per-connection session)          |
+| WS     | `/ws` (token via `Sec-WebSocket-Protocol: bearer.<token>` header) | Experimental terminal (per-connection session) |
+
+> **Never** pass the token via `?token=...` query param — reverse proxies
+> (nginx, Caddy, Cloudflare, ALB) log URLs by default and that is a token
+> leak. Token is rejected if you try, see `tests/test_wave2_fixes.py`.
 
 ## Examples
 

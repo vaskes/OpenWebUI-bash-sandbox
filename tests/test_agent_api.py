@@ -89,6 +89,28 @@ class TestVersion(unittest.TestCase):
         for p in parts:
             self.assertTrue(p.isdigit(), f"non-numeric version part: {p!r}")
 
+    def test_agent_version_matches_proxy_version(self) -> None:
+        """All service __version__ strings must match — drift breaks
+        API consumers (sandbox-recommendations #C1, release review
+        v2.4.0). Symptom if this fires: openapi.json on sandbox-agent
+        reports a stale version after a release bump."""
+        import os  # noqa: PLC0415
+        import sys  # noqa: PLC0415
+
+        # Add repo root to path so we can import both modules even when
+        # the test runner was started from a different cwd.
+        here = os.path.dirname(os.path.abspath(__file__))
+        repo_root = os.path.dirname(here)
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+
+        from agent_api import __version__ as aa  # noqa: PLC0415
+        from agent_core import __version__ as ac  # noqa: PLC0415
+        from proxy_core import __version__ as pc  # noqa: PLC0415
+
+        self.assertEqual(ac, aa, f"agent_core {ac} != agent_api {aa}")
+        self.assertEqual(ac, pc, f"agent_core {ac} != proxy_core {pc}")
+
 
 if __name__ == "__main__":
     unittest.main()
