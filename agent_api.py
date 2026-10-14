@@ -414,6 +414,17 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         # don't explicitly create a session first.
         await create_session(CreateSession(session_id=sid, cwd=WORKSPACE_REAL))
 
+    # C1 (sandbox-recommendations): log a preview of the command itself
+    # in addition to its length, so post-incident audit can reconstruct
+    # what the LLM actually ran. ``cmd_preview`` is truncated to 200 chars
+    # so a runaway 1 MB command does not flood the log; the
+    # ``cmd_len=N`` field preserves the original length for inspection.
+    cmd_preview = (
+        body.command
+        if len(body.command) <= 200
+        else body.command[:200] + f"... (+{len(body.command) - 200} bytes)"
+    )
+
     marker = f"__AGENT_DONE_{uuid.uuid4().hex[:8]}__"
     full_cmd = f"{body.command}\n__ec=$?\nprintf '\\n{marker}=%d\\n' \"$__ec\""
     # ``send-keys -l`` writes the command as a literal string. Without
@@ -439,10 +450,11 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         output = _truncate_output(output)
         duration_ms = int((time.time() - start) * 1000)
         logger.warning(
-            "exec.timeout sid=%s duration_ms=%d cmd_len=%d",
+            "exec.timeout sid=%s duration_ms=%d cmd_len=%d cmd=%r",
             sid,
             duration_ms,
             len(body.command),
+            cmd_preview,
         )
         return {
             "stdout": output,
@@ -469,11 +481,12 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     output = _truncate_output(output)
     duration_ms = int((time.time() - start) * 1000)
     logger.info(
-        "exec sid=%s exit=%s duration_ms=%d cmd_len=%d",
+        "exec sid=%s exit=%s duration_ms=%d cmd_len=%d cmd=%r",
         sid,
         exit_code,
         duration_ms,
         len(body.command),
+        cmd_preview,
     )
     return {
         "stdout": output,

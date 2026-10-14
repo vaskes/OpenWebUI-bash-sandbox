@@ -96,6 +96,14 @@ RATE_LIMIT_RPM: int = int(os.environ.get("OPENAPI_PROXY_RATE_LIMIT_RPM", "120"))
 # this we evict the least-recently-used key — prevents unbounded growth
 # under token-spraying attacks.
 RATE_LIMIT_MAX_KEYS: int = int(os.environ.get("OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS", "10000"))
+# Idle timeout for WebSocket terminal connections (sandbox-recommendations #M3).
+# Connections with no inbound traffic for this long are closed by the server
+# so a forgotten browser tab does not pin a file descriptor and a tmux
+# session forever. Default: 5 minutes, the de-facto standard for
+# interactive terminals. 0 disables the timeout.
+WEBSOCKET_IDLE_TIMEOUT_SECONDS: int = int(
+    os.environ.get("OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT", "300")
+)
 # SSH shortcuts: which ``-o`` flags we allow (defence against command
 # injection via ``ProxyCommand`` and friends). Anything not in this set
 # is rejected.
@@ -254,8 +262,20 @@ def _ssh_identity_within_workspace(path: str) -> bool:
     Files that do not exist on the host are still rejected — the proxy
     has no way to verify they won't materialise as a symlink to
     ``/home/agent/.ssh/...`` later.
+
+    Symlinks are rejected explicitly. The TOCTOU window between this
+    validation and the actual ``ssh -i`` invocation is exploitable:
+    a file the LLM creates inside the workspace passes the
+    realpath check, then the LLM replaces it with a symlink to
+    ``/home/agent/.ssh/id_rsa`` (or anywhere outside) and the SSH
+    command uses the symlink target. Sandbox-recommendations #C7.
     """
     if not path:
+        return False
+    # Reject symlinks outright. The workspace-mounted keys the LLM is
+    # allowed to use are regular files; anything that points somewhere
+    # else is suspicious.
+    if os.path.islink(path):
         return False
     try:
         real = os.path.realpath(path)
@@ -632,8 +652,27 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     reader = asyncio.create_task(read_from_tmux())
     try:
+        # Idle-timeout (sandbox-recommendations #M3). We use
+        # ``asyncio.wait_for`` around ``receive_text`` rather than a
+        # separate timer task so the cancel path is a single try/finally
+        # and we don't have to coordinate two stop conditions. Setting
+        # ``WEBSOCKET_IDLE_TIMEOUT_SECONDS=0`` disables the timeout
+        # entirely (for long-running interactive sessions like ``top``).
         while True:
-            data = await websocket.receive_text()
+            if WEBSOCKET_IDLE_TIMEOUT_SECONDS > 0:
+                try:
+                    data = await asyncio.wait_for(
+                        websocket.receive_text(),
+                        timeout=WEBSOCKET_IDLE_TIMEOUT_SECONDS,
+                    )
+                except TimeoutError:
+                    await websocket.close(
+                        code=status.WS_1008_POLICY_VIOLATION,
+                        reason="idle timeout",
+                    )
+                    break
+            else:
+                data = await websocket.receive_text()
             try:
                 await client.post(
                     f"{SANDBOX_URL}/sessions/{session_id}/exec",
