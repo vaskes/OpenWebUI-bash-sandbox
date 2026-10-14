@@ -4,6 +4,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-10-14
+
+### Security (sandbox-recommendations from bot-side review)
+
+These fixes were forwarded from the 2026-10-14 Qwen 3.8-Max adversarial
+review of the `vaskes/llama.cpp_telegram` bot + this sandbox combined
+deployment. The bot-side half of the review is in bot commit `dc2731e`;
+this release is the sandbox-side remainder.
+
+- **Command content logging** (`agent_api.py`) — both the success and
+  timeout exec log lines now include `cmd=%r` with a 200-char preview of
+  the command itself, in addition to the original `cmd_len=N` field.
+  Post-incident audit can now answer "what did the LLM actually run at
+  23:04?" from the JSON logs alone. Long commands (>200 chars) are
+  truncated with a `+N bytes` suffix so a runaway 1 MB command does
+  not flood the log.
+
+- **SSH identity symlink rejection** (`openapi_proxy.py`) —
+  `_ssh_identity_within_workspace()` now returns `False` for any path
+  that is a symlink, regardless of where it points. The previous
+  `realpath`-only check had a TOCTOU window: the LLM could create a
+  regular file, get it validated, then replace it with a symlink to
+  `/home/agent/.ssh/id_rsa` (the persistent operator key mount) before
+  the actual `ssh -i` call. The symlink check is the only thing
+  preventing the LLM from using host-resident keys via this vector.
+
+- **WebSocket idle timeout** (`openapi_proxy.py`) — terminal `/ws`
+  connections now wrap `receive_text()` in `asyncio.wait_for()` with a
+  configurable `OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT` (default 300 s,
+  set to `0` to disable). A forgotten browser tab or a misbehaving
+  client no longer pins a tmux session and a file descriptor forever;
+  the server closes the connection with `1008 / "idle timeout"`.
+  Default of 5 minutes is the de-facto standard for interactive
+  terminals.
+
+### Out of scope (documented as by-design)
+
+- **`#M1` Docker secrets for the bearer token** — recommended for
+  multi-tenant / hosted deployments, not applicable to the
+  single-operator personal model this repo targets. The threat
+  model "someone with shell on my host reads my .env" is already
+  past the line for that operator. If a multi-tenant deployment is
+  ever planned, the migration path is: `secrets:` block in compose
+  instead of `environment:` for the token, and the bot's
+  `personal_tools/bash_command.py` reads from `/run/secrets/`. That
+  is a coordinated change in the bot repo, not just here.
+
+- **`#M2` Per-sandbox session LRU eviction** — the bot's
+  `session_id` is deterministic (`chat-{chat_id}`), so the natural
+  upper bound is "one session per chat". If the bot's session_id
+  scheme ever changes to per-user-id or per-message-id, the right
+  place to add LRU eviction is the bot's `call_llama.py` (it knows
+  the scheme), not here.
+
+### Testing
+
+- 103 tests total (was 92, +11 sandbox-recommendations regression)
+- `tests/test_sandbox_recommendations.py`: 11 tests covering
+  `#C1` (cmd preview in log), `#C7` (symlink rejection — both
+  workspace→outside and inside→inside, plus the happy path), `#M3`
+  (config defaults, env override, 0=disabled, and `asyncio.wait_for`
+  present in the endpoint).
+
 ## [2.3.0] - 2026-10-13
 
 ### Security (CRITICAL fixes from Wave 3 audit)
