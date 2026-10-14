@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.4] - 2026-10-14
+
+### Changed (release-prep wave 3 — public-release readiness)
+
+Five independent items, all low-risk housekeeping. Together they
+make the project fit for a public release announcement.
+
+- **LICENSE copyright holder**: `vaskes` → `Kuduza Ai Lab`. The
+  project started as a vaskes pet project; v2.4+ is a Kuduza
+  product. Operators who forked under the old copyright can
+  continue to use the code under MIT.
+- **CODE_OF_CONDUCT.md enforcement contact**: added
+  `conduct@kuduza.ai` with the standard confidentiality clause.
+  The Contributor Covenant v2.0 template leaves the reporting
+  mechanism blank; this fills it in.
+- **pyproject.toml `target-version`**: `py311` → `py312`. The
+  project runs on 3.11 and 3.12 in CI; the bump nudges
+  contributors toward 3.12 patterns.
+- **Rate-limit key hashed** (wave 2 deferred #L3): the bearer
+  token is now SHA-256-hashed before being used as the
+  rate-limiter key. The dict was process-local and LRU-evicted,
+  so the risk was bounded, but hashing removes the in-memory
+  token presence entirely.
+- **No content changes**: no source files in `agent_api.py` or
+  `openapi_proxy.py` were touched (except for the one-line
+  rate-limit hash change).
+
+### Testing
+
+- 129 tests total (was 125 at v2.4.3, +4 wave 3 self-audit
+  tripwires: LICENSE copyright, CODE_OF_CONDUCT contact,
+  pyproject target-version, rate-limit key hashing).
 ## [2.4.3] - 2026-10-14
 
 ### Fixed (release-prep wave 2 — security self-audit)
