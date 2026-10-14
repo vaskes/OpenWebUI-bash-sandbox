@@ -4,15 +4,15 @@
 SHELL := /usr/bin/env bash
 COMPOSE := docker compose
 
-.PHONY: help build up down logs ps restart test test-cov lint format clean health
+.PHONY: help build up down logs ps restart test test-cov lint format clean health check-env
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*##"; printf "Targets:\n"} /^[a-zA-Z_-]+:.*##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-build: ## Build all Docker images
+build: check-env ## Build all Docker images (refuses to run with placeholder .env)
 	$(COMPOSE) build
 
-up: ## Start the full stack in the background
+up: check-env ## Start the full stack in the background (refuses with placeholder .env)
 	$(COMPOSE) up -d
 	@echo "Waiting for services to become healthy…"
 	@$(COMPOSE) ps
@@ -26,7 +26,7 @@ logs: ## Tail logs from all services
 ps: ## Show service status
 	$(COMPOSE) ps
 
-restart: ## Recreate all containers (picks up env-var changes in compose.yml)
+restart: check-env ## Recreate all containers (refuses with placeholder .env)
 	$(COMPOSE) up -d --force-recreate
 
 test: ## Run the unit test suite (stdlib unittest, no pytest required)
@@ -54,3 +54,15 @@ health: ## Curl every public endpoint
 	@curl -sS http://localhost:8090/openapi.json | python3 -c "import sys,json; spec=json.load(sys.stdin); print('\n'.join(f'  {m.upper():6} {p}' for p,methods in spec.get('paths',{}).items() for m in methods if m in ('get','post','put','delete')))"
 	@echo "--- bash tool smoke test"
 	@curl -sS -X POST http://localhost:8090/bash -H "Content-Type: application/json" -d '{"command":"pwd && whoami"}' | python3 -m json.tool
+
+
+check-env: ## Fail if .env still has CHANGE_ME placeholders
+	@if [ ! -f .env ]; then \
+		echo "ERROR: .env does not exist. Copy .env.example to .env and edit it." >&2; \
+		exit 1; \
+	fi
+	@if grep -E '^[A-Z_]+=(CHANGE_ME|CHANGE_ME_)' .env >/dev/null 2>&1; then \
+		echo "ERROR: .env still contains CHANGE_ME placeholders. Open .env and replace them." >&2; \
+		grep -E '^[A-Z_]+=(CHANGE_ME|CHANGE_ME_)' .env >&2; \
+		exit 1; \
+	fi
