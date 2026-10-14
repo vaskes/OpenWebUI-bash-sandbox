@@ -88,8 +88,9 @@ class TestRateLimitKeyHashed(unittest.TestCase):
     def test_two_different_tokens_get_different_buckets(self) -> None:
         # Hash of "Authorization: Bearer t1" != hash of "Authorization: Bearer t2"
         # so two tokens should land in different buckets.
-        from openapi_proxy import _rate_limit  # noqa: E402
         from starlette.requests import Request  # noqa: E402
+
+        from openapi_proxy import _rate_limit  # noqa: E402
 
         def _make(auth):
             r = Request(
@@ -106,18 +107,16 @@ class TestRateLimitKeyHashed(unittest.TestCase):
             )
             return r
 
-        # The implementation hashes the auth header. Two different
-        # tokens must produce different keys (and thus different
-        # buckets in the limiter).
-        r1 = _make("Bearer t1")
-        r2 = _make("Bearer t2")
-
-        # The _rate_limiter.check() function takes a string key.
-        # We don't call it directly; instead we verify the source
+        # The implementation hashes the auth header. We verify the source
         # of _rate_limit computes a hash, not a raw token.
         import inspect  # noqa: PLC0415
 
         src = inspect.getsource(_rate_limit)
+
+        # Build a couple of request objects to make sure the import path
+        # works. The actual rate-limit logic is in the source check below.
+        _make("Bearer t1")
+        _make("Bearer t2")
         self.assertIn("sha256", src)
         self.assertNotIn(
             "key = auth or request.client.host",
