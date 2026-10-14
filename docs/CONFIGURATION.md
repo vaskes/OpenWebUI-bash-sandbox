@@ -70,7 +70,7 @@ curl -fsS http://127.0.0.1:8090/openapi.json
 |-------------------------------|----------------------|---------------------------------------------------|
 | `WEBUI_AUTH`                  | `true`               | Require login                                     |
 | `WEBUI_SECRET_KEY`            | (placeholder)        | **Change me** in production                       |
-| `ENABLE_SIGNUP`               | `true`               | Allow new accounts                                |
+| `ENABLE_SIGNUP`               | `false`              | Allow new accounts                                |
 | `DEFAULT_USER_ROLE`           | `user`               | Role for new signups                              |
 | `ENABLE_WEB_SEARCH`           | `true`               | Use SearXNG for built-in web search               |
 | `WEB_SEARCH_ENGINE`           | `searxng`            | Backend                                          |
