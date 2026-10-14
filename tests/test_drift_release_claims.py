@@ -224,3 +224,138 @@ class TestAllEnvVarsDocumented(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Extension: README badge test count must match actual test count.
+# (wave-trap extension, see CHANGELOG v2.4.2)
+# ---------------------------------------------------------------------------
+README_BADGE_RE = re.compile(r"Tests:\s*(\d+)")
+README_TEST_COUNT_LINE = re.compile(r"(\d+)\s*unit\s*\+\s*integration\s*tests", re.IGNORECASE)
+
+
+def _count_collected_tests() -> int:
+    import unittest  # noqa: PLC0415
+
+    loader = unittest.TestLoader()
+    suite = loader.discover(str(REPO_ROOT / "tests"))
+    return suite.countTestCases()
+
+
+class TestReadmeTestCountMatches(unittest.TestCase):
+    def setUp(self) -> None:
+        readme = REPO_ROOT / "README.md"
+        if not readme.exists():
+            self.skipTest("README.md not found")
+        self.readme_text = readme.read_text(encoding="utf-8")
+        self.actual = _count_collected_tests()
+
+    def test_badge_count_matches_actual(self) -> None:
+        m = README_BADGE_RE.search(self.readme_text)
+        if m is None:
+            self.fail("README has no `Tests: N` badge — add or update it")
+        claimed = int(m.group(1))
+        self.assertEqual(
+            claimed,
+            self.actual,
+            f"README badge claims {claimed} tests, but unittest discover "
+            f"finds {self.actual}. Update the badge.",
+        )
+
+    def test_descriptive_bullet_count_matches_actual(self) -> None:
+        m = README_TEST_COUNT_LINE.search(self.readme_text)
+        if m is None:
+            self.fail("README has no `N unit + integration tests` bullet")
+        claimed = int(m.group(1))
+        self.assertEqual(
+            claimed,
+            self.actual,
+            f"README descriptive bullet claims {claimed} tests, but "
+            f"unittest discover finds {self.actual}. Update the bullet.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Extension: .env.example is structurally valid for `make check-env`.
+# ---------------------------------------------------------------------------
+CHANGE_ME_RE = re.compile(r"^([A-Z][A-Z0-9_]+)=CHANGE_ME", re.MULTILINE)
+
+
+class TestEnvExampleMatchesCheckEnv(unittest.TestCase):
+    def setUp(self) -> None:
+        env_example = REPO_ROOT / ".env.example"
+        if not env_example.exists():
+            self.skipTest(".env.example not found")
+        self.text = env_example.read_text(encoding="utf-8")
+
+    def test_at_least_one_change_me_placeholder_present(self) -> None:
+        matches = CHANGE_ME_RE.findall(self.text)
+        self.assertGreater(
+            len(matches),
+            0,
+            ".env.example has no `KEY=CHANGE_ME...` placeholders. "
+            "Either the template was rewritten, or `make check-env` "
+            "will never fire — re-anchor both.",
+        )
+
+    def test_check_env_target_referenced_in_env_example(self) -> None:
+        self.assertIn(
+            "check-env",
+            self.text.lower(),
+            ".env.example does not mention `check-env` — the claim "
+            "about the stack refusing to start on placeholder is opaque.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Extension: Makefile has the check-env target chained into build/up/restart.
+# ---------------------------------------------------------------------------
+class TestMakefileHasCheckEnv(unittest.TestCase):
+    def setUp(self) -> None:
+        makefile = REPO_ROOT / "Makefile"
+        if not makefile.exists():
+            self.skipTest("Makefile not found")
+        self.text = makefile.read_text(encoding="utf-8")
+
+    def test_check_env_target_defined(self) -> None:
+        self.assertRegex(
+            self.text,
+            r"(?m)^check-env:\s+##",
+            "Makefile does not define a `check-env` target",
+        )
+
+    def test_check_env_chained_into_destructive_targets(self) -> None:
+        for target in ("build", "up", "restart"):
+            self.assertRegex(
+                self.text,
+                rf"(?m)^{target}:\s+check-env\b",
+                f"Makefile target `{target}` does not depend on `check-env`. "
+                f"Operators could run `make {target}` with a placeholder "
+                f".env and silently start a broken stack.",
+            )
+
+    def test_check_env_actually_fails_on_placeholder(self) -> None:
+        """Smoke test: write a temp .env with placeholders, run check-env,
+        expect exit code 2. Validates the entire end-to-end claim."""
+        import subprocess
+        import tempfile  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_makefile = os.path.join(tmp, "Makefile")
+            with open(fake_makefile, "w") as f:
+                f.write(self.text)
+            fake_env = os.path.join(tmp, ".env")
+            with open(fake_env, "w") as f:
+                f.write("DUMMY_VAR_FOR_CHECK_ENV_TEST=CHANGE_ME_openssl_rand_hex_32\n")
+            rc = subprocess.call(
+                ["make", "-f", fake_makefile, "check-env"],
+                cwd=tmp,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self.assertNotEqual(
+                rc,
+                0,
+                f"`make check-env` should have failed with a placeholder "
+                f".env but returned {rc}. The check is broken.",
+            )
