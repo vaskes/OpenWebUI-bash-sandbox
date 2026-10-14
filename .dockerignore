@@ -16,6 +16,7 @@ htmlcov
 *.log
 .env
 .env.*
+!.env.example
 tests
 docs
 *.md

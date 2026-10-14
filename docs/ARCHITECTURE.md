@@ -110,7 +110,7 @@ Open WebUI appends stdout to the chat and asks the model for a final answer
 agent_api.py        # FastAPI app — endpoints and tmux plumbing
 agent_core.py       # Pure functions: safe_id, tmux_name, constants
 openapi_proxy.py    # FastAPI app — OpenAPI surface + WS terminal
-proxy_core.py       # Pure constants: command prefixes, timeouts
+proxy_core.py       # Pure constants: command prefixes, timeouts, WebSocket tunables
 tests/              # stdlib-unittest suite, no pytest required
 docker-compose.yml  # Production-shaped stack
 Dockerfile.*        # Per-service image
@@ -122,15 +122,15 @@ importing FastAPI/Pydantic/httpx.
 
 ## Persistent state
 
-| What                | Where                                      | Survives `docker compose restart`? |
-|---------------------|--------------------------------------------|------------------------------------|
-| `/workspace` files  | bind-mount `/opt/agent-workspace`          | yes (host filesystem)              |
-| installed apt pkgs  | named volume `sandbox-agent-apt`           | yes                                |
-| installed pip pkgs  | named volume `sandbox-agent-pip`           | yes                                |
-| `~/.bashrc`, configs| named volume `sandbox-agent-home` (=/root) | yes                                |
-| tmux sessions       | `/tmp` inside container                    | no — but auto-recreate on first use|
-| Open WebUI DB       | bind-mount `.open-webui-data`              | yes                                |
-| `TOOL_SERVER_CONNECTIONS` | env var in compose                    | yes (re-read on `up -d`)           |
+| What                | Where                                       | Survives `docker compose restart`? |
+|---------------------|---------------------------------------------|------------------------------------|
+| `/workspace` files  | bind-mount `/opt/agent-workspace`           | yes (host filesystem)              |
+| installed apt pkgs  | named volume `sandbox-agent-apt`            | yes                                |
+| installed pip pkgs  | named volume `sandbox-agent-pip`            | yes                                |
+| `~/.bashrc`, configs| named volume `sandbox-agent-home` (=/home/agent) | yes                            |
+| tmux sessions       | `/tmp` inside container                     | no — but auto-recreate on first use|
+| Open WebUI DB       | named volume `open-webui-data`              | yes (NOT bind-mount — wave 3 #C1)  |
+| `TOOL_SERVER_CONNECTIONS` | env var in compose                     | yes (re-read on `up -d`)           |
 
 ## Failure modes
 

@@ -4,16 +4,20 @@ This document describes what the sandbox is and isn't, the threat surface,
 and the controls that ship in the box. Read this before exposing the
 service on a public network.
 
-## Status — v2.1 (post-audit)
+## Status — v2.4 (post-audit, released)
 
-The v1.x release was a pet project. v2.x is production-shaped; the
-following production-readiness items landed between v1 and v2:
+The v1.x release was a pet project. v2.x is production-shaped. v2.3 was
+the first wave-2 audit approval. v2.4.0 closed three
+sandbox-recommendations from the bot-side Qwen 3.8-Max review of the
+combined `llama.cpp_telegram` + `bash-sandbox` deployment. v2.4.1 is a
+release-prep patch — see the CHANGELOG.
 
-| Control | v1 | v2 | Notes |
-|---------|----|----|-------|
+| Control | v1 | v2.4 | Notes |
+|---------|----|------|-------|
 | `import re` in agent_api.py | ❌ missing | ✅ present | v1 would crash on every successful command |
 | Path-traversal protection in `cwd` | ❌ none | ✅ `os.path.realpath` + workspace whitelist | blocks `..` and symlinks |
 | Bearer-token auth on proxy | ❌ none | ✅ `OPENAPI_PROXY_TOKEN` (constant-time compare) | required, proxy 503s if unset |
+| Bearer-token auth on sandbox-agent | ❌ none | ✅ `AGENT_TOKEN` (mirrored from `OPENAPI_PROXY_TOKEN`) | required, agent 503s if unset |
 | CORS allowlist | ❌ `["*"]` | ✅ opt-in via `OPENAPI_PROXY_CORS_ORIGINS` | off by default |
 | Container runs as non-root | ❌ `user: root` | ✅ `user: 1000:1000` | |
 | `read_only` root filesystem | ❌ `false` | ✅ `true` + tmpfs for `/tmp`, `/run` | |
@@ -21,21 +25,30 @@ following production-readiness items landed between v1 and v2:
 | `no-new-privileges` | ❌ off | ✅ on | blocks setuid binaries |
 | Resource limits | ❌ none | ✅ `mem_limit`, `cpus`, `pids_limit` | kills fork-bombs at 256 PIDs |
 | SSH host allowlist | ❌ `accept-new` for any host | ✅ `OPENAPI_PROXY_SSH_ALLOWLIST` (CIDR/hostname) | empty = disabled |
+| SSH `-o` option whitelist | ❌ | ✅ `SSH_SAFE_OPTIONS` (10 safe keys) | LocalCommand / LocalForward / DynamicForward all rejected |
+| SSH `-i` workspace scope | ❌ | ✅ `realpath` + `commonpath` against `$AGENT_WORKSPACE` | persistent operator key mount not reachable |
+| SSH identity symlink rejection | ❌ | ✅ `os.path.islink` check (#C7) | closes obvious TOCTOU |
 | Per-WebSocket session | ❌ shared global | ✅ unique `ws-<hex>` per connection | closes cross-user leak |
+| WebSocket idle timeout | ❌ | ✅ `OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT` (default 300s) | forgotten tabs no longer pin a tmux session |
+| WebSocket token via subprotocol only | ❌ | ✅ `Sec-WebSocket-Protocol: bearer.<token>` | query-param token rejected, no reverse-proxy log leak |
 | Singleton httpx client | ❌ per-request TCP handshake | ✅ `lifespan` + connection pool | fixes ephemeral-port exhaustion |
 | /capture endpoint (no shell wrapper) | ❌ | ✅ | WebSocket poll no longer spawns bash per tick |
 | Persistent session registry | ❌ in-memory only | ✅ JSON file on `/workspace` | survives container restart |
-| Structured logging | ❌ | ✅ JSON-formatted `logger.info` with sid/cmd_len/exit/duration | audit-ready |
-| Rate limiting | ❌ | ✅ token-bucket per token (`OPENAPI_PROXY_RATE_LIMIT_RPM`) | |
+| Startup reaper for stale sessions | ❌ | ✅ `_reap_dead_sessions` in lifespan | phantom sessions removed on boot |
+| Structured logging | ❌ | ✅ JSON-formatted `logger.info` with sid/cmd_len/cmd_preview/exit/duration | audit-ready |
+| Command preview in log (cmd content) | ❌ | ✅ `cmd=%r` (200-char preview + `+N bytes` suffix) | sandbox-recommendations #C1 |
+| Rate limiting | ❌ | ✅ token-bucket per token, LRU-evicted | `OPENAPI_PROXY_RATE_LIMIT_RPM`, `OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS` |
+| Open WebUI DB in named volume | ❌ bind-mount into `/workspace` | ✅ `open-webui-data` named volume | LLM can no longer `rm -rf` the chat DB |
 | Coverage threshold in CI | ❌ | ✅ `--cov-fail-under=70` | fails build if drops |
-| Bandit SAST in CI | ❌ | ✅ | |
+| Ruff B-rules SAST in CI | ❌ | ✅ `ruff check . --select B` | replaces Bandit |
 | Gitleaks secret scan in CI | ❌ | ✅ | |
-| Trivy container scan in CI | ❌ | ✅ | |
+| CodeQL (default setup) | ❌ | ✅ GitHub-managed, runs on every push | |
 | Multi-stage Dockerfiles | ❌ | ✅ | |
-| Secrets in `.env` (not in compose) | ❌ in compose | ✅ `.env.example` template | |
-| Uvicorn graceful shutdown | ❌ SIGKILL | ✅ `timeout-graceful-shutdown=25` | |
+| Secrets in `.env` (not in compose) | ❌ in compose | ✅ `.env.example` template ships | |
+| Uvicorn graceful shutdown | ❌ SIGKILL | ✅ `timeout-graceful-shutdown=25`, `stop_grace_period=30s` | |
+| All `__version__` strings in lockstep | ❌ drift | ✅ `test_agent_version_matches_proxy_version` tripwire | prevents stale `/openapi.json` version |
 
-## What you get out of the box (v2.1)
+## What you get out of the box (v2.4)
 
 | Control                              | Status                                          |
 |--------------------------------------|-------------------------------------------------|
@@ -169,6 +182,31 @@ tmux session when the connection closes.
 * **Per-user auth on the proxy.** A single bearer token is shared
   across all users. Multi-tenant auth would need a JWT layer with
   user identity and per-user rate limits.
+* **Docker secrets / HashiCorp Vault for the bearer token.** The
+  `OPENAPI_PROXY_TOKEN` lives in a `.env` file with mode 0600. For
+  a single-operator personal deployment this is fine: the threat
+  model is "someone with shell on my host reads my .env", and that
+  operator is already past the line. For a multi-tenant / hosted
+  deployment, swap the `environment:` block in compose for a
+  `secrets:` mount of `/run/secrets/...`. The bot side
+  (`personal_tools/bash_command.py`) needs a matching change to
+  read from `/run/secrets/`; coordinate before shipping.
+* **Per-sandbox session LRU eviction.** The bot's `session_id` is
+  deterministic (`chat-{chat_id}`), so the natural upper bound is
+  "one session per chat" — i.e. O(chats), not unbounded. If the
+  bot's session_id scheme ever changes (per-user-id, per-message-id,
+  stateless shells), the right place to add LRU eviction is the
+  bot's `call_llama.py` (it knows the scheme), not here.
+* **Residual TOCTOU between `_validate_ssh_args` and `ssh -i`.**
+  The C7 symlink-rejection check is synchronous and happens at
+  `_validate_ssh_args` time; between validation and the actual
+  `ssh -i` execution in the sandbox (via tmux `send-keys`) there
+  are several round-trips. A determined LLM with a parallel tmux
+  session could theoretically swap a regular file for a symlink in
+  that window. Full mitigation (open fd with `O_NOFOLLOW` and pass
+  `/dev/fd/N` through to ssh, or re-validate in `agent_api.exec_cmd`)
+  is a design tradeoff for a future release. Defence-in-depth: keep
+  `/home/agent/.ssh` permissions tight and use scoped keys.
 * **Seccomp/AppArmor.** Not configured. Add a profile in production.
 
 ## Trust model (explicit — single operator)
