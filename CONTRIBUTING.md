@@ -34,7 +34,7 @@ make format       # or:  ruff format .
 agent_api.py        # FastAPI app — endpoints and tmux plumbing
 agent_core.py       # Pure functions: safe_id, tmux_name, constants
 openapi_proxy.py    # FastAPI app — OpenAPI surface + WS terminal
-proxy_core.py       # Pure constants: command prefixes, timeouts
+proxy_core.py       # Pure constants: command prefixes, timeouts, WebSocket tunables
 tests/              # stdlib-unittest suite
 docker-compose.yml  # Production-shaped stack
 Dockerfile.*        # Per-service image
