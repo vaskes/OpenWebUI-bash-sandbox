@@ -65,6 +65,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Need the parent commit so gitleaks-action can scan the
+          # diff between baseRef^ and headRef. Default fetch-depth: 1
+          # leaves only HEAD, and the action fails with
+          # "Unexpected exit code [1]" (partial scan).
+          fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
