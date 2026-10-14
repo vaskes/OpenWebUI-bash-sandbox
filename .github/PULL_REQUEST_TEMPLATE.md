@@ -13,7 +13,7 @@
 
 - [ ] I have run `make test` and all unit tests pass
 - [ ] I have run `make lint` and `make format`
-- [ ] I have updated `CHANGELOG.md` under `[Unreleased]`
+- [ ] I have added a row to `CHANGELOG.md` for the next release
 - [ ] I have updated the relevant `docs/` page if config or behaviour changed
 - [ ] My change does not introduce new public API without updating the README's API table
 
