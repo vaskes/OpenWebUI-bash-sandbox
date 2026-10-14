@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.3] - 2026-10-14
+
+### Fixed (release-prep wave 2 — security self-audit)
+
+Mavis self-audit on top of v2.4.2. The Qwen-driven wave 2 of v2.4.0
+covered the original audit; this wave closes three defence-in-depth
+items the v2.4.0 round did not flag.
+
+- **`/healthz` on agent_api no longer leaks the workspace path** —
+  the unauthenticated endpoint now returns only `{"status": "ok"}`.
+  Previously it returned `WORKSPACE_REAL` and the active session
+  count, both minor info leaks (#H1).
+- **Security headers on every response** — added a Starlette
+  middleware that sets `X-Content-Type-Options: nosniff` and
+  `Cache-Control: no-store` on every response (including error
+  responses). X-Frame / CSP / HSTS are intentionally omitted:
+  this is a bearer-token JSON API, not a browser surface (#L1).
+- **Request body size cap** — both services reject bodies > 2 MB
+  with HTTP 413 before Pydantic sees them. The Pydantic field
+  `max_length` caps the *command* at 1 MB but a hostile client
+  could send a body that parses to a small command and weighs
+  megabytes of padding. Check Content-Length, not a streaming
+  read (#M1).
+- **CREDITS / README credit Mavis alongside Qwen** — wave 1, 2, 3
+  of the self-review were Mavis (this agent), not Qwen. The
+  original credits only mentioned Qwen because the early v2.4.0
+  round was a Qwen-side review.
+
+### Testing
+
+- 125 tests total (was 115 at v2.4.2, +10 tripwires in
+  `tests/test_wave2_self_audit.py`: 4 classes covering healthz
+  minimality, security headers, and body size limit on both
+  services).
 ## [2.4.2] - 2026-10-14
 
 ### Fixed (release-prep wave 1)
