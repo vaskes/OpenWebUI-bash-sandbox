@@ -4,5 +4,9 @@ pytest>=7.0
 pytest-asyncio>=0.21
 pytest-cov>=4.0
 ruff>=0.1
-bandit>=1.7
-mypy>=1.0
+# Bandit was replaced by ruff B-rules (ruff check . --select B) in v2.3.0
+# (commit fb7fef6). Same coverage on subprocess injection, weak crypto,
+# hardcoded creds — no separate install needed.
+#
+# mypy is intentionally not pinned here: we don't run a mypy job in CI.
+# Re-add when there is a mypy job that uses it.

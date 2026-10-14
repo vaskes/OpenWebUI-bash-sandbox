@@ -56,11 +56,10 @@ from pydantic import BaseModel, Field
 
 from agent_core import (
     SESSION_ID_MAX_LEN,
+    __version__,
     safe_id,
     tmux_name,
 )
-
-__version__ = "1.1.0"
 
 # ---------------------------------------------------------------------------
 # Configuration

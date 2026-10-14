@@ -4,6 +4,80 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-10-14
+
+### Fixed (release prep — pre-release audit)
+
+3 CRITICAL blockers from the pre-release review of v2.4.0:
+
+- **Version drift between services** — `agent_core.py` and
+  `agent_api.py` were still hardcoded to `1.1.0` after v2.3.0 and
+  v2.4.0; only `proxy_core.py` and `openapi_proxy.py` knew the
+  right version. `agent_api` now imports `__version__` from
+  `agent_core` (mirroring how `openapi_proxy` imports from
+  `proxy_core`); all three modules now report `2.4.1`. New
+  `test_agent_version_matches_proxy_version` tripwire prevents
+  the drift from coming back.
+- **`OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT` not documented** — the
+  v2.4.0 knob was invisible to operators. Added to
+  `docs/CONFIGURATION.md`, the `docker-compose.yml` env list, and
+  the README Configuration section.
+- **`.env.example` missing** — `README.md` Quick Start said `cp
+  .env.example .env` but no template existed. Created a complete
+  template with every `OPENAPI_PROXY_*` knob and explicit
+  `CHANGE_ME_<recipe>` placeholders. Updated `.dockerignore` to
+  explicitly include the template while excluding real `.env*`
+  files.
+
+7 HIGH doc/observability drift fixes:
+
+- `README.md`: tests badge 58 → 103; CI bullet "ruff + bandit +
+  gitleaks + trivy" → "ruff + ruff B-rules (SAST) + gitleaks"
+  (bandit and trivy are not in CI); sandbox-agent description
+  "no auth" → "no host port mapping — internal network only;
+  bearer token required"; `/ws?token=...` → `/ws` with
+  `Sec-WebSocket-Protocol: bearer.<token>` + warning footnote
+  about reverse-proxy log leaks.
+- `docs/CONFIGURATION.md`: filled in the sandbox-agent env var
+  table (`AGENT_WORKSPACE`, `AGENT_SESSIONS_FILE`, `AGENT_TOKEN`,
+  `AGENT_LOG_LEVEL`, `AGENT_PORT`); filled in the openapi-proxy
+  table with all 9 env vars including the new
+  `OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT`; fixed filesystem
+  layout table — `/root` → `/home/agent` (matches `Dockerfile.sandbox`
+  `useradd -m -d /home/agent`); fixed `TOOL_SERVER_CONNECTIONS`
+  example — `auth_type: "none"` → `"bearer"` with a `key` field;
+  removed the misleading `192.168.10.7:8082` host port mapping
+  (sandbox-agent has no host port, only `expose:`).
+- `docs/ARCHITECTURE.md`: persistent-state table — Open WebUI DB
+  row updated from "bind-mount `.open-webui-data`" to "named
+  volume `open-webui-data` (NOT bind-mount — wave 3 #C1)";
+  module-layout caption — `proxy_core.py` description includes
+  "WebSocket tunables".
+- `docs/SECURITY.md`: "Status" table — bumped from v2.1 to v2.4,
+  rows for every wave 2 and wave 3 fix; "What's intentionally not
+  implemented" — explicit entries for the four
+  sandbox-recommendations by-design items: Docker secrets for the
+  bearer token (#M1), per-sandbox session LRU (#M2), residual
+  TOCTOU between `_validate_ssh_args` and `ssh -i` (#M1 of the
+  bot-side review), and a refresh of "Seccomp/AppArmor not
+  configured".
+
+### Changed
+
+- `requirements-dev.txt`: dropped `bandit` (replaced by `ruff
+  --select B` since v2.3.0; Dependabot #11 confirmed it's unused
+  dead weight). Dropped the `mypy` line; we don't run a mypy job
+  in CI and pinning a version we don't use invites supply-chain
+  noise.
+
+### Testing
+
+- 104 tests total (was 103, +1 tripwire in `tests/test_agent_api.py`).
+- New `test_agent_version_matches_proxy_version` asserts that
+  `agent_core.__version__ == agent_api.__version__ ==
+  proxy_core.__version__`. If you bump one and forget the others,
+  the test fires.
+
 ## [2.4.0] - 2026-10-14
 
 ### Security (sandbox-recommendations from bot-side review)
