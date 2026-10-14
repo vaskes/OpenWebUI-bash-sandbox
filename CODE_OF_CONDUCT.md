@@ -30,6 +30,14 @@ Examples of unacceptable behaviour include:
 
 ## Enforcement
 
+Instances of abusive, harassing, or otherwise unacceptable behaviour may
+be reported to the project team at **conduct@kuduza.ai**. All complaints
+will be reviewed and investigated and will result in a response that is
+deemed necessary and appropriate to the circumstances. The project team
+is obligated to maintain confidentiality with regard to the reporter of
+an incident. Further details of specific enforcement policies may be
+posted separately.
+
 Project maintainers are responsible for clarifying the standards of
 acceptable behaviour and are expected to take appropriate and fair
 corrective action in response to any instances of unacceptable behaviour.
