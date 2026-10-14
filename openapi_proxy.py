@@ -212,10 +212,23 @@ def _require_token(
 
 
 async def _rate_limit(request: Request) -> None:
-    """FastAPI dependency: enforce per-token rate limit. Key = token, so
-    users can't bypass the limit by rotating their session id."""
-    auth = request.headers.get("authorization", "")
-    key = auth or request.client.host if request.client else "anon"
+    """FastAPI dependency: enforce per-token rate limit. Key = hash(token),
+    so users can't bypass the limit by rotating their session id AND we
+    don't store the bearer token in memory longer than necessary.
+
+    Wave 3 #L3: the previous implementation keyed on the full
+    ``Authorization`` header (including the bearer token). The dict is
+    process-local and LRU-evicted, so the risk was bounded — but
+    hashing the token before keying removes the in-memory token
+    presence entirely. The hash is keyed on the *whole* header so
+    different tokens (or no token) still get different buckets.
+    """
+    auth = request.headers.get("authorization", "") or (
+        request.client.host if request.client else "anon"
+    )
+    import hashlib as _hashlib  # noqa: PLC0415
+
+    key = _hashlib.sha256(auth.encode("utf-8")).hexdigest()
     if not _rate_limiter.check(key):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
