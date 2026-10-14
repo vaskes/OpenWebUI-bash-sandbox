@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.5] - 2026-10-14
+
+### Fixed (CodeQL alert follow-up)
+
+- **`.github/workflows/ci.yml` — explicit `permissions: contents: read`**.
+  CodeQL `actions/missing-workflow-permissions` fired on v2.4.4
+  because the workflow had no explicit permissions block, so the
+  GITHUB_TOKEN inherited the repo's default (read-write for repos
+  created before Feb 2023 — which this one is). All four jobs
+  (lint, test, SAST, secrets) only need read access, so the
+  least-privilege default at workflow level is correct. Tripwire
+  in `tests/test_wave3_workflow_permissions.py` pins this.
+
+### Testing
+
+- 131 tests total (was 129 at v2.4.4, +2 tripwires for workflow
+  permissions).
 ## [2.4.4] - 2026-10-14
 
 ### Changed (release-prep wave 3 — public-release readiness)
