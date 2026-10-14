@@ -27,6 +27,6 @@ process alive across HTTP requests without any daemon code on our side.
 This project started as a local helper for one operator (Vaskes) who wanted
 to give an LLM a real shell on his own infrastructure without the LLM
 touching anything outside the `/opt/agent-workspace` directory. The
-two-wave code review (Oct 2026) was a deliberate exercise: take a
+multi-wave code review (Oct 2026 — wave 1 baseline, waves 2-3 security audit, sandbox-recommendations round from the bot-side Qwen review, and a release-prep follow-up) was a deliberate exercise: take a
 working pet project and harden it until it is fit for production use
 without re-architecting it into something different.
