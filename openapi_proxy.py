@@ -49,11 +49,11 @@ from typing import Any
 
 import httpx
 from fastapi import (
-    Response,
     Depends,
     FastAPI,
     HTTPException,
     Request,
+    Response,
     WebSocket,
     WebSocketDisconnect,
     status,
@@ -457,6 +457,7 @@ async def _security_headers(request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Cache-Control", "no-store")
     return response
+
 
 if CORS_ORIGINS:
     app.add_middleware(

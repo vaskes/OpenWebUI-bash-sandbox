@@ -36,6 +36,7 @@ def _fresh_agent_app():
 class _AgentBase(unittest.TestCase):
     def setUp(self) -> None:
         import shutil  # noqa: PLC0415
+
         try:
             from fastapi.testclient import TestClient  # noqa: PLC0415
         except ImportError:
