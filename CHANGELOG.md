@@ -4,6 +4,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.2] - 2026-10-14
+
+### Fixed (release-prep wave 1)
+
+The v2.4.1 commit at tag `96318bb` shipped a CHANGELOG entry claiming
+21 closed items, all green tests, and 108 tests total. Wave 1 of the
+post-release self-audit found that 4 of those claims were still
+inaccurate, plus 4 more doc drift items that had slipped through
+review. The wave-trap pattern (T60): claim vs implementation drift.
+
+- **README badge "Tests: 103" was stale** — actual was 108 at v2.4.1.
+  Updated to 108 in both the alt text and the descriptive bullet.
+- **CHANGELOG v2.4.1 "### Testing" claimed "104 tests +1 tripwire"**
+  — actually 108 (+5: 1 in `test_agent_api.py`, 4 in
+  `test_drift_release_claims.py`). Corrected.
+- **`.env.example` claimed a CHANGE_ME placeholder check existed**
+  in Makefile / compose — it did not. Implemented a `check-env`
+  target in the Makefile, chained into `build`, `up`, `restart`.
+  Verified manually: fails with exit 2 and lists offending keys
+  when placeholders are present; passes when all keys have real
+  values.
+- **`docs/CONFIGURATION.md` said `ENABLE_SIGNUP` default is `true`**
+  — compose `:-false` makes the default `false`. Corrected.
+- **`CONTRIBUTING.md` project layout said `proxy_core.py` only has
+  "command prefixes, timeouts"** — drift from `ARCHITECTURE.md`
+  which already lists "WebSocket tunables". Synced.
+- **`CREDITS.md` said the review was "two-wave"** — actually wave
+  1 + waves 2-3 + sandbox-recommendations round + release prep.
+  Updated to "multi-wave" with the wave list.
+- **PR template checklist said "update CHANGELOG.md under
+  [Unreleased]"** — the project doesn't use an [Unreleased]
+  section. Changed to "add a row to CHANGELOG.md for the next
+  release".
+
+### Testing
+
+- 115 tests total (was 108 at v2.4.1, +7 tripwire cases in
+  `test_drift_release_claims.py`: README badge sync, .env.example
+  placeholder check, Makefile check-env smoke test, and chained-
+  targets assertion).
+- New tripwires: `TestReadmeTestCountMatches`,
+  `TestEnvExampleMatchesCheckEnv`, `TestMakefileHasCheckEnv`.
+  These catch the wave-trap pattern in three more places where it
+  has bitten v2.4.0 and v2.4.1: README badges, .env.example
+  placeholder formats, and Makefile target dependencies.
+
 ## [2.4.1] - 2026-10-14
 
 ### Fixed (release prep — pre-release audit)
@@ -72,11 +118,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Testing
 
-- 104 tests total (was 103, +1 tripwire in `tests/test_agent_api.py`).
-- New `test_agent_version_matches_proxy_version` asserts that
+- 108 tests total at v2.4.1 tag (was 103, +5 tripwires — 1 in
+  `tests/test_agent_api.py`, 4 in `tests/test_drift_release_claims.py`).
+- `test_agent_version_matches_proxy_version` asserts that
   `agent_core.__version__ == agent_api.__version__ ==
   proxy_core.__version__`. If you bump one and forget the others,
   the test fires.
+- `test_drift_release_claims.py` walks the latest CHANGELOG entry for
+  file-path references and asserts each one exists in the working
+  tree. Plus `TestAllEnvVarsDocumented` asserts every
+  `os.environ.get("X")` in `agent_api.py` / `openapi_proxy.py`
+  appears in `docs/CONFIGURATION.md`. Future releases cannot claim
+  an undelivered fix without the test firing on CI.
 
 ## [2.4.0] - 2026-10-14
 
