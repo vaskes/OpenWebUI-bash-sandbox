@@ -301,7 +301,7 @@ this stack would be the wrong abstraction.
 ## Credits
 
 - **Developer** — Mavis Agent (powered by MiniMax M3)
-- **Code reviews** — Qwen 3.8-Max
+- **Code reviews** — Qwen 3.8-Max and Mavis (self-review, multi-wave)
 - **Vibecoding, network infrastructure, human testing, deployment & integration** — Vaskes
 
 See [CREDITS.md](CREDITS.md) for the full list.
