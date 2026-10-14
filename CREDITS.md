@@ -6,7 +6,7 @@ an AI code-reviewer, and a human operator.
 ## Authors
 
 - **Developer** — Mavis Agent (powered by MiniMax M3)
-- **Code reviews** — Qwen 3.8-Max
+- **Code reviews** — Qwen 3.8-Max and Mavis (self-review, multi-wave)
 - **Vibecoding** — Vaskes
 - **Network infrastructure** — Vaskes
 - **Human testing** — Vaskes
