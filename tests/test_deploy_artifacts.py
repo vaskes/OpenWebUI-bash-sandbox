@@ -312,3 +312,35 @@ class TestProductionCompose(unittest.TestCase):
     def test_agent_publishes_no_host_port(self) -> None:
         block = self._agent_block(self._compose_text())
         self.assertNotIn("ports:", block, "sandbox-agent must stay on the internal bridge")
+
+
+class TestMakefileAlwaysBuilds(unittest.TestCase):
+    """`make up` and `make restart` must pass --build.
+
+    Neither compose service pins an image, so `up -d` reuses whatever tag is
+    already present and silently serves the previous code. Documenting that
+    in the compose header is not enough - the Makefile is what operators
+    actually type, so the flag has to be here too. `restart` is the sharpest
+    case: `--force-recreate` rebuilds the containers from the *existing*
+    image, so it looks like a fresh restart while serving stale code.
+    """
+
+    @staticmethod
+    def _makefile() -> str:
+        return (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    def _recipe(self, target: str) -> str:
+        text = self._makefile()
+        start = text.index(f"\n{target}:")
+        rest = text[start + 1 :]
+        lines = [ln for ln in rest.splitlines() if ln.startswith("\t")]
+        return "\n".join(lines)
+
+    def test_up_builds(self) -> None:
+        recipe = self._recipe("up")
+        self.assertIn("$(COMPOSE) up -d --build", recipe)
+
+    def test_restart_builds(self) -> None:
+        recipe = self._recipe("restart")
+        self.assertIn("--build", recipe, "make restart must rebuild, or it recreates from the old image")
+        self.assertIn("--force-recreate", recipe)
