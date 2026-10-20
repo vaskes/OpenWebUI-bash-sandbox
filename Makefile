@@ -12,8 +12,13 @@ help: ## Show this help message
 build: check-env ## Build all Docker images (refuses to run with placeholder .env)
 	$(COMPOSE) build
 
+# --build is not optional. Neither service pins an image, so `up -d` reuses
+# whatever tag is already present and silently serves the previous code.
+# Verified 2026-10-20: after editing agent_core.py, plain `up -d` kept the
+# old version while `up -d --build` picked the change up immediately.
+# Layer caching keeps this cheap when nothing changed.
 up: check-env ## Start the full stack in the background (refuses with placeholder .env)
-	$(COMPOSE) up -d
+	$(COMPOSE) up -d --build
 	@echo "Waiting for services to become healthy…"
 	@$(COMPOSE) ps
 
@@ -26,8 +31,11 @@ logs: ## Tail logs from all services
 ps: ## Show service status
 	$(COMPOSE) ps
 
+# --force-recreate without --build is the most misleading invocation in this
+# file: it rebuilds the containers from the *existing* image, so it looks
+# like a fresh restart while serving the code from the previous deploy.
 restart: check-env ## Recreate all containers (refuses with placeholder .env)
-	$(COMPOSE) up -d --force-recreate
+	$(COMPOSE) up -d --build --force-recreate
 
 test: ## Run the unit test suite (stdlib unittest, no pytest required)
 	@python3 -m unittest discover -s tests -v
