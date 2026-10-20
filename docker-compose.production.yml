@@ -1,0 +1,109 @@
+name: telegrambot-sandbox
+
+# Production sandbox side-car for the telegram bot on llmhost1.
+#
+# Upstream: github.com/vaskes/OpenWebUI-bash-sandbox @ v2.4.5
+# Cloned fresh into this directory — nothing is copied from llmhost2.
+#
+# The bot reaches this through the openapi-proxy's bearer-authenticated
+# /bash endpoint. The proxy is the only service with a published port;
+# sandbox-agent stays on the internal bridge. Network isolation is the
+# primary control, the token is defence in depth.
+#
+# Ports: proxy 8090 (the bot's AGENT_STACK_URL target), agent 8082 internal.
+
+services:
+  sandbox-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    container_name: tb-sandbox-agent
+    restart: unless-stopped
+    networks:
+      - tb-net
+    # No host port — reachable only from openapi-proxy on the bridge.
+    expose:
+      - "8082"
+    # Non-root with an explicit UID so bind-mount ownership on the host
+    # is predictable. The host workspace must be writable by uid 1000.
+    user: "1000:1000"
+    working_dir: /workspace
+    mem_limit: 4g
+    cpus: "4.0"
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+      - /run:size=64m,mode=755
+    volumes:
+      - /opt/telegrambot/sandbox-workspace:/workspace
+      - /opt/telegrambot/ssh-keys:/home/agent/.ssh:ro
+      - /opt/search:/opt/search:ro
+      - tb-sandbox-home:/home/agent:rw
+      - tb-sandbox-apt:/var/cache/apt:rw
+      - tb-sandbox-pip:/home/agent/.cache/pip:rw
+    environment:
+      - AGENT_WORKSPACE=/workspace
+      - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
+      - AGENT_LOG_LEVEL=INFO
+      - AGENT_TOKEN=${AGENT_STACK_TOKEN:?AGENT_STACK_TOKEN must be set}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  openapi-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.openapi-proxy
+    container_name: tb-openapi-proxy
+    restart: unless-stopped
+    networks:
+      - tb-net
+    # Bound to loopback only: the bot runs in host network mode and
+    # reaches this at 127.0.0.1:8090. Nothing on the LAN needs it.
+    ports:
+      - "127.0.0.1:8090:8090"
+    environment:
+      - SANDBOX_URL=http://sandbox-agent:8082
+      - OPENAPI_PROXY_TOKEN=${AGENT_STACK_TOKEN:?AGENT_STACK_TOKEN must be set}
+      - OPENAPI_PROXY_RATE_LIMIT_RPM=${OPENAPI_PROXY_RATE_LIMIT_RPM:-120}
+      - OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS=${OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS:-10000}
+      - OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT=${OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT:-300}
+      - OPENAPI_PROXY_LOG_LEVEL=INFO
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    stop_grace_period: 30s
+    depends_on:
+      sandbox-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8090/openapi.json"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  tb-sandbox-home:
+  tb-sandbox-apt:
+  tb-sandbox-pip:
+
+networks:
+  tb-net:
+    driver: bridge
