@@ -342,5 +342,7 @@ class TestMakefileAlwaysBuilds(unittest.TestCase):
 
     def test_restart_builds(self) -> None:
         recipe = self._recipe("restart")
-        self.assertIn("--build", recipe, "make restart must rebuild, or it recreates from the old image")
+        self.assertIn(
+            "--build", recipe, "make restart must rebuild, not recreate from the old image"
+        )
         self.assertIn("--force-recreate", recipe)
