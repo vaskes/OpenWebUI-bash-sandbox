@@ -123,14 +123,20 @@ jobs:
 
       - name: Agent healthz must not leak the workspace path
         run: |
-          body=$(curl -fsS http://127.0.0.1:8082/healthz 2>/dev/null || true)
-          # The agent's healthz is on the internal bridge, not published;
-          # reach it from inside the network.
-          body=$(docker compose -f docker-compose.ci.yml exec -T sandbox-agent \
-                   curl -fsS http://127.0.0.1:8082/healthz)
+          # docker exec on the container directly, NOT `docker compose exec`:
+          # compose re-parses the file and fails interpolation on
+          # ${OPENAPI_PROXY_TOKEN:?}, which this step has no reason to carry.
+          # The agent publishes no host port, so it is reached in-network.
+          body=$(docker exec ci-sandbox-agent curl -fsS http://127.0.0.1:8082/healthz)
           echo "agent healthz: $body"
           [ "$body" = '{"status":"ok"}' ] \
             || { echo "::error::unexpected healthz body"; exit 1; }
+          # Belt and braces: v2.4.1 leaked WORKSPACE_REAL here, v2.4.3
+          # trimmed it. Assert the absence, not just the exact body.
+          case "$body" in
+            */workspace*|*WORKSPACE*|*"os.environ"*)
+              echo "::error::healthz leaks host detail"; exit 1 ;;
+          esac
 
       - name: Dump logs on failure
         if: failure()
