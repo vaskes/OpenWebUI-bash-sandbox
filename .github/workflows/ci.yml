@@ -67,6 +67,79 @@ jobs:
       - name: Ruff B-rules scan
         run: ruff check . --select B --output-format=concise
 
+  # v2.5.0: this job exists because v2.4.x shipped green CI and did not
+  # build. `docker build` failed with "GID '1000' already exists"; nothing
+  # in the pipeline ever ran it. Tests ran against the runner's pip
+  # environment, not against the artifacts we ship — false confidence,
+  # which is worse than no tests. Everything above this line exercises the
+  # Python source; only this line exercises the deliverable.
+  deploy:
+    name: Deploy (docker build + boot + smoke)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # No .env in the repo, and the Makefile check-env target would fail
+      # on the placeholder values. Pass the token through the environment
+      # instead so compose's ${VAR:?} guard sees a real value.
+      - name: Build both images from a clean tree
+        env:
+          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
+        run: docker compose -f docker-compose.ci.yml build
+
+      - name: Boot the stack and wait for both containers to be healthy
+        env:
+          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
+        run: |
+          docker compose -f docker-compose.ci.yml up -d
+          # `up -d` returns before the healthchecks pass, and a failure
+          # here is the whole point of this job — do not skip the wait.
+          timeout 300 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" ci-sandbox-agent 2>/dev/null)" = healthy ]                                  && [ "$(docker inspect -f "{{.State.Health.Status}}" ci-openapi-proxy  2>/dev/null)" = healthy ]; do
+                               sleep 3
+                             done'             || { echo "::error::containers never became healthy"; docker compose -f docker-compose.ci.yml logs; exit 1; }
+
+      # The load-bearing step. A container can report healthy while every
+      # request 500s; only executing a real command proves the stack works.
+      # This is what catches "No module named uvicorn" and FastAPI
+      # constructor drift — neither shows up in a process liveness check.
+      - name: Smoke test — execute a real command end to end
+        env:
+          TOKEN: ci-smoke-token-not-a-secret-0000
+        run: |
+          set -euo pipefail
+          out=$(curl -fsS --max-time 120 \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"command":"echo ci-smoke-ok && id -u","session_id":"ci-smoke","timeout":30}' \
+            http://127.0.0.1:8099/bash)
+          echo "proxy response: $out"
+          echo "$out" | grep -q 'ci-smoke-ok' || { echo "::error::command did not execute"; exit 1; }
+          # uid must be the unprivileged 1000 the compose contract promises.
+          echo "$out" | grep -qE '(^|[^0-9])1000([^0-9]|$)' \
+            || { echo "::error::agent is not running as uid 1000"; exit 1; }
+
+      - name: Agent healthz must not leak the workspace path
+        run: |
+          body=$(curl -fsS http://127.0.0.1:8082/healthz 2>/dev/null || true)
+          # The agent's healthz is on the internal bridge, not published;
+          # reach it from inside the network.
+          body=$(docker compose -f docker-compose.ci.yml exec -T sandbox-agent \
+                   curl -fsS http://127.0.0.1:8082/healthz)
+          echo "agent healthz: $body"
+          [ "$body" = '{"status":"ok"}' ] \
+            || { echo "::error::unexpected healthz body"; exit 1; }
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.ci.yml logs || true
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.ci.yml down -v || true
+
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-24.04
