@@ -94,6 +94,18 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
 # Set a high --timeout-graceful-shutdown — the docker-compose ``stop_grace_period``
 # must be set to at least this many seconds + headroom, otherwise Docker
 # SIGKILLs the container mid-shutdown.
+#
+# --loop asyncio is REQUIRED, not a preference. uvicorn auto-selects uvloop
+# when it is importable, and under uvloop the very first ``tmux new-session``
+# in a fresh container deadlocks: that call forks and daemonises the tmux
+# server, and asyncio's subprocess pipes for the daemonising process never
+# resolve. Every /exec call against a cold container then hangs forever while
+# /healthz keeps answering 200 — the container looks healthy and does nothing.
+# Verified 2026-10-20: cold container + uvloop hangs 100% of the time; the
+# same container works once the tmux server is already up, and never hangs on
+# plain asyncio. uvloop's throughput advantage is worth nothing here anyway —
+# every command is a tmux subprocess round-trip measured in milliseconds.
 CMD ["python3", "-m", "uvicorn", "agent_api:app", \
      "--host", "0.0.0.0", "--port", "8082", \
+     "--loop", "asyncio", \
      "--timeout-graceful-shutdown", "25"]
