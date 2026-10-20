@@ -4,6 +4,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-10-20
+
+v2.4.5 shipped with green CI and **could not be built**. This release makes a
+clean `git clone && docker build` actually work, and adds the CI gate that
+would have caught it.
+
+### Fixed
+
+- **`Dockerfile.sandbox` — clean build failed with `groupadd: GID '1000'
+  already exists`.** `ubuntu:24.04` already ships `ubuntu:x:1000:1000`, so the
+  named `groupadd -g 1000` / `useradd -u 1000` could never succeed. Now uses
+  numeric `USER 1000:1000` with no user creation.
+- **`Dockerfile.sandbox` — pip packages were copied to
+  `/usr/local/local/lib/...`.** Ubuntu's pip uses the `posix_local` scheme, so
+  the install root is `/install/local/`. Copying `/install` verbatim produced
+  a doubled prefix and the container died with `No module named uvicorn`.
+  Now copies `/install/local/`.
+- **`Dockerfile.openapi-proxy` — clean build failed with `group 'proxy'
+  already exists`.** `python:3.11-slim` ships a group *named* `proxy` at GID
+  13; uid/gid 1000 are free, only the name collides. Also fixed to numeric
+  `USER 1000:1000`. Its pip copy is intentionally left as `/install` — the
+  Debian `posix_prefix` scheme really does put packages directly there, and
+  "unifying" it with the sandbox Dockerfile breaks the proxy.
+- **`Dockerfile.openapi-proxy` — `HEALTHCHECK` probed the authenticated
+  `/healthz`,** so a bare `docker run` of the image never went healthy. Now
+  probes the unauthenticated `/openapi.json`.
+- **`openapi_proxy.py` — `TypeError: FastAPI.__init__() got an unexpected
+  keyword argument 'openapi_version'` on a clean install.** The kwarg was
+  accepted only through `**kwargs` in the pinned 0.143.x and is rejected from
+  0.153.0 on. Removed rather than papering over it with a narrow pin — the
+  app has always been serving OpenAPI 3.1.0, so the code was describing
+  something untrue, and pinning would hide the bug and freeze every fresh
+  install onto a stale dependency set.
+- **The agent hung forever on its first command in a cold container
+  (silent, total failure).** uvicorn auto-selects uvloop whenever it is
+  importable, and under uvloop the first `tmux new-session` — the call that
+  forks and daemonises the tmux server — never completes; asyncio's subprocess
+  pipes for the daemonising process never resolve. `/healthz` kept answering
+  200 the whole time, so the container reported healthy and could not run a
+  single command. The agent now pins `--loop asyncio`. This bug predates
+  v2.5.0 but had never been observed, because the image had never built.
+
+### Added
+
+- **CI `deploy` job.** Builds both images, boots the stack, blocks until both
+  containers are healthy, executes a real command through `POST /bash`,
+  asserts the output *and* uid 1000, checks the agent's `/healthz` is exactly
+  `{"status":"ok"}`, dumps logs on failure and tears down. The previous
+  pipeline ran `pip install` and tested Python source against the runner's
+  environment; it never ran `docker build`, which is how v2.4.5 certified an
+  artifact nobody had shipped. `docker-compose.ci.yml` deliberately excludes
+  open-webui — a multi-GB pull that says nothing about our own images.
+- **`tests/test_deploy_artifacts.py`** (13 cases) pins the Dockerfile and
+  dependency contracts so they cannot silently regress.
+- **`tests/test_exec_event_loop.py`** pins `--loop asyncio` and asserts a real
+  cold-start exec completes under the loop the image actually uses.
+
+### Changed
+
+- `requirements.txt` keeps the existing `fastapi>=0.110,<1.0` range. The dead
+  kwarg was removed from the application rather than pinned around.
+
 ## [2.4.5] - 2026-10-14
 
 ### Fixed (CodeQL alert follow-up)
