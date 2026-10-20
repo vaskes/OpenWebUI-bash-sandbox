@@ -9,9 +9,10 @@ environment. These tests are the cheap half of the fix: they parse the
 artifacts we ship and fail loudly when they regress to something that
 cannot build.
 
-The expensive half is tests/test_deploy_smoke.py (builds and boots the
-real images) plus the ``deploy`` CI job added in v2.5.0. Neither is a
-substitute for the other.
+The expensive half is the ``deploy`` CI job added in v2.5.0: it builds both
+real images, boots the stack and executes a real command through the proxy.
+It cannot run in-process because Docker is not available on the unittest
+runner. Neither half substitutes for the other.
 """
 
 from __future__ import annotations
