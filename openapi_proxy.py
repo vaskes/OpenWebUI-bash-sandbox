@@ -423,11 +423,18 @@ async def lifespan(app: FastAPI):
         logger.info("proxy.shutdown")
 
 
+# NOTE: this app used to pass ``openapi_version="3.0.0"`` here. That
+# keyword has never been a FastAPI parameter — on FastAPI <0.149 it was
+# swallowed by the ``**kwargs`` catch-all in ``FastAPI.__init__`` and
+# silently ignored (the service served 3.1.0 the whole time, so the
+# kwarg was not even truthful). FastAPI >=0.149 removed the catch-all, so
+# on a fresh install it raises ``TypeError`` at import and the proxy
+# crash-loops. Removed in v2.5.0; ``requirements.txt`` no longer pins
+# FastAPI to the 0.143 series because of it.
 app = FastAPI(
     title="sandbox-agent",
     version=__version__,
     description=__doc__,
-    openapi_version="3.0.0",
     lifespan=lifespan,
 )
 
