@@ -1,5 +1,14 @@
 # Runtime dependencies for sandbox-agent and openapi-proxy.
-# Pinned to ranges that match the Dockerfiles (python:3.11-slim, ubuntu:24.04).
+# Ranges match the Dockerfiles (ubuntu:24.04 for sandbox-agent,
+# python:3.11-slim for openapi-proxy).
+#
+# Do NOT narrow a pin to work around an application error — fix the code.
+# A narrow pin makes a *fresh install* silently ship an old, unaudited
+# dependency set; the bugs that forced the 0.143 pin in the first place
+# (see git log for v2.5.0) were all application-level, not dependency-level.
+# tests/test_deploy_artifacts.py enforces this: it fails if any unknown
+# keyword is passed to FastAPI(), so no pin is needed to hide that class
+# of bug.
 fastapi>=0.110,<1.0
 uvicorn[standard]>=0.27,<1.0
 pydantic>=2.0,<3.0
