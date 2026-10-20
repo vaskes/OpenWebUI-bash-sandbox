@@ -42,12 +42,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the pip install from the builder.
-COPY --from=builder /install /usr/local
+#
+# Ubuntu/Debian pip is built against the *distutils* install scheme, so
+# ``pip install --prefix=/install`` lays the tree down as
+# ``/install/local/{bin,lib}`` — with an extra ``local`` component.
+# Copying ``/install`` wholesale therefore lands the packages at
+# ``/usr/local/local/...``, which the interpreter does not search, and the
+# container dies with "No module named uvicorn" at startup.
+#
+# Copy the *contents* of /install/local so the runtime layout is the
+# standard /usr/local/{bin,lib}. (python:3.11-slim does NOT add the
+# ``local`` component — see Dockerfile.openapi-proxy, where a plain
+# ``/install/`` copy is correct. The two differ on purpose.)
+COPY --from=builder /install/local/ /usr/local/
 
-# Create the unprivileged ``agent`` user with a fixed UID so the bind-mount
-# permissions on the host are predictable.
-RUN groupadd -g 1000 agent \
-    && useradd -u 1000 -g 1000 -m -d /home/agent -s /bin/bash agent
+# uid/gid 1000 is the contract with the host bind-mount (see
+# docker-compose.yml ``user: "1000:1000"``). We reference it numerically
+# instead of creating named users, because:
+#
+#   * ubuntu:24.04 already ships uid 1000 + gid 1000 as ``ubuntu``, so
+#     ``groupadd -g 1000 agent`` dies with "GID '1000' already exists";
+#   * swallowing that error (``|| true``) does not help — ``useradd``
+#     then fails, and every later ``chown agent:agent`` fails too.
+#
+# The container stays unprivileged; only the passwd entry is gone.
+RUN mkdir -p /home/agent && chown 1000:1000 /home/agent
 
 WORKDIR /home/agent
 
@@ -55,17 +74,17 @@ WORKDIR /home/agent
 # must be present in the same directory so ``from agent_core import …``
 # resolves at runtime. We COPY them into /home/agent, and PYTHONPATH=/home/agent
 # makes the import work regardless of the runtime CWD.
-COPY --chown=agent:agent agent_core.py /home/agent/agent_core.py
-COPY --chown=agent:agent agent_api.py  /home/agent/agent_api.py
+COPY --chown=1000:1000 agent_core.py /home/agent/agent_core.py
+COPY --chown=1000:1000 agent_api.py  /home/agent/agent_api.py
 
 # Workspace directory — created and chmod'd here so the bind-mount at
 # runtime overlays a populated tree. The sandbox agent treats this as its
 # read/write surface; it is owned by ``agent`` so the non-root user can
 # write to it without surprises.
-RUN mkdir -p /workspace && chown agent:agent /workspace
+RUN mkdir -p /workspace && chown 1000:1000 /workspace
 WORKDIR /workspace
 
-USER agent
+USER 1000:1000
 EXPOSE 8082
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
