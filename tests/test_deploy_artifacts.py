@@ -246,3 +246,69 @@ class TestRequirementsNotOverPinned(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# ---------------------------------------------------------------------------
+# Production compose (llmhost1 telegram-bot side-car)
+# ---------------------------------------------------------------------------
+# Imported at module level would need PyYAML, which the CI runner has but a
+# bare `python3 -m unittest` may not. Parsed textually instead, with the
+# check written so it fails on the shape rather than on a yaml library.
+
+
+class TestProductionCompose(unittest.TestCase):
+    """docker-compose.production.yml must not shadow the application code."""
+
+    @staticmethod
+    def _compose_text() -> str:
+        return (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+
+    @staticmethod
+    def _agent_block(text: str) -> str:
+        start = text.index("  sandbox-agent:")
+        end = text.index("  openapi-proxy:")
+        return text[start:end]
+
+    def test_no_volume_mounted_at_home_agent(self) -> None:
+        """A volume at /home/agent freezes the code at whatever the first deploy had.
+
+        The application code lives in /home/agent (Dockerfile.sandbox sets
+        WORKDIR there so the import path resolves). Docker seeds a fresh named
+        volume from the image on first use and never re-syncs it, so mounting
+        one at that path makes every later image rebuild a no-op and the agent
+        keeps running its first-deploy code forever.
+        """
+        block = self._agent_block(self._compose_text())
+        offenders = [
+            line.strip()
+            for line in block.splitlines()
+            if line.strip().startswith("-")
+            and line.rstrip().endswith("/home/agent")
+            and "rw" in line
+        ]
+        self.assertEqual(
+            offenders,
+            [],
+            "docker-compose.production.yml must not mount a writable volume at "
+            "/home/agent: it shadows agent_api.py/agent_core.py with the copy "
+            "seeded on the first deploy, so later image rebuilds are silently "
+            f"ignored. Offending lines: {offenders}",
+        )
+
+    def test_deploy_command_documents_the_build_flag(self) -> None:
+        """`up -d` alone reuses the existing image; operators must be told."""
+        text = self._compose_text()
+        self.assertIn(
+            "--build",
+            text,
+            "The header must document `up -d --build`. Neither service pins an "
+            "image, so `up -d` reuses the previous build and runs stale code.",
+        )
+
+    def test_proxy_is_loopback_only(self) -> None:
+        """The bot runs in host network mode; the proxy must not face the LAN."""
+        text = self._compose_text()
+        self.assertIn('"127.0.0.1:8090:8090"', text)
+
+    def test_agent_publishes_no_host_port(self) -> None:
+        block = self._agent_block(self._compose_text())
+        self.assertNotIn("ports:", block, "sandbox-agent must stay on the internal bridge")
