@@ -1,0 +1,85 @@
+# Minimal stack for the CI ``deploy`` job.
+#
+# Deliberately excludes open-webui: it is a multi-GB image pull that has
+# nothing to do with whether *our* images build and serve. What this file
+# proves is the thing that was broken in v2.4.x — that a clean clone
+# produces running containers.
+#
+# Only sandbox-agent and openapi-proxy are built; both are the artifacts
+# we actually ship.
+
+services:
+  sandbox-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    container_name: ci-sandbox-agent
+    restart: "no"
+    networks: [ci-net]
+    user: "1000:1000"
+    working_dir: /workspace
+    mem_limit: 2g
+    cpus: "2.0"
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 10s
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /run:size=64m,mode=755
+    # Named volume, not a host bind-mount: CI has no host workspace to own.
+    # This is the only writable path the agent needs.
+    volumes:
+      - ci-agent-workspace:/workspace
+      - ci-agent-home:/home/agent:rw
+    environment:
+      - AGENT_WORKSPACE=/workspace
+      - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
+      - AGENT_LOG_LEVEL=WARNING
+      - AGENT_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  openapi-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.openapi-proxy
+    container_name: ci-openapi-proxy
+    restart: "no"
+    networks: [ci-net]
+    ports:
+      - "127.0.0.1:8099:8090"
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    stop_grace_period: 10s
+    environment:
+      - SANDBOX_URL=http://sandbox-agent:8082
+      - OPENAPI_PROXY_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
+      - OPENAPI_PROXY_RATE_LIMIT_RPM=0
+      - OPENAPI_PROXY_LOG_LEVEL=WARNING
+    depends_on:
+      sandbox-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8090/openapi.json"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  ci-agent-workspace:
+  ci-agent-home:
+
+networks:
+  ci-net:
+    driver: bridge
