@@ -61,10 +61,22 @@ would have caught it.
 - **`tests/test_exec_event_loop.py`** pins `--loop asyncio` and asserts a real
   cold-start exec completes under the loop the image actually uses.
 
+- **`docker-compose.production.yml` — a volume at `/home/agent` froze the
+  agent code on first deploy.** The application code lives in `/home/agent`
+  (it is the WORKDIR so the import path resolves), so a named volume mounted
+  there shadows `agent_api.py` / `agent_core.py` with the copy Docker seeds
+  from the image on first use — and never re-syncs. Every later image rebuild
+  was silently a no-op. Removed; the writable paths the agent needs are
+  mounted separately. The header now also documents `up -d --build`, since
+  neither service pins an image and plain `up -d` reuses the existing tag.
+
 ### Changed
 
 - `requirements.txt` keeps the existing `fastapi>=0.110,<1.0` range. The dead
   kwarg was removed from the application rather than pinned around.
+- `docker-compose.production.yml` is the llmhost1 telegram-bot side-car
+  deployment: loopback-only proxy bind, per-service resource caps, and `tb-`
+  prefixed names. Derived from the bot branch and corrected before shipping.
 
 ## [2.4.5] - 2026-10-14
 
