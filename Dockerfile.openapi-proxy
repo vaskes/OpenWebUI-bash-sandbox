@@ -15,26 +15,42 @@ RUN pip install --no-cache-dir --prefix=/install -r /tmp/requirements.txt \
 # ---- runtime ----
 FROM python:3.11-slim
 
+# uid/gid 1000 is free in python:3.11-slim, but the *name* ``proxy`` is
+# taken: Debian ships a ``proxy`` group at GID 13, so
+# ``groupadd -g 1000 proxy`` dies with "group 'proxy' already exists".
+# As with Dockerfile.sandbox we reference the ids numerically and skip
+# passwd/group creation entirely. (This is a name collision, unlike the
+# sandbox image which has a genuine id collision — check each base
+# image separately.)
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd -g 1000 proxy \
-    && useradd -u 1000 -g 1000 -m -d /home/proxy -s /bin/bash proxy
+    && mkdir -p /home/proxy && chown 1000:1000 /home/proxy
 
 # Copy the pip install from the builder.
+#
+# NOTE: unlike Dockerfile.sandbox, no ``local/`` unwrapping is needed here.
+# python:3.11-slim builds pip against the *platform* scheme, so
+# ``pip install --prefix=/install`` lays the tree down directly as
+# ``/install/{bin,lib}``. Verified against the base image — do not
+# "fix" this to match the sandbox Dockerfile.
 COPY --from=builder /install /usr/local
 
 WORKDIR /app
 
 # Both the FastAPI app and the pure-function core module must be present
 # in the same directory so ``from proxy_core import …`` resolves.
-COPY --chown=proxy:proxy proxy_core.py    /app/proxy_core.py
-COPY --chown=proxy:proxy openapi_proxy.py /app/openapi_proxy.py
+COPY --chown=1000:1000 proxy_core.py    /app/proxy_core.py
+COPY --chown=1000:1000 openapi_proxy.py /app/openapi_proxy.py
 
-USER proxy
+USER 1000:1000
 EXPOSE 8090
 
+# /healthz requires a bearer token (all proxy endpoints are authenticated
+# since v2.4.3), so probing it here marks the container permanently
+# unhealthy. /openapi.json is unauthenticated and is the same endpoint
+# docker-compose.yml already uses for this service.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8090/healthz || exit 1
+    CMD curl -fsS http://127.0.0.1:8090/openapi.json || exit 1
 
 # Use exec form so SIGTERM is forwarded to uvicorn (graceful shutdown).
 CMD ["python", "-m", "uvicorn", "openapi_proxy:app", \
