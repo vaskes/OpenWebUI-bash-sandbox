@@ -17,20 +17,24 @@ FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd -g 1000 proxy \
-    && useradd -u 1000 -g 1000 -m -d /home/proxy -s /bin/bash proxy
+    && mkdir -p /home/proxy && chown 1000:1000 /home/proxy
 
 # Copy the pip install from the builder.
-COPY --from=builder /install /usr/local
+# Debian pip places --prefix installs under /install/local/.
+# Copy its *contents* so the runtime layout is the standard
+# /usr/local/lib/python3.12/dist-packages (a plain
+# `COPY /install /usr/local` yields /usr/local/local/... and
+# the interpreter cannot find the modules).
+COPY --from=builder /install/ /usr/local/
 
 WORKDIR /app
 
 # Both the FastAPI app and the pure-function core module must be present
 # in the same directory so ``from proxy_core import …`` resolves.
-COPY --chown=proxy:proxy proxy_core.py    /app/proxy_core.py
-COPY --chown=proxy:proxy openapi_proxy.py /app/openapi_proxy.py
+COPY --chown=1000:1000 proxy_core.py    /app/proxy_core.py
+COPY --chown=1000:1000 openapi_proxy.py /app/openapi_proxy.py
 
-USER proxy
+USER 1000:1000
 EXPOSE 8090
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \

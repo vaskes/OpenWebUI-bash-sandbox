@@ -42,12 +42,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the pip install from the builder.
-COPY --from=builder /install /usr/local
+# Debian pip places --prefix installs under /install/local/.
+# Copy its *contents* so the runtime layout is the standard
+# /usr/local/lib/python3.12/dist-packages (a plain
+# `COPY /install /usr/local` yields /usr/local/local/... and
+# the interpreter cannot find the modules).
+COPY --from=builder /install/local/ /usr/local/
 
-# Create the unprivileged ``agent`` user with a fixed UID so the bind-mount
-# permissions on the host are predictable.
-RUN groupadd -g 1000 agent \
-    && useradd -u 1000 -g 1000 -m -d /home/agent -s /bin/bash agent
+# uid/gid 1000 is used throughout (host bind-mount ownership). We
+# reference it numerically rather than by name: ubuntu:24.04 already
+# ships uid 1000 as `ubuntu`, so `groupadd -g 1000 agent` fails and
+# every later `chown agent:agent` fails too.
+RUN mkdir -p /home/agent && chown 1000:1000 /home/agent
 
 WORKDIR /home/agent
 
@@ -55,17 +61,17 @@ WORKDIR /home/agent
 # must be present in the same directory so ``from agent_core import …``
 # resolves at runtime. We COPY them into /home/agent, and PYTHONPATH=/home/agent
 # makes the import work regardless of the runtime CWD.
-COPY --chown=agent:agent agent_core.py /home/agent/agent_core.py
-COPY --chown=agent:agent agent_api.py  /home/agent/agent_api.py
+COPY --chown=1000:1000 agent_core.py /home/agent/agent_core.py
+COPY --chown=1000:1000 agent_api.py  /home/agent/agent_api.py
 
 # Workspace directory — created and chmod'd here so the bind-mount at
 # runtime overlays a populated tree. The sandbox agent treats this as its
 # read/write surface; it is owned by ``agent`` so the non-root user can
 # write to it without surprises.
-RUN mkdir -p /workspace && chown agent:agent /workspace
+RUN mkdir -p /workspace && chown 1000:1000 /workspace
 WORKDIR /workspace
 
-USER agent
+USER 1000:1000
 EXPOSE 8082
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
