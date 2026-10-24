@@ -138,6 +138,61 @@ jobs:
               echo "::error::healthz leaks host detail"; exit 1 ;;
           esac
 
+      # The binary door. A file created in the sandbox must come back
+      # through the proxy byte for byte — the whole point of the endpoint
+      # is that an agent can move a file out without base64, and base64
+      # through a pane loses the beginning of the payload without saying
+      # so. A unit test can mock the transport; only this can prove the
+      # two services actually agree on the bytes.
+      - name: Binary transfer — the bytes must survive the round trip
+        env:
+          TOKEN: ci-smoke-token-not-a-secret-0000
+        run: |
+          set -euo pipefail
+          # Create the probe through the tool the agent itself uses.
+          curl -fsS --max-time 60 \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"command":"printf ci-binary-probe-payload | tee /workspace/probe.bin >/dev/null && sha256sum /workspace/probe.bin","session_id":"ci-smoke","timeout":30}' \
+            http://127.0.0.1:8099/bash > /tmp/mk.json
+          expected=$(grep -o '[0-9a-f]\{64\}' /tmp/mk.json | head -1)
+          [ -n "$expected" ] || { echo "::error::could not create the probe file"; exit 1; }
+
+          # Pull it back out through the proxy.
+          curl -fsS --max-time 60 -H "Authorization: Bearer $TOKEN" \
+            -o /tmp/probe.bin 'http://127.0.0.1:8099/files?path=probe.bin'
+          actual=$(sha256sum /tmp/probe.bin | cut -d' ' -f1)
+          [ "$actual" = "$expected" ] \
+            || { echo "::error::sha256 mismatch: $actual != $expected"; exit 1; }
+
+          # The headers a client needs in order to plan a transfer.
+          curl -fsS -D /tmp/hdr -o /dev/null --max-time 60 \
+            -H "Authorization: Bearer $TOKEN" \
+            'http://127.0.0.1:8099/files?path=probe.bin'
+          grep -qi '^accept-ranges: *bytes' /tmp/hdr || { echo "::error::no Accept-Ranges"; exit 1; }
+          grep -qi '^content-length:' /tmp/hdr || { echo "::error::no Content-Length"; exit 1; }
+
+          # A range request must answer 206 with the right slice.
+          code=$(curl -s -o /tmp/part.bin -w '%{http_code}' --max-time 60 \
+            -H "Authorization: Bearer $TOKEN" -H 'Range: bytes=3-8' \
+            'http://127.0.0.1:8099/files?path=probe.bin')
+          [ "$code" = "206" ] || { echo "::error::range request answered $code"; exit 1; }
+          [ "$(cat /tmp/part.bin)" = "binary" ] \
+            || { echo "::error::range request returned the wrong bytes"; exit 1; }
+
+          # A file over the policy limit is refused — and says how big it
+          # really is, so the caller can decide what to do about it.
+          curl -fsS --max-time 60 -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"command":"head -c 3000000 /dev/zero > /workspace/big.bin","session_id":"ci-smoke","timeout":30}' \
+            http://127.0.0.1:8099/bash > /dev/null
+          code=$(curl -s -o /tmp/err.json -w '%{http_code}' --max-time 60 \
+            -H "Authorization: Bearer $TOKEN" \
+            'http://127.0.0.1:8099/files?path=big.bin')
+          [ "$code" = "413" ] || { echo "::error::oversized file answered $code, expected 413"; exit 1; }
+          grep -q '3000000' /tmp/err.json \
+            || { echo "::error::the 413 does not name the real size"; exit 1; }
+
       - name: Dump logs on failure
         if: failure()
         run: docker compose -f docker-compose.ci.yml logs || true

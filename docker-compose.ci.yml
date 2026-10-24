@@ -36,6 +36,13 @@ services:
       - AGENT_WORKSPACE=/workspace
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
       - AGENT_LOG_LEVEL=WARNING
+      # How much text one command may return. 32k..1024k.
+      # The pane scrollback is derived from it, so the limit is
+      # honest: an output that fits comes back whole, every time.
+      - AGENT_STDOUT_LIMIT=${AGENT_STDOUT_LIMIT:-512k}
+      # How large a file the binary endpoint will serve. 0 = unlimited.
+      # Bytes never travel through stdout, so this is policy, not transport.
+      - AGENT_BINARY_LIMIT=${AGENT_BINARY_LIMIT:-2048k}
       - AGENT_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/healthz"]
