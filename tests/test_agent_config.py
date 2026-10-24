@@ -78,6 +78,9 @@ class TestDefaults(unittest.TestCase):
     def test_stdout_default_is_512k(self) -> None:
         self.assertEqual(agent_config.STDOUT_LIMIT_BYTES, 512 * 1024)
 
+    def test_binary_default_is_2048k(self) -> None:
+        self.assertEqual(agent_config.BINARY_LIMIT_BYTES, 2048 * 1024)
+
     def test_stdout_range_is_32k_to_1024k(self) -> None:
         self.assertEqual(agent_config.STDOUT_LIMIT_MIN_BYTES, 32 * 1024)
         self.assertEqual(agent_config.STDOUT_LIMIT_MAX_BYTES, 1024 * 1024)
@@ -123,6 +126,7 @@ class TestEnvOverrides(unittest.TestCase):
         code = (
             "import agent_config, json;"
             "print(json.dumps({'stdout': agent_config.STDOUT_LIMIT_BYTES,"
+            " 'binary': agent_config.BINARY_LIMIT_BYTES,"
             " 'history': agent_config.HISTORY_LIMIT_LINES}))"
         )
         child_env = {**os.environ, **env}
@@ -141,10 +145,10 @@ class TestEnvOverrides(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('"stdout": 65536', result.stdout)
 
-    def test_an_oversized_stdout_limit_aborts_startup(self) -> None:
-        result = self._run_config({"AGENT_STDOUT_LIMIT": "10m"})
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("AGENT_STDOUT_LIMIT", result.stderr)
+    def test_binary_limit_is_configurable(self) -> None:
+        result = self._run_config({"AGENT_BINARY_LIMIT": "10m"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('"binary": 10485760', result.stdout)
 
     def test_out_of_range_stdout_limit_aborts_startup(self) -> None:
         result = self._run_config({"AGENT_STDOUT_LIMIT": "2048k"})
@@ -156,7 +160,7 @@ class TestEnvOverrides(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("AGENT_STDOUT_LIMIT", result.stderr)
 
-    def test_zero_is_not_a_valid_stdout_limit(self) -> None:
-        result = self._run_config({"AGENT_STDOUT_LIMIT": "0"})
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("AGENT_STDOUT_LIMIT", result.stderr)
+    def test_binary_limit_zero_means_unlimited(self) -> None:
+        result = self._run_config({"AGENT_BINARY_LIMIT": "0"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('"binary": 0', result.stdout)
