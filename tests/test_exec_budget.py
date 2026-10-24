@@ -260,6 +260,7 @@ class TestLiveExecIsComplete(unittest.TestCase):
         self.assertEqual(int(out), agent_api.HISTORY_LIMIT_LINES)
 
 
+@unittest.skipUnless(shutil.which("tmux"), "tmux is required")
 class TestColdStart(unittest.TestCase):
     """A container that has never run a command must still work.
 

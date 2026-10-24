@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -667,6 +668,26 @@ _FILE_RESPONSE_HEADERS = (
 )
 
 
+def _upstream_detail(body: bytes) -> str:
+    """The upstream's error message, unwrapped from its JSON envelope.
+
+    The sandbox-agent answers an error as ``{"detail": "..."}``. Passing
+    that whole document on as the proxy's own detail would render it as
+    a JSON *string* inside a JSON document — ``{"detail": "{\\"detail\\":
+    ...}"}`` — which is technically faithful and practically unreadable.
+    The message inside is what the caller needs: the real size of a file
+    that is over the limit, for instance.
+    """
+    text = body[:500].decode("utf-8", "replace")
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return text
+    if isinstance(parsed, dict) and isinstance(parsed.get("detail"), str):
+        return parsed["detail"]
+    return text
+
+
 @app.get("/files/meta", operation_id="file_meta")
 async def file_meta(
     request: Request,
@@ -724,8 +745,8 @@ async def download_file(
         body = await upstream.aread()
         await upstream.aclose()
         raise HTTPException(
-            status_code=upstream.status_code, detail=body[:500].decode("utf-8", "replace")
-        )
+            status_code=upstream.status_code, detail=_upstream_detail(body)
+        ) from None
 
     async def _relay():
         try:
