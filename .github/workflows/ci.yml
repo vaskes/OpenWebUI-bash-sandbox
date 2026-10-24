@@ -40,6 +40,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: pip install -r requirements-dev.txt
+      # tmux is not in the runner image, and the strongest tripwires in
+      # this suite need a real one: a ~400 KB command output must come
+      # back whole on every run, and a session must survive a cold tmux
+      # server. Without tmux those tests skip, and the gate silently
+      # stops guarding the thing it was written for.
+      - name: Install tmux
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
       - name: Run unit tests with coverage
         run: |
           pytest --cov=. --cov-report=xml --cov-report=term --cov-fail-under=70 tests/ || \
