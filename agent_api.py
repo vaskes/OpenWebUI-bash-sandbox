@@ -42,18 +42,24 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 import re
 import time
+import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from agent_config import (
+    BINARY_LIMIT_BYTES as _BINARY_LIMIT_BYTES,
+)
 from agent_config import (
     CAPTURE_DEPTH_LINES,
     HISTORY_LIMIT_LINES,
@@ -84,6 +90,9 @@ MAX_OUTPUT_BYTES = STDOUT_LIMIT_BYTES
 CAPTURE_PANE_LINES = CAPTURE_DEPTH_LINES
 WORKSPACE = os.environ.get("AGENT_WORKSPACE", "/workspace")
 SESSIONS_FILE = os.environ.get("AGENT_SESSIONS_FILE", "/workspace/.agent-sessions.json")
+#: Largest file the binary endpoint will serve. 0 means no limit. See
+#: agent_config.
+BINARY_LIMIT_BYTES = _BINARY_LIMIT_BYTES
 # Bearer token for the agent's HTTP API. The agent refuses all traffic
 # if this is unset — fail-closed by design. The proxy and agent must
 # share the same value (mirror via the same secret in your orchestrator).
@@ -832,6 +841,196 @@ async def tail_output(
 ) -> dict[str, str]:
     """Alias of :func:`capture_pane` kept for backwards compatibility."""
     return await capture_pane(session_id, lines=lines)
+
+
+# ---------------------------------------------------------------------------
+# Binary transfers
+# ---------------------------------------------------------------------------
+# Text and bytes take different roads on purpose.
+#
+# stdout travels through a terminal pane: it is text, it is wrapped, it is
+# bounded by the scrollback, and it is only as large as the budget allows.
+# A binary cannot go that way — base64 through a pane costs 4/3 in size and
+# loses the beginning of the payload when the pane overflows, silently.
+#
+# So bytes get their own door. The file is read from disk and streamed out
+# as-is: no encoding, no pane, no scrollback, no size ceiling from the
+# transport. The only limit is policy (AGENT_BINARY_LIMIT), and the client
+# can pull a file of any size in ranges.
+#
+# The path is resolved inside the workspace, with symlinks resolved first,
+# so a file that points outside is refused rather than served.
+
+_BINARY_CHUNK = 64 * 1024
+
+
+def _within_workspace(real: str) -> bool:
+    """True when ``real`` is the workspace root or lives under it."""
+    try:
+        common = os.path.commonpath([real, WORKSPACE_REAL])
+    except ValueError:
+        return False
+    return common == WORKSPACE_REAL
+
+
+def _safe_file(candidate: str) -> Path:
+    """Resolve a client-supplied path to a regular file inside the workspace.
+
+    The model knows the *logical* workspace path (``/workspace/out.bin``),
+    while the real root may be somewhere else — the workspace is a bind
+    mount, and the container's view of it is symlinked. So a logical
+    absolute path is re-anchored on the real root, and a path that is
+    already absolute is checked against the perimeter as it stands.
+
+    Symlinks are resolved before the check, so a link pointing out of the
+    workspace is refused rather than followed. Only regular files are
+    served: a directory, a fifo or a device is not a file to hand out.
+    """
+    raw = str(candidate or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="path is required")
+
+    logical = os.path.abspath(WORKSPACE)
+    if os.path.isabs(raw):
+        if raw == logical:
+            raise HTTPException(status_code=400, detail="path is a directory, not a file")
+        prefix = logical + os.sep
+        if raw.startswith(prefix):
+            raw = raw[len(prefix) :]
+    else:
+        raw = str(Path(WORKSPACE_REAL) / raw)
+
+    try:
+        resolved = Path(raw).resolve(strict=True)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=f"file not found: {candidate}") from exc
+    except RuntimeError as exc:  # symlink loop
+        raise HTTPException(status_code=400, detail=f"unresolvable path: {candidate}") from exc
+
+    if not _within_workspace(str(resolved)):
+        raise HTTPException(status_code=400, detail=f"path outside the workspace: {candidate}")
+    if not resolved.is_file():
+        raise HTTPException(status_code=400, detail=f"not a regular file: {candidate}")
+    return resolved
+
+
+def _content_disposition(name: str) -> str:
+    """Build a Content-Disposition that survives a non-ASCII file name."""
+    ascii_name = "".join(ch if 32 <= ord(ch) < 127 and ch not in '"\\' else "_" for ch in name)
+    quoted = urllib.parse.quote(name, safe="")
+    return f"attachment; filename=\"{ascii_name or 'file'}\"; filename*=UTF-8''{quoted}"
+
+
+def _parse_byte_range(header: str, size: int) -> tuple[int, int]:
+    """Parse a single ``bytes=start-end`` range. Returns ``(start, length)``."""
+    match = re.fullmatch(r"bytes=(\d*)-(\d*)", header.strip())
+    if not match or (not match.group(1) and not match.group(2)):
+        raise HTTPException(status_code=416, detail=f"unsupported range: {header}")
+    raw_start, raw_end = match.group(1), match.group(2)
+    if raw_start:
+        start = int(raw_start)
+        end = int(raw_end) if raw_end else size - 1
+    else:
+        # A suffix range: the last N bytes.
+        length = int(raw_end)
+        if length == 0:
+            raise HTTPException(status_code=416, detail=f"unsatisfiable range: {header}")
+        start = max(0, size - length)
+        end = size - 1
+    if start >= size or start > end:
+        raise HTTPException(status_code=416, detail=f"unsatisfiable range: {header}")
+    return start, min(end, size - 1) - start + 1
+
+
+def _iter_file(path: Path, start: int, length: int):
+    """Yield the file's bytes in chunks. The file is never fully in memory."""
+    remaining = length
+    with path.open("rb") as handle:
+        handle.seek(start)
+        while remaining > 0:
+            chunk = handle.read(min(_BINARY_CHUNK, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+
+
+@app.get("/files/meta", dependencies=[Depends(_require_token)])
+async def file_meta(path: str = Query(..., description="Path of the file in the sandbox")) -> dict:
+    """Metadata for a file in the workspace — size, name, mtime.
+
+    A client that wants to move a file needs its size *before* it starts
+    moving it: to check the policy limit without downloading a gigabyte
+    first. This is the cheap door; :func:`download_file` is the expensive
+    one.
+    """
+    target = _safe_file(path)
+    stat = target.stat()
+    guessed, _ = mimetypes.guess_type(target.name)
+    return {
+        "name": target.name,
+        "path": str(target),
+        "size": stat.st_size,
+        "mtime": int(stat.st_mtime),
+        "mime": guessed or "application/octet-stream",
+        "limit": BINARY_LIMIT_BYTES,
+    }
+
+
+@app.get("/files", dependencies=[Depends(_require_token)])
+async def download_file(
+    request: Request,
+    path: str = Query(..., description="Path of the file in the sandbox"),
+) -> Response:
+    """Stream a file out of the sandbox, byte for byte.
+
+    No base64, no pane, no scrollback: the bytes are read from disk and
+    written to the socket as they are read, so the agent's memory use does
+    not depend on the file's size. A ``Range`` header is honoured, so a
+    large file can be pulled in pieces and resumed.
+
+    The size limit is policy, not transport: a file over
+    ``AGENT_BINARY_LIMIT`` is refused with its real size in the message,
+    and the limit is raised by configuration rather than by the client.
+    """
+    target = _safe_file(path)
+    size = target.stat().st_size
+
+    if BINARY_LIMIT_BYTES and size > BINARY_LIMIT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(f"file is {size} bytes, over the binary limit of {BINARY_LIMIT_BYTES} bytes"),
+        )
+
+    start = 0
+    length = size
+    status_code = 200
+    range_header = request.headers.get("range")
+    if range_header:
+        start, length = _parse_byte_range(range_header, size)
+        status_code = 206
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(length),
+        "Content-Type": "application/octet-stream",
+        "Content-Disposition": _content_disposition(target.name),
+        # HTTP header values are latin-1, and a file name may be anything.
+        # Content-Disposition already carries the name in both a sanitised
+        # ASCII form and RFC 5987 form; this one is percent-encoded so a
+        # client can read it back without parsing the disposition.
+        "X-File-Name": urllib.parse.quote(target.name, safe=""),
+        "X-File-Size": str(size),
+    }
+    if status_code == 206:
+        headers["Content-Range"] = f"bytes {start}-{start + length - 1}/{size}"
+
+    return StreamingResponse(
+        _iter_file(target, start, length),
+        status_code=status_code,
+        headers=headers,
+        media_type="application/octet-stream",
+    )
 
 
 if __name__ == "__main__":

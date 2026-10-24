@@ -5,10 +5,13 @@ once. A value outside its documented range is a **startup failure**, not a
 clamp: a typo in ``.env`` has to be loud, because a silently clamped limit is
 indistinguishable from a limit that was never applied.
 
-One budget lives here:
+Two budgets live here, and they are independent axes:
 
 * ``AGENT_STDOUT_LIMIT`` — how much **text** one command may return. The
   agent truncates what it hands back and says so in the payload.
+* ``AGENT_BINARY_LIMIT`` — how large a file the **binary endpoint** will
+  serve. Binary never travels through stdout, so this limit is about policy,
+  not about transport.
 
 The stdout budget is only meaningful if the tmux pane can actually hold it.
 A pane that is smaller than the budget loses the *beginning* of the output
@@ -22,6 +25,7 @@ from __future__ import annotations
 import os
 
 __all__ = [
+    "BINARY_LIMIT_BYTES",
     "CAPTURE_DEPTH_LINES",
     "HISTORY_LIMIT_LINES",
     "PANE_HEIGHT",
@@ -128,6 +132,14 @@ STDOUT_LIMIT_BYTES = parse_size(
     name="AGENT_STDOUT_LIMIT",
     minimum=STDOUT_LIMIT_MIN_BYTES,
     maximum=STDOUT_LIMIT_MAX_BYTES,
+)
+
+#: The binary budget has no ceiling: the endpoint streams, so the mechanism
+#: is the same for 10 kB and for 10 GB. A limit of 0 means "no limit".
+BINARY_LIMIT_BYTES = parse_size(
+    os.environ.get("AGENT_BINARY_LIMIT", "2048k"),
+    name="AGENT_BINARY_LIMIT",
+    minimum=0,
 )
 
 #: Scrollback the pane must hold for the stdout budget to be deliverable.
