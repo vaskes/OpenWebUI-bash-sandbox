@@ -83,6 +83,12 @@ size, into a pane that drops its oldest lines without saying so.
   request must answer 206 with the right slice, and an oversized file
   must answer 413 naming its real size. A unit test with a mocked
   transport cannot prove that the two services agree on the bytes.
+- **CI installs tmux**, so the live tripwires actually run. The runner
+  image has no tmux, so every test that needed a real one skipped — and
+  the tests that need a real one are the ones that matter: a ~400 KB
+  command output must come back whole on *every* run, and a session must
+  survive a cold tmux server. A gate that silently stops guarding the
+  thing it was written for reads green and guards nothing.
 
 ### Changed
 
