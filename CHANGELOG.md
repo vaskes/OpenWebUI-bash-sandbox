@@ -4,6 +4,110 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-10-25
+
+Two budgets and a door for bytes.
+
+The stdout limit was a number in a file that no one could keep honest:
+the tmux scrollback behind it held ~400 KB, the capture depth was sized
+for 1 MB, and the completion marker was matched against the *echo* of the
+command that printed it — so the poll could stop before the command had
+produced anything. The result was a stdout that was sometimes a tail of
+the output, sometimes the whole session transcript, and never reliably
+the same twice.
+
+The binary door is the other half: an agent that produced a file had
+exactly one way to get it out — base64 through the shell, at 4/3 the
+size, into a pane that drops its oldest lines without saying so.
+
+### Fixed
+
+- **The completion marker was matched in the command's *echo*, not in its
+  printed form.** The shell reflects the typed line into the pane, so the
+  marker string was visible long before the command had run. The poll
+  stopped on that echo and the caller received a truncated stdout with no
+  marker and no error. The marker is now matched in its printed form, as
+  a whole line — a match that fires on the echo is a match that fires
+  early.
+- **`stdout` of a command was the whole session transcript.** The capture
+  took the pane's tail, and the pane's tail is every command the session
+  ever ran. A 200-byte command could come back carrying half a megabyte of
+  somebody else's history. The capture is now bounded by how much the
+  scrollback grew during the command, and the result is cut at a marker
+  printed before it ran.
+- **A lost beginning was invisible.** When a pane overflows it drops its
+  *oldest* lines, so the caller used to receive the tail of the output
+  dressed up as a whole answer. A begin marker printed before the command
+  proves the capture still holds the start of the output; when it is
+  gone, the result says so in its first line.
+- **The protocol's own bookkeeping was part of the output.** The shell
+  echoes the line that captures the exit code and the line that prints
+  the completion marker; both are now cut out of the result.
+
+### Added
+
+- **`AGENT_STDOUT_LIMIT`** — how much text one command may return in one
+  exec. Default `512k`, allowed range `32k`..`1024k`, `k`/`m`/`g` suffixes
+  or a plain byte count. A value outside the range is a **startup
+  failure**, not a clamp: a limit nobody can trust is worse than a
+  container that refuses to boot.
+- **`AGENT_BINARY_LIMIT`** — how large a file the binary endpoint will
+  serve. Default `2048k`, `0` means unlimited. Binary never travels
+  through stdout, so this is a policy cap and not a transport limit.
+- **`GET /files?path=`** — streams a workspace file out as **raw bytes**.
+  No base64, no terminal pane, no scrollback: the bytes are read from
+  disk and written to the socket as they are read, so the agent's memory
+  use does not depend on the file's size. A single `Range` header is
+  honoured (206 + `Content-Range`), so a file that is too large for one
+  request can be pulled in pieces. The path is resolved inside the
+  workspace with symlinks resolved first; a path that points outside is
+  refused.
+- **`GET /files/meta?path=`** — size, name, mtime and mime of a
+  workspace file, so a client can check the policy limit *before* it
+  starts moving a gigabyte.
+- **`GET /files` and `GET /files/meta` on the proxy**, relayed as a
+  stream. The upstream status is relayed too: a file over the limit is a
+  413 with its real size in the message, a missing file is a 404 — not a
+  500. The file door is deliberately **not** rate limited, because a
+  chunked transfer would otherwise fail for a reason that has nothing to
+  do with the transfer.
+- **`tests/test_exec_budget.py`** — the tripwires for the above: the
+  completion marker must match the printed form, a lost beginning must be
+  reported, and — against a real tmux — a ~400 KB output must come back
+  whole on every run, not most of the time.
+- **`tests/test_binary_proxy.py`** — the relay must stream, must forward
+  the client's `Range`, and must not flatten 404 or 413 into a 500.
+- **CI `deploy` job: the binary round trip.** A file created in the
+  sandbox is pulled back out through the proxy and compared by sha256;
+  the headers a client needs to plan a transfer are asserted, a range
+  request must answer 206 with the right slice, and an oversized file
+  must answer 413 naming its real size. A unit test with a mocked
+  transport cannot prove that the two services agree on the bytes.
+
+### Changed
+
+- **The stdout default is `512k`, not 1 MB.** The old `MAX_OUTPUT_BYTES`
+  of 1 000 000 was never achievable: the scrollback behind it held
+  ~400 000 characters, so the advertised limit was a promise the system
+  could not keep. The limit is now derived from the scrollback, which is
+  derived from the limit.
+- **The tmux scrollback is sized from the stdout budget** instead of
+  being left at tmux's default of 2000 lines. It is sized for lines of
+  64 bytes rather than full-width ones, so an ordinary text file — not
+  just a wide one — can be returned whole.
+- **The `history-limit` is set at session creation.** It is a session option
+  in tmux and it applies only to panes created *after* it is set, so
+  setting it afterwards did nothing. The session's first pane is therefore
+  replaced: the option is set on the session, a new pane is created to
+  inherit it, and the first one is dropped. A server that has just started
+  also refuses commands for a moment, and a server with no sessions exits
+  — so the depth could not simply be set on the server before the session
+  existed, and a `\;` chain of all three commands failed about one cold
+  start in twenty.
+- **`/sessions/{id}/capture` is bounded by the same budget** as `/exec`.
+  It was a door around the limit: a client could pull three times the
+  budget through it, and nothing would say so.
+
 ## [2.5.0] - 2026-10-20
 
 v2.4.5 shipped with green CI and **could not be built**. This release makes a

@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 153](https://img.shields.io/badge/tests-153_passing-brightgreen)](tests/)
+[![Tests: 231](https://img.shields.io/badge/tests-231_passing-brightgreen)](tests/)
 
 ---
 
@@ -43,7 +43,7 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **153 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **231 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -149,6 +149,8 @@ the full development workflow.
 | POST   | `/sessions/{id}/exec`             | Run a shell command                    |
 | GET    | `/sessions/{id}/capture?lines=N`  | Tail tmux scrollback (no shell wrapper) |
 | GET    | `/sessions/{id}/output?lines=N`   | Alias of `/capture`                    |
+| GET    | `/files/meta?path=P`              | Size/mtime/name of a workspace file   |
+| GET    | `/files?path=P`                   | The file's **raw bytes** (no base64)   |
 
 ### `openapi-proxy` (port 8090, **bearer auth required**)
 
@@ -159,11 +161,52 @@ the full development workflow.
 | GET    | `/openapi.json`  | OpenAPI 3.0 spec (consumed by Open WebUI)               |
 | POST   | `/bash`          | Run a shell command (the `bash` tool)                   |
 | POST   | `/shell_exec`    | Alias of `/bash`                                        |
+| GET    | `/files/meta?path=P` | Size/mtime/name of a workspace file (streamed)       |
+| GET    | `/files?path=P`  | The file's **raw bytes** (streamed, no base64)          |
 | WS     | `/ws` (token via `Sec-WebSocket-Protocol: bearer.<token>` header) | Experimental terminal (per-connection session) |
 
 > **Never** pass the token via `?token=...` query param — reverse proxies
 > (nginx, Caddy, Cloudflare, ALB) log URLs by default and that is a token
 > leak. Token is rejected if you try, see `tests/test_wave2_fixes.py`.
+
+## Moving files out of the sandbox
+
+Text goes through the shell; bytes do not. A file is fetched over HTTP as
+**raw bytes** — never base64, never through a terminal pane:
+
+```bash
+# What is there, and how big is it?
+curl -H "Authorization: Bearer $OPENAPI_PROXY_TOKEN" \
+  'http://localhost:8090/files/meta?path=report.pdf'
+
+# Pull it. The bytes are exactly the bytes on disk.
+curl -H "Authorization: Bearer $OPENAPI_PROXY_TOKEN" \
+  -o report.pdf 'http://localhost:8090/files?path=report.pdf'
+```
+
+Why it is a separate door:
+
+* **Base64 costs a third.** A 3 MB file becomes 4 MB of text, and the
+  text has to fit into a terminal pane, which is bounded. The bytes do not
+  have to fit in a message.
+* **A pane loses the *beginning*.** When a tmux pane overflows it drops
+  its oldest lines — silently. A base64 payload that overflows comes back
+  as a tail that decodes to garbage, and nothing says so.
+* **Streaming costs no memory.** The proxy relays the file as a stream,
+  so a 200 MB file does not become 200 MB of RAM in the proxy.
+
+The path is resolved inside the workspace, with symlinks resolved first: a
+path that points outside is refused. That is hygiene, not a security
+boundary — the model already has a shell.
+
+| Knob                | Default | Meaning                                              |
+|---------------------|---------|------------------------------------------------------|
+| `AGENT_BINARY_LIMIT`| `2048k` | Largest file the endpoint will serve. `0` = unlimited. |
+| `AGENT_STDOUT_LIMIT`| `512k`  | Largest text one command may return. 32k..1024k.       |
+
+The endpoint is not rate limited on purpose: a per-minute request budget
+would break a chunked transfer for a reason that has nothing to do with
+the transfer.
 
 ## Examples
 
@@ -214,6 +257,28 @@ with httpx.Client() as client:
 
 If you (an AI agent) are asked to set this up from scratch or fix a broken
 instance, do this:
+
+### Getting a file out of the sandbox
+If your task produced a file, **do not `cat` it and do not base64 it**.
+Read the bytes over HTTP:
+
+```
+GET /files/meta?path=<path>   → { name, path, size, mtime, mime, limit }
+GET /files?path=<path>         → the raw bytes of the file
+```
+
+`/files` supports a single `Range` header, so a large file can be pulled in
+pieces. The reason not to use the shell for this: base64 costs a third of
+the size, and a terminal pane that overflows drops its **oldest** lines
+without saying so — the payload comes back as a tail that decodes to
+garbage. See "Moving files out of the sandbox" above.
+
+### Reading command output
+`stdout` of one command is capped (`AGENT_STDOUT_LIMIT`, default 512k). If
+it was capped, the payload ends with `[output truncated at N bytes]`. If
+the output was **larger than the session's scrollback**, the first line
+says the beginning is gone — that result is a tail, not a whole answer, and
+re-running the command in smaller pieces is the fix.
 
 ### Setup from scratch
 1. `git clone https://github.com/vaskes/OpenWebUI-bash-sandbox.git`

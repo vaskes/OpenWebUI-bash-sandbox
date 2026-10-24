@@ -12,9 +12,49 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_TOKEN`          | (empty → 503)                             | Bearer token. Mirrored from `OPENAPI_PROXY_TOKEN`. Required.   |
 | `AGENT_LOG_LEVEL`      | `INFO`                                    | uvicorn log level (`debug`, `info`, `warning`, `error`).      |
 | `AGENT_PORT`           | `8082`                                    | uvicorn listen port.                                           |
+| `AGENT_STDOUT_LIMIT`   | `512k`                                    | How much text one command may return in one exec. 32k..1024k.  |
+| `AGENT_BINARY_LIMIT`   | `2048k`                                   | How large a file `/files` will serve. `0` = unlimited.         |
 
 If `AGENT_TOKEN` is empty, the agent refuses to serve any request
 except `/healthz` (returns 503). This is fail-closed by design.
+
+### Size values
+
+`AGENT_STDOUT_LIMIT` and `AGENT_BINARY_LIMIT` accept a plain byte count or
+a suffix: `b`, `k`/`kb`, `m`/`mb`, `g`/`gb` (`512k`, `2m`, `1g`, `1048576`).
+A value that cannot be parsed, or that is outside the documented range, is a
+**startup failure** — the container refuses to boot rather than silently
+clamping to something the operator did not ask for.
+
+### `AGENT_STDOUT_LIMIT`
+
+The budget is the number of bytes one command may return in one exec.
+When the output is longer, the tail is dropped and the payload says so:
+
+```
+[output truncated at 524288 bytes]
+```
+
+The tmux scrollback is sized from the budget, so the limit is honest in
+both directions: an output that fits comes back **whole, on every run**,
+and an output that does not fit is reported rather than handed back as a
+plausible fragment. Two things make that true, and both are covered by
+tests:
+
+* the completion marker is matched in its *printed* form, so the poll
+  cannot stop on the echo of the command that prints it — that echo is
+  visible in the pane long before the command has produced anything;
+* a begin marker printed before the command proves the capture still holds
+  the start of the output. If it is gone, the pane overflowed and the
+  result says so in the first line instead of pretending to be complete.
+
+The scrollback is sized for lines of 64 bytes, not for full-width ones: a
+200-column pane would only be able to deliver the budget for wide output,
+and a plain `cat` of an ordinary text file would lose its beginning.
+
+The budget is **not** a context-overflow guard. How much of a tool result
+fits into the model's context is the client's business — the bot that talks
+to this agent already caps tool results far lower than 512k.
 
 ### Filesystem layout inside the container
 
