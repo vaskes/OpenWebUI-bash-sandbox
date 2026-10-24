@@ -52,6 +52,7 @@ from fastapi import (
     Depends,
     FastAPI,
     HTTPException,
+    Query,
     Request,
     Response,
     WebSocket,
@@ -59,6 +60,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -639,6 +641,110 @@ async def shell_exec(
     tool-server configurations that look for ``shell_exec`` instead of ``bash``."""
     client = _client(request)
     return await run_bash(client, req.command, req.session_id)
+
+
+# ---------------------------------------------------------------------------
+# Binary transfers
+# ---------------------------------------------------------------------------
+# The proxy is the only published surface, so a file has to come through
+# here. Two rules make that safe:
+#
+#   * it is streamed, never buffered. The proxy container has a 512 MB
+#     memory limit; a proxy that read the body into memory would turn a
+#     100 MB file into an OOM kill.
+#   * it is not rate-limited. A file of any size may arrive in ranges, and
+#     a per-minute budget on requests would make a large transfer fail for
+#     a reason that has nothing to do with the file.
+
+_FILE_RESPONSE_HEADERS = (
+    "accept-ranges",
+    "content-length",
+    "content-range",
+    "content-disposition",
+    "content-type",
+    "x-file-name",
+    "x-file-size",
+)
+
+
+@app.get("/files/meta", operation_id="file_meta")
+async def file_meta(
+    request: Request,
+    path: str = Query(..., description="File in the sandbox"),
+    _: str = Depends(_require_token),
+) -> dict[str, Any]:
+    """Metadata for a file in the sandbox: size, name, mtime."""
+    client = _client(request)
+    try:
+        response = await client.get(
+            f"{SANDBOX_URL}/files/meta",
+            params={"path": path},
+            headers=_upstream_headers(),
+        )
+    except httpx.HTTPError as exc:
+        return {"error": f"sandbox-agent request failed: {exc}"}
+    if response.status_code >= 400:
+        return {"error": response.text[:500]}
+    return response.json()
+
+
+@app.get("/files", operation_id="file")
+async def download_file(
+    request: Request,
+    path: str = Query(..., description="File in the sandbox"),
+    _: str = Depends(_require_token),
+) -> Response:
+    """Stream a file out of the sandbox, byte for byte.
+
+    The upstream response is relayed as it arrives: the proxy never holds
+    the whole file, so its memory use does not depend on the file's size.
+    A ``Range`` header from the client is forwarded, which is how a file
+    larger than one request is pulled.
+    """
+    client = _client(request)
+    upstream_headers = _upstream_headers()
+    range_header = request.headers.get("range")
+    if range_header:
+        upstream_headers["Range"] = range_header
+
+    try:
+        upstream = await client.send(
+            client.build_request(
+                "GET",
+                f"{SANDBOX_URL}/files",
+                params={"path": path},
+                headers=upstream_headers,
+            ),
+            stream=True,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"sandbox-agent request failed: {exc}") from exc
+
+    if upstream.status_code >= 400:
+        body = await upstream.aread()
+        await upstream.aclose()
+        raise HTTPException(
+            status_code=upstream.status_code, detail=body[:500].decode("utf-8", "replace")
+        )
+
+    async def _relay():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    headers = {
+        key: value
+        for key, value in upstream.headers.items()
+        if key.lower() in _FILE_RESPONSE_HEADERS
+    }
+    return StreamingResponse(
+        _relay(),
+        status_code=upstream.status_code,
+        headers=headers,
+        media_type=upstream.headers.get("content-type", "application/octet-stream"),
+    )
 
 
 # ---------------------------------------------------------------------------
