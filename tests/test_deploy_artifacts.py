@@ -91,6 +91,68 @@ class TestSandboxDockerfile(unittest.TestCase):
         )
 
 
+class TestAgentModulesAreInTheImage(unittest.TestCase):
+    """Every module the agent imports has to be IN the image.
+
+    A module that is missing from the image does not fail the build. It
+    fails the *container*, on the first request, with
+    ``ModuleNotFoundError`` — and the CI job that builds the image would
+    still go green if it only checked that the build succeeded.
+
+    That is not hypothetical: ``agent_config.py`` (the validated stdout
+    and binary budgets) was added in v2.6.0 and the Dockerfile copied
+    only ``agent_core.py`` and ``agent_api.py``.
+    """
+
+    def _imported_modules(self, sources: tuple[str, ...]) -> set[str]:
+        """The local modules that these sources import."""
+        found: set[str] = set()
+        for source in sources:
+            text = (ROOT / source).read_text(encoding="utf-8")
+            for match in re.finditer(r"^from (\w+) import|^import (\w+)$", text, re.M):
+                module = match.group(1) or match.group(2)
+                if (ROOT / f"{module}.py").exists():
+                    found.add(f"{module}.py")
+        return found
+
+    def test_every_local_module_the_agent_imports_is_copied(self) -> None:
+        body = SANDBOX_DOCKERFILE.read_text(encoding="utf-8")
+        copied = set(re.findall(r"COPY[^\n]*?\b(\w+\.py)\b", body))
+        imported = self._imported_modules(("agent_api.py", "agent_core.py", "agent_config.py"))
+        self.assertTrue(imported, "no local module was found to check")
+        missing = sorted(imported - copied)
+        self.assertEqual(
+            missing,
+            [],
+            f"these modules are imported by the agent but not copied into the image: {missing}",
+        )
+
+    def test_every_local_module_the_proxy_imports_is_copied(self) -> None:
+        """The same defect, one service over."""
+        body = PROXY_DOCKERFILE.read_text(encoding="utf-8")
+        copied = set(re.findall(r"COPY[^\n]*?\b(\w+\.py)\b", body))
+        imported = self._imported_modules(("openapi_proxy.py", "proxy_core.py"))
+        self.assertTrue(imported, "no local module was found to check")
+        missing = sorted(imported - copied)
+        self.assertEqual(
+            missing,
+            [],
+            f"these modules are imported by the proxy but not copied into the image: {missing}",
+        )
+
+    def test_the_agent_modules_are_copied_together(self) -> None:
+        """They have to be in the same directory to import each other."""
+        body = SANDBOX_DOCKERFILE.read_text(encoding="utf-8")
+        for match in re.finditer(r"^COPY[^\n]*\b(\w+\.py)\b[^\n]*$", body, re.M):
+            line = match.group(0)
+            destination = line.rsplit(None, 1)[-1]
+            self.assertIn(
+                "/home/agent/",
+                destination,
+                f"the agent's modules must live in /home/agent: {line!r}",
+            )
+
+
 class TestProxyDockerfile(unittest.TestCase):
     """BUG-1b + BUG-4: ``proxy`` group name taken, and the authed HEALTHCHECK."""
 

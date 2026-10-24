@@ -70,12 +70,19 @@ RUN mkdir -p /home/agent && chown 1000:1000 /home/agent
 
 WORKDIR /home/agent
 
-# Agent HTTP API. Both the FastAPI app and the pure-function core module
+# Agent HTTP API. The FastAPI app and the pure-function core module
 # must be present in the same directory so ``from agent_core import …``
 # resolves at runtime. We COPY them into /home/agent, and PYTHONPATH=/home/agent
 # makes the import work regardless of the runtime CWD.
-COPY --chown=1000:1000 agent_core.py /home/agent/agent_core.py
-COPY --chown=1000:1000 agent_api.py  /home/agent/agent_api.py
+#
+# ``agent_config.py`` is a third module of the same kind and is imported
+# by agent_api at startup: it holds the validated stdout/binary budgets.
+# Leaving it out of the image does not fail the build — it fails the
+# container, with "ModuleNotFoundError: No module named 'agent_config'" on
+# the first request, which is the same class of defect v2.5.0 was about.
+COPY --chown=1000:1000 agent_core.py  /home/agent/agent_core.py
+COPY --chown=1000:1000 agent_config.py /home/agent/agent_config.py
+COPY --chown=1000:1000 agent_api.py   /home/agent/agent_api.py
 
 # Workspace directory — created and chmod'd here so the bind-mount at
 # runtime overlays a populated tree. The sandbox agent treats this as its
