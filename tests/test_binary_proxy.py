@@ -156,6 +156,19 @@ class TestProxyBinaryRelay(unittest.TestCase):
         self.assertEqual(response.status_code, 413)
         self.assertIn("3000000", response.text)
 
+    def test_the_error_is_not_wrapped_twice(self) -> None:
+        """The message has to be readable, not a JSON string in a JSON string.
+
+        The agent answers ``{"detail": "..."}``. Relaying that document
+        as the proxy's own detail renders it as ``{"detail": "{\\"detail\\":
+        ...}"}`` — faithful, and unreadable.
+        """
+        self._install(_FakeUpstream(413, b'{"detail":"file is 3000000 bytes, over the limit"}'))
+        response = self.client.get("/files?path=big.bin", headers=self.auth)
+        body = response.json()
+        self.assertEqual(body["detail"], "file is 3000000 bytes, over the limit")
+        self.assertNotIn("{", body["detail"])
+
     def test_a_missing_file_keeps_its_404(self) -> None:
         self._install(_FakeUpstream(404, b'{"detail":"file not found: nope.bin"}'))
         response = self.client.get("/files?path=nope.bin", headers=self.auth)
