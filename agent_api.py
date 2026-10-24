@@ -54,6 +54,13 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from agent_config import (
+    CAPTURE_DEPTH_LINES,
+    HISTORY_LIMIT_LINES,
+    PANE_HEIGHT,
+    PANE_WIDTH,
+    STDOUT_LIMIT_BYTES,
+)
 from agent_core import (
     SESSION_ID_MAX_LEN,
     __version__,
@@ -67,8 +74,14 @@ from agent_core import (
 DEFAULT_TIMEOUT = 30  # seconds
 MAX_TIMEOUT = 600  # 10 min hard cap
 MAX_COMMAND_LEN = 1_000_000  # 1 MB hard cap on a single command
-MAX_OUTPUT_BYTES = 1_000_000  # 1 MB hard cap on captured command output
-CAPTURE_PANE_LINES = 5000  # ``tmux capture-pane -S -N`` upper bound
+#: How much text one command may return. Configurable via
+#: ``AGENT_STDOUT_LIMIT`` (32k..1024k, default 512k) — see agent_config.
+#: The name is kept because callers and tests patch it.
+MAX_OUTPUT_BYTES = STDOUT_LIMIT_BYTES
+#: How far back a capture may reach. Derived from the stdout budget: a
+#: capture that cannot cover the whole scrollback truncates what the pane
+#: still holds, which is the same silent loss one layer up.
+CAPTURE_PANE_LINES = CAPTURE_DEPTH_LINES
 WORKSPACE = os.environ.get("AGENT_WORKSPACE", "/workspace")
 SESSIONS_FILE = os.environ.get("AGENT_SESSIONS_FILE", "/workspace/.agent-sessions.json")
 # Bearer token for the agent's HTTP API. The agent refuses all traffic
@@ -418,9 +431,61 @@ async def create_session(body: CreateSession) -> dict[str, Any]:
     if sid in SESSIONS and await tmux_session_exists(name):
         return {"session_id": sid, "tmux_name": name, "existed": True}
     cwd = _safe_cwd(body.cwd or WORKSPACE_REAL)
-    rc, _, err = await _tmux("new-session", "-d", "-s", name, "-c", cwd, "-x", "200", "-y", "50")
+    rc, _, err = 0, "", ""
+    for _attempt in range(3):
+        rc, _, err = await _tmux(
+            "new-session",
+            "-d",
+            "-s",
+            name,
+            "-c",
+            cwd,
+            "-x",
+            str(PANE_WIDTH),
+            "-y",
+            str(PANE_HEIGHT),
+        )
+        if rc == 0:
+            break
+        # A concurrent request may have created the same session in the
+        # meantime; that is a success, not a failure.
+        if await tmux_session_exists(name):
+            rc = 0
+            break
+        await asyncio.sleep(0.3)
     if rc != 0:
         raise HTTPException(status_code=500, detail=f"tmux new-session failed: {err}")
+
+    # The scrollback depth is what makes the stdout budget deliverable,
+    # and in tmux it is a session option that applies **only to panes
+    # created after it is set**. The pane above was created before the
+    # option could be set — the option lives on the server, and a server
+    # that has just started refuses commands for a moment (and refuses
+    # them for good if it has no sessions, because it exits when empty).
+    #
+    # So the option is set on the session, a new pane is created to
+    # inherit it, and the first pane is dropped. The new pane is the
+    # session's current window, so every later command goes to it.
+    await _tmux("set-option", "-t", name, "history-limit", str(HISTORY_LIMIT_LINES))
+    rc_window, _, _ = await _tmux("new-window", "-t", name, "-c", cwd)
+    if rc_window == 0:
+        # The original pane was window 0; the new one is the current
+        # window and the session's only window once 0 is gone.
+        await _tmux("kill-window", "-t", f"{name}:0")
+    else:
+        logger.warning("session.window_replace_failed sid=%s", sid)
+    # Cheap insurance: the scrollback depth is what makes the stdout
+    # budget deliverable, so a pane that did not inherit it is worth
+    # shouting about. It is not fatal — output that does not fit is
+    # reported as truncated rather than silently shortened.
+    actual = await _pane_history_limit(name)
+    if actual and actual != HISTORY_LIMIT_LINES:
+        logger.warning(
+            "session.scrollback_mismatch sid=%s pane=%s expected=%s",
+            sid,
+            actual,
+            HISTORY_LIMIT_LINES,
+        )
     SESSIONS[sid] = {"tmux_name": name, "created": time.time(), "cwd": cwd}
     await _save_sessions()
     logger.info("session.create sid=%s cwd=%s", sid, cwd)
@@ -483,27 +548,72 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     )
 
     marker = f"__AGENT_DONE_{uuid.uuid4().hex[:8]}__"
-    full_cmd = f"{body.command}\n__ec=$?\nprintf '\\n{marker}=%d\\n' \"$__ec\""
+    # A second marker, printed BEFORE the command runs. It is the proof
+    # that the capture still contains the beginning of the output. When the
+    # pane overflows, tmux drops the OLDEST lines — the beginning — and
+    # hands back a fragment that looks like a whole result. Without this
+    # marker there is no way to tell that apart from a short command, so
+    # the caller would read the tail of a file and believe it read the
+    # file. With it, the loss is detected and reported.
+    begin_marker = f"__AGENT_BEGIN_{uuid.uuid4().hex[:8]}__"
+    # The variable that carries the exit code from the command to the
+    # completion marker. It is named after a random token so that the
+    # shell's echo of the bookkeeping line can be recognised and cut away
+    # from the output — otherwise the caller receives the internals of
+    # the protocol along with the command's own output.
+    ec_var = f"__AGENT_EC_{uuid.uuid4().hex[:8]}__"
+    full_cmd = (
+        f"printf '\\n{begin_marker}\\n'\n"
+        f"{body.command}\n"
+        f"{ec_var}=$?\n"
+        f"printf '\\n{marker}=%d\\n' \"${ec_var}\""
+    )
     # ``send-keys -l`` writes the command as a literal string. Without
     # ``-l`` tmux interprets special tokens (``C-c``, ``Enter``, ``Tab``,
     # arrow keys, etc.) which can silently corrupt or terminate the
     # command — e.g. ``git commit -m "Press Enter to continue"`` would
     # fire the Enter mid-message. Two-step write avoids the issue
     # regardless of the command content.
+    # Snapshot the scrollback depth *before* the command runs. The delta
+    # after it finishes is exactly how many lines this command pushed
+    # into the history, and that is what bounds the capture. Without it
+    # the "stdout" of a command is the whole session transcript: the
+    # scrollback is shared by every command of the session, so a plain
+    # "capture the tail" hands back the previous commands' output as
+    # well — which is how a 200-byte command could come back carrying
+    # half a megabyte of somebody else's history.
+    history_before = await _history_size(name)
+
     await _tmux("send-keys", "-t", name, "-l", full_cmd)
     await _tmux("send-keys", "-t", name, "Enter")
 
     start = time.time()
     output = ""
+    # The completion marker has to be matched in its PRINTED form, as a
+    # whole line: ``__AGENT_DONE_xxxxxxxx__=0``. A plain substring search
+    # matches the marker inside the ECHO of the command that prints it —
+    # the shell reflects the typed line into the pane, and that echo is
+    # visible long before the command has produced anything. Matching the
+    # echo meant the poll could stop on a pane that held a fraction of the
+    # output: the capture was taken while tmux was still filling the
+    # scrollback, and the caller got a truncated stdout with no marker and
+    # no error. Because tmux processes the pty stream in order, seeing the
+    # PRINTED marker means everything before it was already absorbed.
+    printed_marker = re.compile(rf"(?m)^{re.escape(marker)}=(-?\d+)\r?$")
+    # The poll only needs to see the tail, where the completion marker is.
+    # Capturing the whole scrollback every 300 ms would copy megabytes per
+    # poll for no reason, so the full capture happens once, at the end.
     while time.time() - start < body.timeout:
-        rc, out, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", f"-{CAPTURE_PANE_LINES}")
-        if rc == 0 and marker in out:
-            output = out
+        rc, out, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", f"-{_POLL_LINES}")
+        if rc == 0 and printed_marker.search(out):
             break
         await asyncio.sleep(0.3)
     else:
         # Timed out — return whatever we have so the model can decide.
-        _, output, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", f"-{CAPTURE_PANE_LINES}")
+        capture = await _capture_command_output(name, history_before)
+        output, _, head_survived = _extract_command_output(capture, begin_marker, marker, ec_var)
+        if not head_survived and output.strip():
+            output = _HEAD_LOST_NOTICE + output
         output = _truncate_output(output)
         duration_ms = int((time.time() - start) * 1000)
         logger.warning(
@@ -521,20 +631,18 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
             "duration_ms": duration_ms,
         }
 
-    exit_code: int | None = None
-    # ``re.findall`` returns every match in order; we want the **last**
-    # one because the real marker is appended after the command output
-    # in the wrapped ``full_cmd`` above. ``re.search`` would pick the
-    # first — and a malicious command could print a fake marker first
-    # to confuse the parser.
-    matches = re.findall(rf"{marker}=(-?\d+)", output)
-    if matches:
-        exit_code = int(matches[-1])
-        # Strip the last marker occurrence (the legitimate one) and
-        # everything after. The earlier fake ones, if any, stay in
-        # stdout so the model can see they were fakes.
-        last_marker_pattern = rf"\n?{marker}={re.escape(matches[-1])}\n?"
-        output = re.sub(last_marker_pattern, "", output).rstrip()
+    # The poll saw the completion marker in the tail. Now take the full
+    # capture — this is where the beginning of the output lives, and the
+    # only way to tell whether it survived the scrollback.
+    capture = await _capture_command_output(name, history_before)
+    output, exit_code, head_survived = _extract_command_output(
+        capture, begin_marker, marker, ec_var
+    )
+    if not head_survived and output.strip():
+        # The pane overflowed and the beginning of the output is gone.
+        # Say so, loudly and first, instead of handing back a fragment
+        # that reads like a complete result.
+        output = _HEAD_LOST_NOTICE + output
     output = _truncate_output(output)
     duration_ms = int((time.time() - start) * 1000)
     logger.info(
@@ -552,6 +660,130 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         "timed_out": False,
         "duration_ms": duration_ms,
     }
+
+
+#: How many lines the completion poll looks at. The completion marker is
+#: printed last, so it is always within the tail — the poll does not need
+#: the whole scrollback, and copying megabytes every 300 ms would be
+#: pointless work.
+_POLL_LINES = 64
+
+#: Prepended to the output when the beginning of it did not survive the
+#: scrollback. Loud, and first, so a caller that only reads the first
+#: line of the result still learns that the result is a fragment.
+_HEAD_LOST_NOTICE = (
+    "[the beginning of this output no longer fits in the session "
+    "scrollback — what follows is only its tail]\n"
+)
+
+
+async def _history_size(name: str) -> int:
+    """How many lines the session's scrollback holds right now.
+
+    The value is the yardstick for "how much did *this* command print".
+    tmux's ``capture-pane -S -N`` takes N lines of history plus the
+    visible pane, so the difference between the depth before and after a
+    command is exactly the number of lines that command pushed out of
+    the visible area — and therefore the number of lines its output
+    occupies, once the visible pane's own share is added back.
+    """
+    rc, out, _ = await _tmux("display-message", "-p", "-t", name, "#{history_size}")
+    if rc != 0:
+        return 0
+    try:
+        return int(out.strip())
+    except ValueError:
+        return 0
+
+
+async def _pane_history_limit(name: str) -> int:
+    """The scrollback depth the pane was created with. 0 when unknown."""
+    rc, out, _ = await _tmux("display-message", "-p", "-t", name, "#{history_limit}")
+    if rc != 0:
+        return 0
+    try:
+        return int(out.strip())
+    except ValueError:
+        return 0
+
+
+async def _capture_command_output(name: str, history_before: int) -> str:
+    """Capture the pane, bounded to the lines this command produced.
+
+    ``capture-pane -S -N`` returns N lines of scrollback *plus* the
+    visible pane. N is the growth of the scrollback since the command
+    started, so the capture covers the command's own output and nothing
+    older — with the exception of the previous command's tail, which is
+    still sitting in the visible pane; that part is cut away by the
+    begin marker in :func:`_extract_command_output`.
+    """
+    history_after = await _history_size(name)
+    depth = max(1, min(history_after - history_before, CAPTURE_DEPTH_LINES))
+    _, out, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", f"-{depth}")
+    return out
+
+
+def _extract_command_output(
+    capture: str, begin_marker: str, done_marker: str, ec_var: str
+) -> tuple[str, int | None, bool]:
+    """Cut this command's output out of a pane capture.
+
+    Three markers play a role here and none of them may be matched
+    loosely.
+
+    ``done_marker`` is printed as ``__AGENT_DONE_xxxxxxxx__=0`` on a line
+    of its own. The *echo* of the command that prints it contains the
+    same string inside a longer line, so the marker is matched in its
+    printed form only — a loose match fires on the echo, which is
+    visible in the pane long before the command has produced anything.
+
+    ``ec_var`` names the variable that carries the exit code. The shell
+    echoes that bookkeeping line, and everything after it is protocol
+    bookkeeping rather than command output, so the region is cut there.
+
+    ``begin_marker`` is printed before the command runs. Everything
+    before it in the capture belongs to earlier commands or to the echo
+    of the command line, so the capture is cut at the marker. If the
+    marker is gone, the pane overflowed and only the tail of the output
+    is left — which has to be reported, not passed off as a whole
+    result.
+
+    Returns ``(output, exit_code, head_survived)``.
+    """
+    exit_code: int | None = None
+    region = capture
+    # The last printed marker wins: a command that prints a marker of
+    # its own first must not be able to confuse the parser.
+    done_hits = list(re.finditer(rf"(?m)^{re.escape(done_marker)}=(-?\d+)\r?$", capture))
+    if done_hits:
+        last = done_hits[-1]
+        exit_code = int(last.group(1))
+        region = capture[: last.start()]
+
+    # Cut the protocol bookkeeping: the shell echoes the line that
+    # captures the exit code, and the echo of the line that prints the
+    # completion marker follows it — both are noise for the caller.
+    #
+    # The FIRST occurrence is the right cut point, and the ORDER of the
+    # two cuts matters. The terminal echoes the raw typed text at the
+    # top of the pane, without the prompt — that block sits above the
+    # printed begin marker and is removed by the cut below. What is
+    # left is the shell's own redraw of each line, and the first of
+    # those is the bookkeeping line. Cutting the bookkeeping first
+    # would cut the raw echo instead and leave both the bookkeeping
+    # and the beginning of the output in the result.
+    head_survived = True
+    begin_hit = re.search(rf"(?m)^{re.escape(begin_marker)}\r?$", region)
+    if begin_hit:
+        region = region[begin_hit.end() :]
+    else:
+        head_survived = False
+
+    ec_hits = list(re.finditer(rf"(?m)^.*?{re.escape(ec_var)}.*$", region))
+    if ec_hits:
+        region = region[: ec_hits[0].start()]
+
+    return region.strip("\n"), exit_code, head_survived
 
 
 def _truncate_output(s: str) -> str:
@@ -584,7 +816,12 @@ async def capture_pane(
         raise HTTPException(status_code=404, detail=f"session not found: {sid}")
     # Cap at CAPTURE_PANE_LINES regardless of what the caller asks for
     # so a single WebSocket poll can't OOM the container.
-    effective = min(lines, CAPTURE_PANE_LINES)
+    # The second bound is the stdout budget expressed in lines: a line of
+    # a 200-column pane is 200 bytes, so this many lines cannot exceed
+    # the budget. Without it, /capture would be a door around the limit
+    # that /exec honours — a client could pull three times the budget
+    # through here and nothing would say so.
+    effective = min(lines, CAPTURE_PANE_LINES, max(1, MAX_OUTPUT_BYTES // PANE_WIDTH))
     _, out, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", f"-{effective}")
     return {"output": out}
 

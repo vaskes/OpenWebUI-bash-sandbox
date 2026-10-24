@@ -75,12 +75,21 @@ def _make_tmux_mock():
                 last_send_keys = " ".join(args[li + 1 : end])
             except ValueError:
                 pass
+        if cmd == "display-message":
+            # The scrollback depth query. The mock keeps no history, so
+            # every session looks empty; the capture depth falls back to
+            # its minimum, which is what the templates below assume.
+            return (0, "0", "")
         for needle, rc, stdout, stderr in reversed(schedules):
             if cmd.startswith(needle):
                 if "{marker}" in stdout:
                     m = re.search(r"__AGENT_DONE_([0-9a-f]{8})__", last_send_keys)
                     if m:
                         stdout = stdout.replace("{marker}", m.group(0))
+                if "{begin}" in stdout:
+                    b = re.search(r"__AGENT_BEGIN_([0-9a-f]{8})__", last_send_keys)
+                    if b:
+                        stdout = stdout.replace("{begin}", b.group(0))
                 return (rc, stdout, stderr)
         return (0, "", "")
 
@@ -186,7 +195,7 @@ class TestExecAutoCreatesSession(_Base):
         mock.schedule("new-session", rc=0)
         mock.schedule("send-keys", rc=0)
         # Template — ``{marker}`` is replaced with whatever was sent above.
-        mock.schedule("capture-pane", stdout="$ pwd\n/workspace\n\n{marker}=0\n")
+        mock.schedule("capture-pane", stdout="{begin}\n$ pwd\n/workspace\n\n{marker}=0\n")
         with patch("agent_api._tmux", new=mock):
             r = self.client.post(
                 "/sessions/auto-1/exec", json={"command": "pwd", "timeout": 5}, headers=self.auth
@@ -197,6 +206,10 @@ class TestExecAutoCreatesSession(_Base):
             self.assertEqual(body["exit_code"], 0)
             self.assertIn("/workspace", body["stdout"])
             self.assertNotIn("__AGENT_DONE_", body["stdout"])
+            # The begin marker was present, so the output is whole and
+            # must not carry the "beginning was lost" notice.
+            self.assertNotIn("__AGENT_BEGIN_", body["stdout"])
+            self.assertNotIn("no longer fits in the session scrollback", body["stdout"])
 
 
 class TestExecTimeout(_Base):
