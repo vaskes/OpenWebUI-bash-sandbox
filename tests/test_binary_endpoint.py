@@ -239,3 +239,85 @@ class TestFileMeta(_Base):
             "/files/meta", params={"path": "../../etc/passwd"}, headers=self.auth
         )
         self.assertEqual(response.status_code, 400)
+
+
+class TestPurgeFile(_Base):
+    """The sandbox is a scratchpad: after delivery, the copy is removed.
+
+    Every property the download endpoint has about *paths* applies here
+    too, because both go through the same resolution. A delete endpoint
+    that can reach outside the workspace would be a much better denial of
+    service than the download endpoint ever was.
+    """
+
+    def test_requires_auth(self) -> None:
+        self.write("a.bin", b"hello")
+        self.assertEqual(self.client.delete("/files", params={"path": "a.bin"}).status_code, 401)
+
+    def test_deletes_the_file(self) -> None:
+        target = self.write("doomed.bin", b"payload")
+        self.assertTrue(target.exists())
+        response = self.client.delete("/files", params={"path": "doomed.bin"}, headers=self.auth)
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(target.exists(), "the file is still on disk after a 204")
+
+    def test_the_file_is_gone_from_the_download_endpoint(self) -> None:
+        self.write("gone.bin", b"payload")
+        self.client.delete("/files", params={"path": "gone.bin"}, headers=self.auth)
+        response = self.client.get("/files", params={"path": "gone.bin"}, headers=self.auth)
+        self.assertEqual(response.status_code, 404)
+
+    def test_deleting_twice_is_404_not_500(self) -> None:
+        self.write("twice.bin", b"payload")
+        first = self.client.delete("/files", params={"path": "twice.bin"}, headers=self.auth)
+        second = self.client.delete("/files", params={"path": "twice.bin"}, headers=self.auth)
+        self.assertEqual(first.status_code, 204)
+        self.assertEqual(second.status_code, 404)
+
+    def test_missing_file_is_404(self) -> None:
+        response = self.client.delete("/files", params={"path": "nope.bin"}, headers=self.auth)
+        self.assertEqual(response.status_code, 404)
+
+    def test_path_outside_the_workspace_is_refused(self) -> None:
+        response = self.client.delete("/files", params={"path": "/etc/passwd"}, headers=self.auth)
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(Path("/etc/passwd").exists(), "a refused delete removed the file anyway")
+
+    def test_traversal_is_refused(self) -> None:
+        response = self.client.delete(
+            "/files", params={"path": "../../etc/passwd"}, headers=self.auth
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(Path("/etc/passwd").exists(), "a refused delete removed the file anyway")
+
+    def test_directory_is_refused(self) -> None:
+        (self.ws / "subdir").mkdir()
+        response = self.client.delete("/files", params={"path": "subdir"}, headers=self.auth)
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue((self.ws / "subdir").is_dir(), "a refused delete removed the directory")
+
+    def test_symlink_out_of_the_workspace_is_refused(self) -> None:
+        link = self.ws / "escape.bin"
+        try:
+            link.symlink_to("/etc/passwd")
+        except OSError:
+            self.skipTest("symlinks unavailable")
+        response = self.client.delete("/files", params={"path": "escape.bin"}, headers=self.auth)
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(Path("/etc/passwd").exists(), "a refused delete removed the target anyway")
+
+    def test_symlink_inside_the_workspace_removes_the_target(self) -> None:
+        target = self.write("real.bin", b"inside")
+        link = self.ws / "link.bin"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            self.skipTest("symlinks unavailable")
+        response = self.client.delete("/files", params={"path": "link.bin"}, headers=self.auth)
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(target.exists(), "the target of the link is still there")
+        self.assertTrue(link.is_symlink(), "the link itself should survive, dangling")
+
+    def test_empty_path_is_refused(self) -> None:
+        response = self.client.delete("/files", params={"path": "  "}, headers=self.auth)
+        self.assertEqual(response.status_code, 400)

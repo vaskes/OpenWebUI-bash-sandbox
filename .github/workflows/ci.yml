@@ -200,6 +200,25 @@ jobs:
           grep -q '3000000' /tmp/err.json \
             || { echo "::error::the 413 does not name the real size"; exit 1; }
 
+          # The purge. The sandbox is a scratchpad: once a client has
+          # delivered a file, it removes the copy it made. This has to
+          # work in the shipped artifact, not just in a unit test — a
+          # delete endpoint that answers 204 and leaves the file on disk
+          # is worse than no endpoint at all, because the client trusts
+          # it.
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 \
+            -X DELETE -H "Authorization: Bearer $TOKEN" \
+            'http://127.0.0.1:8099/files?path=probe.bin')
+          [ "$code" = "204" ] || { echo "::error::purge answered $code, expected 204"; exit 1; }
+          if docker exec ci-sandbox-agent ls /workspace/probe.bin >/dev/null 2>&1; then
+            echo "::error::the file is still in the workspace after the purge"; exit 1
+          fi
+          # Purging again is "nothing to delete", not "the sandbox broke".
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 \
+            -X DELETE -H "Authorization: Bearer $TOKEN" \
+            'http://127.0.0.1:8099/files?path=probe.bin')
+          [ "$code" = "404" ] || { echo "::error::second purge answered $code, expected 404"; exit 1; }
+
       - name: Dump logs on failure
         if: failure()
         run: docker compose -f docker-compose.ci.yml logs || true

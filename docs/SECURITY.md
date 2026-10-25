@@ -171,8 +171,37 @@ so two users opening the terminal would see each other's output. v2.1
 generates a unique `ws-<hex>` per connection and tears down the
 tmux session when the connection closes.
 
+### 8. The file door (`/files`, `/files/meta`, `DELETE /files`)
+
+The binary door hands out the raw bytes of a workspace file, and
+`DELETE /files` removes one. Two things about it:
+
+* **It is not a security boundary.** The workspace scope is hygiene: the
+  model already has a shell in the same workspace and can read and remove
+  the same files with `cat` and `rm`. Anyone who can call `/files` with a
+  valid token could already run `rm`.
+* **It is a destructive capability, and the bearer token is the only
+  guard.** A token holder can delete files in the workspace. That is
+  intentional — the sandbox is a scratchpad, and the delivery path
+  removes the file it delivered — and it is bounded by the workspace
+  scope: outside it the delete is refused with a 400, and a symlink
+  pointing out of the workspace is resolved and refused before anything
+  is removed.
+
+The file door is deliberately **not** rate limited: a per-minute request
+budget would break a chunked transfer for a reason that has nothing to
+do with the transfer. The bearer token and the workspace scope are the
+controls.
+
 ## What's intentionally not implemented
 
+* **Streaming a file that is not finished.** The door serves files that
+  exist, completely, on disk. A download in flight, or a file still being
+  written, has no URL here — the producer materialises it first. A
+  "stateless binary" mode, where a live stream is teed straight out to
+  the client, is not implemented: the channel it would travel in (the
+  model's tool result) is text and context-sized, so the bytes would not
+  fit there anyway.
 * **User-level isolation at the sandbox layer.** All chats share the
   same `sandbox-agent` container, which means all users share the
   same tmux server. Open WebUI generates unique `session_id`s per
