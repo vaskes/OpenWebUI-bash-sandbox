@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -98,6 +99,63 @@ class TestDownloadFile(_Base):
     def test_missing_file_is_404(self) -> None:
         response = self.client.get("/files", params={"path": "nope.bin"}, headers=self.auth)
         self.assertEqual(response.status_code, 404)
+
+    def test_unreadable_file_is_403_and_not_a_truncated_200(self) -> None:
+        """A file the agent cannot read must be a status, not a broken body.
+
+        The defect this pins was found from the bot side (2026-10-25): the
+        endpoint opened the file *lazily*, inside the response generator.
+        A file owned by root with mode 0600 could not be opened by the
+        agent (uid 1000), the 200 and the ``Content-Length`` had already
+        gone out, and the client received 0 of the promised bytes. httpx
+        reads that as a broken connection, and the bot reported "the
+        sandbox side-car is unreachable" — blaming the network instead of
+        the file's mode.
+
+        The open therefore has to happen before the response starts. This
+        test pins that: if the open moves back into the generator, the
+        ``PermissionError`` escapes the response and the test fails with
+        it, instead of quietly answering 403.
+        """
+        self.write("root-only.bin", b"secret")
+
+        real_open = Path.open
+
+        def fake_open(self, *args, **kwargs):
+            if self.name == "root-only.bin":
+                raise PermissionError(13, "Permission denied")
+            return real_open(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "open", fake_open):
+            response = self.client.get(
+                "/files", params={"path": "root-only.bin"}, headers=self.auth
+            )
+
+        self.assertEqual(response.status_code, 403)
+        detail = response.json().get("detail", "")
+        self.assertIn("permission denied", detail.lower())
+        # The message has to say what to do, not just that it failed.
+        self.assertIn("chmod", detail.lower())
+
+    def test_unreadable_file_with_a_range_is_also_403(self) -> None:
+        """The range path opens the same file, so it must fail the same way."""
+        self.write("root-only.bin", b"secret")
+
+        real_open = Path.open
+
+        def fake_open(self, *args, **kwargs):
+            if self.name == "root-only.bin":
+                raise PermissionError(13, "Permission denied")
+            return real_open(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "open", fake_open):
+            response = self.client.get(
+                "/files",
+                params={"path": "root-only.bin"},
+                headers={**self.auth, "Range": "bytes=0-2"},
+            )
+
+        self.assertEqual(response.status_code, 403)
 
     def test_directory_is_refused(self) -> None:
         (self.ws / "subdir").mkdir()
