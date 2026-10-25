@@ -4,6 +4,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-10-25
+
+The delivery side of the binary door, and a contract the bot can code against.
+
+v2.6.0 gave the sandbox a way to hand out bytes. It did not say what
+happens to the file afterwards, so the artifact ended up living in two
+places at once — in the workspace and wherever the client delivered it —
+and the client had no documented way to ask for the workspace copy to go
+away. This release closes that loop and writes down the contract the
+client codes against.
+
+### Added
+
+- **`DELETE /files?path=`** on the agent, relayed by the proxy. The
+  sandbox is a scratchpad, not a file host: once a client has delivered a
+  file, it removes the copy it made. The path goes through the same
+  resolution as the download endpoint — outside the workspace, a symlink
+  pointing out of it, or anything that is not a regular file is refused;
+  a file that is not there is a 404, because "nothing to delete" is not
+  the same as "deleted". The proxy relays the upstream status instead of
+  flattening it, so a missing file stays a 404 and an unreachable agent
+  is a 502.
+- **`docs/HANDOFF-binary-transport.md`** — the contract for the client
+  that delivers files out of this sandbox: what to call, in what order,
+  what the sandbox deliberately does not do, how to size a transfer
+  against the channel's own limit, and how to verify a delivery. Written
+  for the agent that maintains the bot, which is where the courier lives.
+- **`tests/test_api_docs_cover_routes.py`** — every route the agent and
+  the proxy serve must be named in the agent's `Public API` docstring and
+  in the README's API tables, with the same method and the same path.
+  v2.6.0 shipped `/files` and `/files/meta` and documented them in the
+  README but not in the docstring; a route that exists in the code and in
+  neither document is a route nobody knows about.
+
+### Changed
+
+- **`README.md`** now states the client's delivery contract: pull as a
+  stream, hash while reading, deliver, then purge. It also states what
+  the sandbox does **not** do — it does not stream a file that is not
+  finished, it is not a file host, and it is not a security boundary —
+  and it notes the channel-side limit that bounds any transfer:
+  Telegram's `sendDocument` accepts 50 MB through the public Bot API, so
+  a sandbox limit above that is a limit nobody can use.
+
+### Fixed
+
+- **`agent_api.py`** — the file endpoints were missing from the module's
+  `Public API` docstring, the one place a maintainer looks first.
+
 ## [2.6.0] - 2026-10-25
 
 Two budgets and a door for bytes.
