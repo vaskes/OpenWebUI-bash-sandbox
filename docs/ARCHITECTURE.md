@@ -127,7 +127,7 @@ importing FastAPI/Pydantic/httpx.
 | `/workspace` files  | bind-mount `/opt/agent-workspace`           | yes (host filesystem)              |
 | installed apt pkgs  | named volume `sandbox-agent-apt`            | yes                                |
 | installed pip pkgs  | named volume `sandbox-agent-pip`            | yes                                |
-| `~/.bashrc`, configs| named volume `sandbox-agent-home` (=/home/agent) | yes                            |
+| `~/.bashrc`, configs| the image's own `/home/agent` (code lives there) | no — but the code is baked in, not mounted |
 | tmux sessions       | `/tmp` inside container                     | no — but auto-recreate on first use|
 | Open WebUI DB       | named volume `open-webui-data`              | yes (NOT bind-mount — wave 3 #C1)  |
 | `TOOL_SERVER_CONNECTIONS` | env var in compose                     | yes (re-read on `up -d`)           |

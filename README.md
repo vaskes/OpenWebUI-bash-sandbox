@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 258](https://img.shields.io/badge/tests-258_passing-brightgreen)](tests/)
+[![Tests: 259](https://img.shields.io/badge/tests-259_passing-brightgreen)](tests/)
 
 ---
 
@@ -43,7 +43,7 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **258 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **259 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
