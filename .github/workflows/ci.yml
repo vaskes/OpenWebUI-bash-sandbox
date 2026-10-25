@@ -338,10 +338,16 @@ jobs:
           # time to keep the image small), so the update comes first.
           docker exec ci-sandbox-agent sh -c 'sudo -n apt-get update -qq' \
             || { echo "::error::apt-get update failed on a writable rootfs"; exit 1; }
-          docker exec ci-sandbox-agent sh -c 'sudo -n apt-get install -y -qq --no-install-recommends cowsay' \
+          # `bc` and not `cowsay`: cowsay installs into /usr/games, which
+          # is deliberately not on the PATH, so "the package is on the
+          # PATH" would be a false requirement. `bc` lands in /usr/bin.
+          docker exec ci-sandbox-agent sh -c 'sudo -n apt-get install -y -qq --no-install-recommends bc' \
             || { echo "::error::apt-get install failed"; exit 1; }
-          docker exec ci-sandbox-agent sh -c 'command -v cowsay' \
+          docker exec ci-sandbox-agent sh -c 'command -v bc' \
             || { echo "::error::the installed package is not on the PATH"; exit 1; }
+          # The package must be usable, not merely present.
+          docker exec ci-sandbox-agent sh -c 'echo "2+3" | sudo -n bc' | grep -q '^5$' \
+            || { echo "::error::the installed package does not run"; exit 1; }
           echo "the privilege mode installs packages"
 
       - name: Dump logs on failure
