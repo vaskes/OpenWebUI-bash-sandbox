@@ -1,22 +1,23 @@
 # syntax=docker/dockerfile:1.6
 # Multi-stage build: builder installs pip deps, runtime image is a small
-# python:3.11-slim with only the installed wheels and the app code.
+# python:3.14-slim with only the installed wheels and the app code.
 #
 # OpenAPI 3.0 proxy — wraps sandbox-agent in a single ``bash`` tool that
 # Open WebUI can consume as an External Tool Server.
 
 # ---- builder ----
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --prefix=/install -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
 # ---- runtime ----
-FROM python:3.11-slim
+FROM python:3.14-slim
 
-# uid/gid 1000 is free in python:3.11-slim, but the *name* ``proxy`` is
-# taken: Debian ships a ``proxy`` group at GID 13, so
+# uid/gid 1000 is free in python:3.14-slim, but the *name* ``proxy`` is
+# taken: Debian ships a ``proxy`` group at GID 13 (verified 2026-10-25:
+# ``getent group proxy`` -> ``proxy:x:13:``), so
 # ``groupadd -g 1000 proxy`` dies with "group 'proxy' already exists".
 # As with Dockerfile.sandbox we reference the ids numerically and skip
 # passwd/group creation entirely. (This is a name collision, unlike the
@@ -29,10 +30,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 # Copy the pip install from the builder.
 #
 # NOTE: unlike Dockerfile.sandbox, no ``local/`` unwrapping is needed here.
-# python:3.11-slim builds pip against the *platform* scheme, so
+# python:3.14-slim builds pip against the *platform* scheme, so
 # ``pip install --prefix=/install`` lays the tree down directly as
-# ``/install/{bin,lib}``. Verified against the base image — do not
-# "fix" this to match the sandbox Dockerfile.
+# ``/install/{bin,lib}`` (verified 2026-10-25: ``ls /install`` -> ``bin
+# lib``). Verified against the base image — do not "fix" this to match
+# the sandbox Dockerfile.
 COPY --from=builder /install /usr/local
 
 WORKDIR /app
