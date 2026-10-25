@@ -221,8 +221,9 @@ that could help, the container runs with an **empty capability bounding
 set** and **no-new-privileges** on. A command cannot become root,
 because there is nothing to become root *with*.
 
-Turning it on takes three settings, and all three are needed — the
-first alone is a broken half:
+Turning it on takes four settings. Three of them make the escalation
+work at all — the first one alone is a broken half. The fourth does
+not: it decides whether the root is *useful*:
 
 | Setting | Where | What it does |
 |---|---|---|
@@ -231,10 +232,9 @@ first alone is a broken half:
 | `AGENT_CAP_DROP=SYS_ADMIN` | the sandbox's environment | the capability bounding set is no longer empty, so the process can hold `CAP_SETUID` and `su` can change the user |
 | `AGENT_READ_ONLY=false` | the sandbox's environment | the container's root filesystem is writable, so the root shell can actually change something |
 
-The fourth one is not part of the escalation — it decides whether the
-root is *useful*. Three of them give the model a root shell; with a
-read-only root filesystem that shell owns the filesystem and cannot
-change a byte of it. `apt-get` needs three writable paths
+The escalation gives the model a root shell; with a read-only root
+filesystem that shell owns the filesystem and cannot change a byte of
+it. `apt-get` needs three writable paths
 (`/var/lib/apt/lists` for the index, `/var/lib/dpkg` for the package
 database, `/usr` for the packages themselves) and gets *"Read-only file
 system"* for all three. A model that tries `apt-get install` then

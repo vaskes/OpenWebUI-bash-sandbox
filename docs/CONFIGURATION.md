@@ -36,7 +36,7 @@ run `sudo su` and become root **inside the container**.
 Two more settings are needed, and they are compose-level: the setuid
 bit is inert while the container's `no-new-privileges` flag is on, and
 `su` cannot change the user while the capability bounding set is empty.
-Set all three:
+Set all three for the escalation:
 
 ```
 AGENT_ALLOW_SUDO=1

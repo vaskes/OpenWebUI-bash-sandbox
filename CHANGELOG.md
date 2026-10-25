@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.1] - 2026-10-25
+
+The documentation counts its settings.
+
+### Fixed
+
+- **The privilege mode promised "three settings" above a table with
+  four.** v2.10.0 added `AGENT_READ_ONLY` to the table in
+  `docs/SECURITY.md` section 9 and left the sentence above it alone. A
+  reader counting the rows got four and a sentence that said three.
+  The prose now says four, and says which three are the escalation
+  and which one decides whether the root is *useful*.
+
+- **The same ambiguity, smaller, in two more places.**
+  `docs/CONFIGURATION.md` said "Set all three" and `.env.example` said
+  "All three settings are needed". Both now say "for the escalation",
+  because the fourth setting belongs to the same feature and the old
+  wording read as "there are three in total".
+
+### Added
+
+- **A tripwire on the count.** `tests/test_privilege_mode.py` parses the
+  privilege table, compares its row count with the number in the prose,
+  and checks that every knob the table names is *interpolated* by a
+  compose file — a mention in a comment is not a switch.
+
+  Verified by mutation, all three of them red: adding a fifth row to
+  the table, writing "three settings" again, and dropping the
+  interpolation from the compose files.
+
+Version 2.10.1. README test count 298 -> 300.
+
 ## [2.10.0] - 2026-10-25
 
 A root shell that cannot write is a half-root.
