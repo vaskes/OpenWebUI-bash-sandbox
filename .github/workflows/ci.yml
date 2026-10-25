@@ -219,6 +219,46 @@ jobs:
             'http://127.0.0.1:8099/files?path=probe.bin')
           [ "$code" = "404" ] || { echo "::error::second purge answered $code, expected 404"; exit 1; }
 
+          # A file the agent cannot read. The agent runs as uid 1000; a
+          # root-owned file with mode 0600 is unreadable for it — the
+          # privilege mode makes this easy to create, and the host can
+          # create one too.
+          #
+          # The door has to answer with a status code. A 200 that promises
+          # N bytes and then delivers none reads as a broken connection:
+          # the client blames the side-car for being unreachable, and the
+          # operator goes looking at the network instead of at the file's
+          # mode.
+          #
+          # Two ways to make the file unreadable, because they are not the
+          # same: mode 000 on a file the agent owns, and a root-owned
+          # 0600 file. The second one needs a container with the default
+          # capability set (the agent's own has an empty one, so even root
+          # cannot write into its workspace) — it borrows the volume and
+          # nothing else.
+          docker exec ci-sandbox-agent \
+            sh -c 'printf secret > /workspace/noaccess.bin; chmod 000 /workspace/noaccess.bin'
+          code=$(curl -s -o /tmp/denied.json -w '%{http_code}' --max-time 60 \
+            -H "Authorization: Bearer $TOKEN" \
+            'http://127.0.0.1:8099/files?path=noaccess.bin')
+          [ "$code" = "403" ] \
+            || { echo "::error::an unreadable file answered $code, expected 403"; cat /tmp/denied.json; exit 1; }
+          grep -qi 'permission denied' /tmp/denied.json \
+            || { echo "::error::the 403 does not say it is a permission problem"; exit 1; }
+
+          AGENT_IMAGE=$(docker inspect -f '{{.Config.Image}}' ci-sandbox-agent)
+          docker run --rm --user 0:0 --volumes-from ci-sandbox-agent \
+            --entrypoint sh "$AGENT_IMAGE" \
+            -c 'umask 077; printf secret > /workspace/root-only.bin; ls -l /workspace/root-only.bin'
+          code=$(curl -s -o /tmp/denied2.json -w '%{http_code}' --max-time 60 \
+            -H "Authorization: Bearer $TOKEN" \
+            'http://127.0.0.1:8099/files?path=root-only.bin')
+          [ "$code" = "403" ] \
+            || { echo "::error::a root-owned file answered $code, expected 403"; cat /tmp/denied2.json; exit 1; }
+          # No cleanup: the agent container drops every capability, so even
+          # root cannot unlink those files from the workspace — and the
+          # tear-down step deletes the volume anyway.
+
       - name: Dump logs on failure
         if: failure()
         run: docker compose -f docker-compose.ci.yml logs || true

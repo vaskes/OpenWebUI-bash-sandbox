@@ -4,6 +4,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.1] - 2026-10-25
+
+The file door tells the truth about permissions.
+
+### Fixed
+
+- **An unreadable file is a 403, not a truncated 200.** The download
+  endpoint opened the file *lazily*, inside the response generator. A
+  file the agent's own process cannot read — one created by root with
+  `umask 077`, which the privilege mode makes easy — could not be
+  opened, but the `200` and the `Content-Length` had already gone out.
+  The client received 0 of the promised bytes: `httpx` raised
+  `RemoteProtocolError`, and the bot reported "the sandbox side-car is
+  unreachable" — blaming the network instead of the file's mode.
+
+  The file is now opened **before** the response starts, so a refusal
+  is a status code with a message that says what to do (`chmod 644`).
+  The proxy relays it like every other error status.
+
+  Reproduced on the live range first: `HTTP/1.1 200 OK`,
+  `content-length: 6`, and `curl: (18) end of response with 6 bytes
+  missing`. After the fix the same request answers `403` with
+  `permission denied: the sandbox agent cannot read root-only.bin`.
+
+### Added
+
+- **`tests/test_binary_endpoint.py`** — two cases: an unreadable file is
+  a 403 that names the problem, with and without a `Range` header. Both
+  were verified by mutation: restoring the lazy open turns them red.
+- **The deploy CI job** now creates an unreadable file two ways — mode
+  000 on a file the agent owns, and a root-owned 0600 file borrowed
+  through the volume — and expects a 403 from the shipped artifact.
+
+### Changed
+
+- **`docs/HANDOFF-binary-transport.md`** — the error contract now says
+  what a 403 means, and what a client should do with a short read: treat
+  it as a transport failure and report it as one, not as a permission
+  problem.
+- **`docs/SECURITY.md`** — the file door section records why the refusal
+  is decided before the response starts.
+
+Version 2.9.1. README test count 284 -> 286.
+
 ## [2.9.0] - 2026-10-25
 
 The base images move forward, and the CI matrix follows them.

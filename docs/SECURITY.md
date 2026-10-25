@@ -193,6 +193,14 @@ budget would break a chunked transfer for a reason that has nothing to
 do with the transfer. The bearer token and the workspace scope are the
 controls.
 
+The door also **tells the truth about permissions**. It opens the file
+before the response starts, so a file the agent's own process cannot
+read — one a root-owned command created with `umask 077` — is a **403**
+with a message that names the cause, not a 200 that promises N bytes
+and then delivers none. The alternative is worse than ugly: the client
+sees a short read, calls it a broken connection, and blames the
+side-car for being unreachable when the side-car is perfectly fine.
+
 ### 9. The privilege mode: `sudo su` inside the sandbox
 
 > **This is for private deployments in secured environments only.**
