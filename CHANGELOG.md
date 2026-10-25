@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.1] - 2026-10-25
+
+The meta door told the truth about the file and lied about the status.
+
+### Fixed
+
+- **`GET /files/meta` now relays the upstream status** instead of
+  flattening every failure into a 200 with an `error` key. A file that
+  is not there is a 404, a path outside the workspace is a 400, and an
+  unreachable agent is a 502 — the same answer the download and purge
+  endpoints already gave. The old shape was a trap for exactly the
+  client this release was written for: the courier asks the meta
+  endpoint for the size of a file it is about to pull, and a 200 says
+  "here are the facts" even when the facts are missing — a client that
+  trusts the status code is told the file is there, and a client that
+  reads `size` gets nothing to compare against the limit.
+- **The error body is no longer JSON inside a JSON string.** The meta
+  endpoint wrapped the agent's `{"detail": "..."}` into
+  `{"error": "{\"detail\": ...}"}`; it now passes the message through
+  the same unwrapping the other endpoints use, so the client reads
+  `{"detail": "file not found: report.pdf"}`.
+
+### Added
+
+- **A tripwire for the class**: `TestProxyFileEndpointsAgree` walks all
+  three file endpoints and demands the same status for the same upstream
+  answer. Flattening one of them again turns the test red — the failure
+  mode that produced this release could not have survived it.
+- The status codes of the three file endpoints are now written down in
+  `docs/HANDOFF-binary-transport.md`, so the contract the bot codes
+  against includes the failure case and not only the happy one.
+
 ## [2.7.0] - 2026-10-25
 
 The delivery side of the binary door, and a contract the bot can code against.

@@ -116,6 +116,14 @@ first. A path outside the workspace is a 400, a directory is a 400, a
 symlink pointing out is a 400. The agent's own `/files` endpoints are
 not published to the outside — the proxy is the only surface.
 
+**All three endpoints answer the same way.** A file that is not there is
+a **404**, a path that is refused is a **400**, a file that is over the
+binary limit is a **413** (and the message names the real size), and an
+unreachable sandbox agent is a **502**. The error body is
+`{"detail": "..."}` — the message itself, not a JSON document inside a
+JSON string. Do not look for an `error` key: there is none, and a client
+that checks the status code is told the truth.
+
 The endpoint is **not rate limited**, on purpose: a file may arrive in
 ranges, and a per-minute budget would break a legitimate transfer for a
 reason that has nothing to do with the transfer.

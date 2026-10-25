@@ -694,7 +694,15 @@ async def file_meta(
     path: str = Query(..., description="File in the sandbox"),
     _: str = Depends(_require_token),
 ) -> dict[str, Any]:
-    """Metadata for a file in the sandbox: size, name, mtime."""
+    """Metadata for a file in the sandbox: size, name, mtime.
+
+    The status is relayed, exactly as ``/files`` and ``DELETE /files`` do:
+    a file that is not there stays a 404, a path outside the workspace
+    stays a 400, and an unreachable agent is a 502. Flattening those into
+    a 200 with an ``error`` key would be a lie to the client — the courier
+    asks this endpoint for the size of a file it is about to pull, and a
+    200 says "here is the file" even when there is none.
+    """
     client = _client(request)
     try:
         response = await client.get(
@@ -703,9 +711,15 @@ async def file_meta(
             headers=_upstream_headers(),
         )
     except httpx.HTTPError as exc:
-        return {"error": f"sandbox-agent request failed: {exc}"}
+        raise HTTPException(status_code=502, detail=f"sandbox-agent request failed: {exc}") from exc
+
     if response.status_code >= 400:
-        return {"error": response.text[:500]}
+        body = await response.aread()
+        await response.aclose()
+        raise HTTPException(
+            status_code=response.status_code, detail=_upstream_detail(body)
+        ) from None
+
     return response.json()
 
 
