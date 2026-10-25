@@ -13,6 +13,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.sandbox
+      args:
+        # The privilege mode — see docs/SECURITY.md. 0 = the agent's
+        # shell cannot become root. 1 = the image ships sudo and the
+        # rule that lets a command run `sudo su`. PRIVATE, SECURED
+        # DEPLOYMENTS ONLY.
+        AGENT_ALLOW_SUDO: "${AGENT_ALLOW_SUDO:-0}"
     container_name: ci-sandbox-agent
     restart: "no"
     networks: [ci-net]
@@ -21,8 +27,11 @@ services:
     mem_limit: 2g
     cpus: "2.0"
     pids_limit: 256
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
+    # The runtime half of the privilege mode. The defaults are the stock
+    # posture: an empty capability set and no-new-privileges on. To let
+    # the agent's shell become root, both have to give way.
+    cap_drop: ["${AGENT_CAP_DROP:-ALL}"]
+    security_opt: ["no-new-privileges:${AGENT_NO_NEW_PRIVILEGES:-true}"]
     stop_grace_period: 10s
     tmpfs:
       - /tmp:size=256m,mode=1777

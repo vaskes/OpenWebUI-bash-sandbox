@@ -14,9 +14,39 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_PORT`           | `8082`                                    | uvicorn listen port.                                           |
 | `AGENT_STDOUT_LIMIT`   | `512k`                                    | How much text one command may return in one exec. 32k..1024k.  |
 | `AGENT_BINARY_LIMIT`   | `2048k`                                   | How large a file `/files` will serve. `0` = unlimited.         |
+| `AGENT_ALLOW_SUDO`     | `0`                                       | Build the image with `sudo`, so a command can become root. **Private, secured deployments only.** |
+| `AGENT_NO_NEW_PRIVILEGES` | `true`                                  | The container's `no-new-privileges` flag. `false` is required by the privilege mode. |
+| `AGENT_CAP_DROP`       | `ALL`                                     | Capabilities dropped from the container. `SYS_ADMIN` in the privilege mode. |
 
 If `AGENT_TOKEN` is empty, the agent refuses to serve any request
 except `/healthz` (returns 503). This is fail-closed by design.
+
+### The privilege mode
+
+`AGENT_ALLOW_SUDO=1` builds the agent image with `sudo` and a
+`NOPASSWD` rule for the agent's user, so a command in the sandbox can
+run `sudo su` and become root **inside the container**.
+
+> **Private deployments in secured environments only.** The sandbox runs
+> code whose input may be hostile; a prompt injection that reaches the
+> shell gets root. The container stays the boundary — the mode gives
+> nothing on the host — but inside the container the model is root.
+
+Two more settings are needed, and they are compose-level: the setuid
+bit is inert while the container's `no-new-privileges` flag is on, and
+`su` cannot change the user while the capability bounding set is empty.
+Set all three:
+
+```
+AGENT_ALLOW_SUDO=1
+AGENT_NO_NEW_PRIVILEGES=false
+AGENT_CAP_DROP=SYS_ADMIN
+```
+
+The agent logs a warning at startup when `sudo` is present — either
+that the mode is on, or which of the two runtime settings is still in
+the way. Full description, including what the mode does *not* give:
+[`docs/SECURITY.md`](SECURITY.md), section 9.
 
 ### Size values
 

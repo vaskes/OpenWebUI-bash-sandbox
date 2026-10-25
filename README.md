@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 259](https://img.shields.io/badge/tests-259_passing-brightgreen)](tests/)
+[![Tests: 280](https://img.shields.io/badge/tests-280_passing-brightgreen)](tests/)
 
 ---
 
@@ -43,7 +43,7 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **259 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **280 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -119,6 +119,13 @@ The most important knobs:
   forgotten browser tab from pinning a tmux session forever.
 - **`/workspace` mount** — bind-mount `/opt/agent-workspace` to put files
   on the host that survive container restarts.
+- **`AGENT_ALLOW_SUDO`** — `0` by default. `1` builds the image with
+  `sudo`, so a command in the sandbox can run `sudo su` and become root
+  **inside the container**. **Private deployments in secured environments
+  only** — the sandbox runs code whose input may be hostile, and this
+  hands that code root. Two runtime settings have to give way as well
+  (`AGENT_NO_NEW_PRIVILEGES=false`, `AGENT_CAP_DROP=SYS_ADMIN`); see
+  [docs/SECURITY.md](docs/SECURITY.md#9-the-privilege-mode-sudo-su-inside-the-sandbox).
 
 ## Development
 

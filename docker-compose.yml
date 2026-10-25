@@ -13,6 +13,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.sandbox
+      args:
+        # The privilege mode. 0 = the agent's shell cannot become root:
+        # there is no sudo in the image and no setuid binary that could
+        # help. 1 = the image ships sudo and a NOPASSWD rule, so a
+        # command can run `sudo su` and become root inside the container.
+        # PRIVATE, SECURED DEPLOYMENTS ONLY — see docs/SECURITY.md.
+        AGENT_ALLOW_SUDO: "${AGENT_ALLOW_SUDO:-0}"
     container_name: sandbox-agent
     restart: unless-stopped
     networks:
@@ -34,10 +41,17 @@ services:
     pids_limit: 256
     # Drop all capabilities, then re-add only what's needed. tmux, ssh,
     # and basic networking do not need any of the dropped caps.
+    #
+    # The two knobs below are the runtime half of the privilege mode.
+    # Their defaults are the stock posture: an empty capability set and
+    # no-new-privileges on. To let the agent's shell become root, both
+    # have to give way — the setuid bit is inert while no-new-privileges
+    # is on, and su cannot work at all while the bounding set is empty.
+    # See docs/SECURITY.md, "The privilege mode".
     cap_drop:
-      - ALL
+      - "${AGENT_CAP_DROP:-ALL}"
     security_opt:
-      - no-new-privileges:true
+      - "no-new-privileges:${AGENT_NO_NEW_PRIVILEGES:-true}"
     # Must be at least uvicorn's --timeout-graceful-shutdown (25s) +
     # headroom, otherwise Docker SIGKILLs the container mid-shutdown.
     stop_grace_period: 30s

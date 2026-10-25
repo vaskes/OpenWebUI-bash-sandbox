@@ -193,6 +193,88 @@ budget would break a chunked transfer for a reason that has nothing to
 do with the transfer. The bearer token and the workspace scope are the
 controls.
 
+### 9. The privilege mode: `sudo su` inside the sandbox
+
+> **This is for private deployments in secured environments only.**
+> A stock deployment must not turn it on. The sandbox runs code whose
+> input may be hostile — a prompt injection that reaches the shell is
+> the threat model of every other section in this document — and the
+> privilege mode gives that code **root inside the container**.
+
+Off by default. A stock image has **no `sudo`** and no setuid binary
+that could help, the container runs with an **empty capability bounding
+set** and **no-new-privileges** on. A command cannot become root,
+because there is nothing to become root *with*.
+
+Turning it on takes three settings, and all three are needed — the
+first alone is a broken half:
+
+| Setting | Where | What it does |
+|---|---|---|
+| `AGENT_ALLOW_SUDO=1` | the sandbox's environment | the image is built with `sudo` and a `NOPASSWD` rule for the agent's user |
+| `AGENT_NO_NEW_PRIVILEGES=false` | the sandbox's environment | the kernel stops ignoring the setuid bit, so `sudo` can elevate at all |
+| `AGENT_CAP_DROP=SYS_ADMIN` | the sandbox's environment | the capability bounding set is no longer empty, so the process can hold `CAP_SETUID` and `su` can change the user |
+
+`AGENT_CAP_DROP=SYS_ADMIN` is the value to use: Docker does not grant
+`CAP_SYS_ADMIN` by default, so dropping it leaves the default
+capability set intact — `SETUID`, `SETGID`, `DAC_OVERRIDE` and the rest
+— while still denying the one capability that would allow mounts and
+namespaces.
+
+**What it gives:** a command in the sandbox can run `sudo su` and gets a
+root shell **inside the container**. That is the whole of it. The
+agent's own HTTP service keeps running as uid 1000; only the model's
+shell escalates. `CAP_SYS_ADMIN` is still absent, so there is no
+mount, no namespace trick, and no way out of the container's own
+namespaces.
+
+**What it does not give:** the host. The container is the boundary. The
+root shell can write anywhere *in the container* — including the
+workspace, which is a bind-mount, so that means the files the host
+shares with the sandbox. It cannot reach anything the container cannot
+see, and it cannot bypass the host's own permissions on the mount.
+
+**Verify it after turning it on:**
+
+```bash
+docker exec <agent> sh -c 'sudo -n id'      # uid=0(root)
+docker logs <agent> | grep -i 'privilege mode'
+```
+
+**One setting inside sudo is load-bearing.** Sudo runs the command in a
+pseudo-terminal of its own by default, and when that pty is torn down the
+terminal is reset — and the reset wipes the completion marker the exec
+protocol depends on. The command succeeds, its output is right there in
+the pane, and the exec still times out and reports nothing. The
+sandbox therefore sets `Defaults !use_pty` for sudo, so the command runs
+in the same terminal and the marker survives.
+
+That is a property of the exec protocol, not of sudo: **any command that
+allocates its own pty** — `less`, `top`, `vim`, `ssh` to a host that
+allocates one — resets the terminal the same way. The sandbox's
+completion detection reads the painted screen, and a screen that was
+reset does not have the marker on it. It is not implemented here (the
+robust answer is to read the raw output stream instead of the painted
+screen), but it is worth knowing before you conclude that a command
+"did nothing" when it actually ran.
+
+**A note on `sudo su` itself.** `sudo su` is an *interactive* root
+shell: it takes over the pane and never returns, so the exec times out
+the way any interactive command does (`bash`, `python3` without `-c`).
+A one-shot root command is `sudo -n su -c 'id'` — or simply
+`sudo -n <command>`, which is what the sandbox's own rule is for.
+
+The agent logs a warning at startup when `sudo` is present: either
+that the mode is on, or — if the posture does not allow it — exactly
+which of the two runtime settings is still in the way. A silent
+failure here is the worst outcome: the model would report *"sudo: the
+'no new privileges' flag is set"* and the operator would look for a
+broken sandbox instead of a missing setting.
+
+**Before you turn it on, read:** the hardening checklist below, and
+the trust model section — a root shell in the sandbox is still a
+single-token, single-operator design.
+
 ## What's intentionally not implemented
 
 * **Streaming a file that is not finished.** The door serves files that

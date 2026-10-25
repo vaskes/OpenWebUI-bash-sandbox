@@ -53,6 +53,7 @@ import logging
 import mimetypes
 import os
 import re
+import shutil
 import time
 import urllib.parse
 import uuid
@@ -78,7 +79,9 @@ from agent_config import (
 from agent_core import (
     SESSION_ID_MAX_LEN,
     __version__,
+    parse_capability_status,
     safe_id,
+    sudo_posture,
     tmux_name,
 )
 
@@ -225,6 +228,45 @@ async def tmux_session_exists(name: str) -> bool:
 # Application
 # ---------------------------------------------------------------------------
 @asynccontextmanager
+def _warn_about_the_privilege_mode() -> None:
+    """Say something when sudo is installed — whether or not it works.
+
+    The privilege mode (docs/SECURITY.md) has two halves: the image
+    ships sudo, and the container's posture lets the setuid bit do its
+    job. Turn on only one of them and the model gets an error it cannot
+    interpret — *"sudo: the 'no new privileges' flag is set"* reads like
+    a broken sandbox, not like a misconfiguration.
+
+    A warning at startup is the difference between "the deployment is
+    misconfigured" and "the sandbox is flaky".
+    """
+    if shutil.which("sudo") is None:
+        return
+    try:
+        status = Path("/proc/self/status").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        logger.warning(
+            "sudo is installed but /proc/self/status could not be read, "
+            "so the privilege mode cannot be verified"
+        )
+        return
+    no_new_privs, cap_bnd = parse_capability_status(status)
+    verdict = sudo_posture(no_new_privs, cap_bnd)
+    if verdict != "ok":
+        logger.warning(
+            "sudo is installed but the escalation would NOT work: %s — "
+            "set AGENT_NO_NEW_PRIVILEGES=false and AGENT_CAP_DROP=SYS_ADMIN "
+            "in the sandbox's environment and recreate the agent",
+            verdict,
+        )
+    else:
+        logger.warning(
+            "the privilege mode is ON: a command in this sandbox can run "
+            "`sudo su` and become root inside the container. "
+            "PRIVATE, SECURED DEPLOYMENTS ONLY."
+        )
+
+
 async def lifespan(app: FastAPI):  # noqa: ARG001
     """Lifespan handler — startup/shutdown hooks.
 
@@ -249,6 +291,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     reaped = await _reap_dead_sessions()
     if reaped:
         logger.info("startup reaper dropped %d stale session(s): %s", reaped, ",".join(reaped))
+    _warn_about_the_privilege_mode()
     try:
         yield
     finally:
