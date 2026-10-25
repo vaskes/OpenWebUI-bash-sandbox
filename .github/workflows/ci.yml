@@ -267,6 +267,91 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.ci.yml down -v || true
 
+  privilege:
+    name: Privilege mode (sudo + a root that can actually write)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # The privilege mode is a configuration switch, so the only way to
+      # test it is to turn it on and use it. Two facts have to hold, and
+      # they are independent:
+      #
+      #   1. the escalation works (sudo -> uid 0);
+      #   2. the root is *useful* — apt-get needs /var/lib/apt/lists,
+      #      /var/lib/dpkg and /usr to be writable, and a read-only root
+      #      filesystem refuses all three.
+      #
+      # A deployment that satisfies (1) and not (2) is a half-root: the
+      # model gets "Read-only file system" and calls the sandbox broken.
+      # Both halves are checked here, against the shipped image.
+      - name: Build the agent image with sudo
+        env:
+          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
+          AGENT_ALLOW_SUDO: "1"
+        run: docker compose -f docker-compose.ci.yml build sandbox-agent
+
+      - name: Escalation works, but a read-only rootfs stops apt
+        env:
+          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
+          AGENT_ALLOW_SUDO: "1"
+          AGENT_NO_NEW_PRIVILEGES: "false"
+          AGENT_CAP_DROP: SYS_ADMIN
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.ci.yml up -d --force-recreate sandbox-agent
+          timeout 300 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" ci-sandbox-agent 2>/dev/null)" = healthy ]; do sleep 3; done' \
+            || { echo "::error::the agent never became healthy"; docker compose -f docker-compose.ci.yml logs; exit 1; }
+
+          # The escalation itself.
+          docker exec ci-sandbox-agent sh -c 'sudo -n id' | tee /tmp/id.txt
+          grep -q 'uid=0(root)' /tmp/id.txt \
+            || { echo "::error::sudo did not escalate to root"; exit 1; }
+
+          # The stock root filesystem is read-only, and root cannot write
+          # to it either. This is the half-root the fourth setting fixes.
+          [ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' ci-sandbox-agent)" = "true" ] \
+            || { echo "::error::the stock agent container is not read-only"; exit 1; }
+          out=$(docker exec ci-sandbox-agent sh -c 'sudo -n apt-get update' 2>&1 || true)
+          echo "$out" | tail -3
+          echo "$out" | grep -qi 'read-only file system' \
+            || { echo "::error::apt-get wrote to a read-only rootfs"; exit 1; }
+
+      - name: AGENT_READ_ONLY=false gives the root a filesystem it can write
+        env:
+          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
+          AGENT_ALLOW_SUDO: "1"
+          AGENT_NO_NEW_PRIVILEGES: "false"
+          AGENT_CAP_DROP: SYS_ADMIN
+          AGENT_READ_ONLY: "false"
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.ci.yml up -d --force-recreate sandbox-agent
+          timeout 300 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" ci-sandbox-agent 2>/dev/null)" = healthy ]; do sleep 3; done' \
+            || { echo "::error::the agent never became healthy"; docker compose -f docker-compose.ci.yml logs; exit 1; }
+
+          [ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' ci-sandbox-agent)" = "false" ] \
+            || { echo "::error::AGENT_READ_ONLY=false did not make the rootfs writable"; exit 1; }
+
+          # The image ships without the apt index (it is removed at build
+          # time to keep the image small), so the update comes first.
+          docker exec ci-sandbox-agent sh -c 'sudo -n apt-get update -qq' \
+            || { echo "::error::apt-get update failed on a writable rootfs"; exit 1; }
+          docker exec ci-sandbox-agent sh -c 'sudo -n apt-get install -y -qq --no-install-recommends cowsay' \
+            || { echo "::error::apt-get install failed"; exit 1; }
+          docker exec ci-sandbox-agent sh -c 'command -v cowsay' \
+            || { echo "::error::the installed package is not on the PATH"; exit 1; }
+          echo "the privilege mode installs packages"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.ci.yml logs || true
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.ci.yml down -v || true
+
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-26.04

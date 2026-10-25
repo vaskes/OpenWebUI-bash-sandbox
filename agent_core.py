@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-__version__ = "2.9.1"
+__version__ = "2.10.0"
 
 TMUX_PREFIX = "agent_"
 SESSION_ID_MAX_LEN = 64
@@ -81,3 +81,41 @@ def sudo_posture(no_new_privs: int, cap_bnd: int) -> str:
             "hold CAP_SETUID, so su cannot change the user"
         )
     return "ok"
+
+
+def rootfs_is_read_only(mountinfo: str) -> bool:
+    """Is the root filesystem mounted read-only?
+
+    A root shell in a read-only container is a half-root: it owns the
+    filesystem and cannot change a single byte of it. ``apt-get`` needs
+    three writable paths — ``/var/lib/apt/lists`` (the index),
+    ``/var/lib/dpkg`` (the package database) and ``/usr`` (where the
+    packages land) — and a read-only rootfs refuses all three.
+
+    Parses ``/proc/self/mountinfo``: the mount point of the root mount
+    is field 5 and its options field 6; the options after the ``-``
+    separator belong to the superblock. ``ro`` in either of them means
+    read-only.
+
+    A blob without a root mount counts as read-only: an unreadable
+    mount table must never be read as "the root may write here".
+    """
+    for line in mountinfo.splitlines():
+        fields = line.split()
+        if len(fields) < 6:
+            continue
+        mount_point = fields[4]
+        if mount_point != "/":
+            continue
+        options = fields[5]
+        # The kernel separates the mount's own options from the
+        # superblock's with " - ". What follows it is
+        # ``fstype, source, super-options`` — the super options are the
+        # last field. A dash inside a mount point is not the separator:
+        # a space is escaped as \040, so " - " is unambiguous.
+        if " - " in line:
+            super_options = line.split(" - ", 1)[1].split()
+            if super_options:
+                options = f"{options},{super_options[-1]}"
+        return "ro" in options.split(",")
+    return True

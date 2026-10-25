@@ -158,9 +158,14 @@ class TestTheDocumentationSaysTheWarning(unittest.TestCase):
             "private deployments in secured environments only",
         )
 
-    def test_the_security_model_explains_all_three_settings(self) -> None:
+    def test_the_security_model_explains_every_setting(self) -> None:
         text = SECURITY_DOC.read_text(encoding="utf-8")
-        for knob in ("AGENT_ALLOW_SUDO", "AGENT_NO_NEW_PRIVILEGES", "AGENT_CAP_DROP"):
+        for knob in (
+            "AGENT_ALLOW_SUDO",
+            "AGENT_NO_NEW_PRIVILEGES",
+            "AGENT_CAP_DROP",
+            "AGENT_READ_ONLY",
+        ):
             with self.subTest(knob=knob):
                 self.assertIn(knob, text)
 
@@ -178,6 +183,15 @@ class TestTheDocumentationSaysTheWarning(unittest.TestCase):
             self._mentions_the_caveat(text),
             ".env.example must carry the same caveat — it is the file an operator edits",
         )
+
+    def test_the_environment_template_carries_the_fourth_setting(self) -> None:
+        """The template is where an operator looks for the switches.
+
+        A knob that exists in the compose files but not in .env.example
+        is a knob nobody sets.
+        """
+        text = ENV_EXAMPLE.read_text(encoding="utf-8")
+        self.assertIn("AGENT_READ_ONLY", text)
 
 
 if __name__ == "__main__":

@@ -56,7 +56,10 @@ services:
     # headroom, otherwise Docker SIGKILLs the container mid-shutdown.
     stop_grace_period: 30s
     # Read-only root filesystem. Writes go through the bind-mount + tmpfs.
-    read_only: true
+    # The privilege mode's fourth setting: set AGENT_READ_ONLY=false and
+    # the privileged root can also install packages. See docs/SECURITY.md,
+    # "The privilege mode".
+    read_only: "${AGENT_READ_ONLY:-true}"
     tmpfs:
       - /tmp:size=512m,mode=1777
       - /run:size=64m,mode=755
