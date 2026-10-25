@@ -4,6 +4,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] - 2026-10-25
+
+The base images move forward, and the CI matrix follows them.
+
+The agent now builds on `ubuntu:26.04` and the proxy on `python:3.14-slim`.
+Both images carry python 3.14 — the agent's `python3` comes from the
+Ubuntu release's apt package, the proxy's from the slim image. The CI
+matrix used to stop at 3.12, so the bump on its own would have shipped a
+runtime nobody tested. It now runs 3.11 → 3.14, and a tripwire keeps the
+two in step: an image that ships a python the matrix does not cover
+fails the build.
+
+Every number in that paragraph was measured in the images themselves,
+not read off a release note. `ubuntu:26.04` → python 3.14.4, uid 1000
+still `ubuntu`. `python:3.14-slim` → python 3.14.9, the `proxy` group
+still at GID 13. Both pip prefix layouts are unchanged — `/install/local`
+on Ubuntu, `/install/{bin,lib}` on the slim image — so the two
+Dockerfiles still differ on purpose, and both copies are still right.
+
+### Changed
+
+- **Base images** — `Dockerfile.sandbox` builds on `ubuntu:26.04`,
+  `Dockerfile.openapi-proxy` on `python:3.14-slim`. The uid-1000
+  contract, the pip prefix layouts and the privilege mode are untouched.
+- **CI** — the matrix runs python 3.11, 3.12, 3.13 and 3.14 on the
+  `ubuntu-26.04` runner image; `actions/checkout` v7,
+  `actions/setup-python` v7, `codecov/codecov-action` v7 and
+  `gitleaks/gitleaks-action` v3.
+- **Dependency floors** — `requirements.txt` declares the versions a
+  fresh install resolves to (uvicorn 0.54.0, pydantic 2.14.0, httpx
+  0.28.1), `requirements-dev.txt` the versions the suite runs on (pytest
+  9.1.1, pytest-asyncio 1.4.0). The ceilings stay open: these are
+  floors, not pins.
+- **Dependabot** — pip and GitHub Actions updates arrive as one grouped
+  PR each instead of one branch per package.
+
+### Added
+
+- **`tests/test_runtime_python_is_covered_by_ci.py`** — the python
+  version each image ships must be in the CI matrix. An unknown Ubuntu
+  tag fails the test instead of being skipped.
+
 ## [2.8.0] - 2026-10-25
 
 The privilege mode: the agent's shell can become root inside the sandbox.

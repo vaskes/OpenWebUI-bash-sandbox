@@ -50,7 +50,7 @@ class TestSandboxDockerfile(unittest.TestCase):
     """BUG-1a + BUG-2: uid/gid 1000 collision and the ``local/`` pip prefix."""
 
     def test_no_named_user_creation(self) -> None:
-        """``ubuntu:24.04`` already owns uid/gid 1000 as ``ubuntu``.
+        """``ubuntu:26.04`` already owns uid/gid 1000 as ``ubuntu``.
 
         ``groupadd -g 1000 agent`` therefore exits 4 and takes the whole
         build with it. The fix references ids numerically.
@@ -59,7 +59,7 @@ class TestSandboxDockerfile(unittest.TestCase):
         self.assertNotIn(
             "groupadd",
             body,
-            "Dockerfile.sandbox calls groupadd. ubuntu:24.04 already ships "
+            "Dockerfile.sandbox calls groupadd. ubuntu:26.04 already ships "
             "gid 1000 as `ubuntu`, so this exits 4. Use numeric ids instead.",
         )
         self.assertNotIn("useradd", body, "Dockerfile.sandbox calls useradd; use `USER 1000:1000`.")
@@ -157,7 +157,7 @@ class TestProxyDockerfile(unittest.TestCase):
     """BUG-1b + BUG-4: ``proxy`` group name taken, and the authed HEALTHCHECK."""
 
     def test_no_named_user_creation(self) -> None:
-        """``python:3.11-slim`` ships a ``proxy`` group at GID 13.
+        """``python:3.14-slim`` ships a ``proxy`` group at GID 13.
 
         uid/gid 1000 are free; only the *name* collides. Reference ids
         numerically.
@@ -166,7 +166,7 @@ class TestProxyDockerfile(unittest.TestCase):
         self.assertNotIn(
             "groupadd",
             body,
-            "Dockerfile.openapi-proxy calls groupadd. python:3.11-slim ships "
+            "Dockerfile.openapi-proxy calls groupadd. python:3.14-slim ships "
             "a `proxy` group at GID 13, so `groupadd -g 1000 proxy` exits 4. "
             "Use numeric ids instead.",
         )
@@ -178,7 +178,7 @@ class TestProxyDockerfile(unittest.TestCase):
         self.assertRegex(body, r"(?m)^USER\s+1000:1000\s*$")
 
     def test_pip_prefix_not_unwrapped(self) -> None:
-        """python:3.11-slim pip is platform-scheme: no ``local`` component.
+        """python:3.14-slim pip is platform-scheme: no ``local`` component.
 
         This is the mirror image of the sandbox test. The two Dockerfiles
         genuinely differ here; copying the sandbox fix across "for
@@ -189,7 +189,7 @@ class TestProxyDockerfile(unittest.TestCase):
             body,
             r"(?m)^COPY --from=builder /install /usr/local\s*$",
             "Dockerfile.openapi-proxy must keep the bare /install copy: "
-            "python:3.11-slim pip uses the platform scheme and does NOT "
+            "python:3.14-slim pip uses the platform scheme and does NOT "
             "create /install/local/.",
         )
 
