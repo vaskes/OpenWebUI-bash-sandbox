@@ -124,6 +124,22 @@ unreachable sandbox agent is a **502**. The error body is
 JSON string. Do not look for an `error` key: there is none, and a client
 that checks the status code is told the truth.
 
+**A file the agent cannot read is a 403 on the download endpoint**
+(`GET /files`), and it is a *decision*, not an accident. The agent opens
+the file **before** it starts the response, so a file that its own
+process may not read — one owned by root with mode 0600, or one with
+mode 000 — is refused with a status and a message that says what to do
+(`chmod 644`). It is not a 200 that promises N bytes and then delivers
+none.
+
+That distinction matters to a client: a **403** means "the file is
+there, the agent is not allowed to read it — change the mode"; a
+**truncated body** means the transport broke. Before v2.9.1 the door
+answered the second case for the first situation, and a client saw a
+short read and blamed the side-car for being unreachable. If you ever
+see a short read again, treat it as a transport failure — and report
+it as one — rather than as a permission problem.
+
 The endpoint is **not rate limited**, on purpose: a file may arrive in
 ranges, and a per-minute budget would break a legitimate transfer for a
 reason that has nothing to do with the transfer.
