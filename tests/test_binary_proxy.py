@@ -220,6 +220,45 @@ class TestProxyBinaryRelay(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["name"], "a.bin")
 
+    def test_the_meta_keeps_a_missing_files_404(self) -> None:
+        """The meta door must not answer 200 for a file that is not there.
+
+        The courier asks this endpoint for the size of a file it is about
+        to pull. A 200 that carries an ``error`` key instead of a ``size``
+        says "here are the facts" while the facts are missing: a client
+        that trusts the status code is told the file is there, and a
+        client that reads ``size`` gets nothing to compare against the
+        limit.
+        """
+        self._install(_FakeUpstream(404, b'{"detail":"file not found: nope.bin"}'))
+        response = self.client.get("/files/meta?path=nope.bin", headers=self.auth)
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("not found", response.text)
+
+    def test_the_meta_error_is_not_wrapped_twice(self) -> None:
+        self._install(_FakeUpstream(404, b'{"detail":"file not found: nope.bin"}'))
+        response = self.client.get("/files/meta?path=nope.bin", headers=self.auth)
+        body = response.json()
+        self.assertEqual(body["detail"], "file not found: nope.bin")
+        self.assertNotIn("{", body["detail"])
+
+    def test_the_meta_turns_an_unreachable_agent_into_a_502(self) -> None:
+        import httpx
+
+        class _Broken:
+            def build_request(self, *args, **kwargs):
+                return {}
+
+            async def send(self, request, stream: bool = False):
+                raise httpx.ConnectError("sandbox-agent is unreachable")
+
+            async def get(self, *args, **kwargs):
+                raise httpx.ConnectError("sandbox-agent is unreachable")
+
+        self.proxy.app.state.client = _Broken()
+        response = self.client.get("/files/meta?path=a.bin", headers=self.auth)
+        self.assertEqual(response.status_code, 502)
+
 
 class TestProxyPurgeRelay(unittest.TestCase):
     """The purge hop: the sandbox copy is removed after delivery.
@@ -297,6 +336,80 @@ class TestProxyPurgeRelay(unittest.TestCase):
         for _ in range(25):
             response = self.client.delete("/files?path=a.bin", headers=self.auth)
             self.assertEqual(response.status_code, 204)
+
+
+class TestProxyFileEndpointsAgree(unittest.TestCase):
+    """The three file endpoints must answer the same way.
+
+    ``GET /files``, ``GET /files/meta`` and ``DELETE /files`` all ask the
+    upstream about the same file, through the same client, and the
+    client — the courier — has to be able to tell "no such file" from
+    "here are the facts". If one of them flattens the upstream's status
+    into a 200 with an ``error`` key, that distinction disappears, and a
+    client that checks the status code is told the file is there.
+
+    This is the tripwire for the class: it walks all three endpoints and
+    demands the same status for the same upstream answer. Flattening one
+    of them again turns this test red.
+    """
+
+    ENDPOINTS = (
+        ("GET", "/files?path=a.bin"),
+        ("GET", "/files/meta?path=a.bin"),
+        ("DELETE", "/files?path=a.bin"),
+    )
+
+    def setUp(self) -> None:
+        try:
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+        except ImportError:
+            self.skipTest("fastapi.testclient not available")
+        self.proxy = _fresh_proxy()
+        self.client = TestClient(self.proxy.app)
+        self.auth = {"Authorization": f"Bearer {TOKEN}"}
+
+    def _install(self, upstream: _FakeUpstream) -> _FakeClient:
+        fake = _FakeClient(upstream)
+        self.proxy.app.state.client = fake
+        return fake
+
+    def test_a_missing_file_is_a_404_on_every_endpoint(self) -> None:
+        for method, url in self.ENDPOINTS:
+            with self.subTest(endpoint=f"{method} {url}"):
+                self._install(_FakeUpstream(404, b'{"detail":"file not found: a.bin"}'))
+                response = self.client.request(method, url, headers=self.auth)
+                self.assertEqual(response.status_code, 404)
+                self.assertIn("not found", response.text)
+
+    def test_a_refused_path_is_a_400_on_every_endpoint(self) -> None:
+        for method, url in self.ENDPOINTS:
+            with self.subTest(endpoint=f"{method} {url}"):
+                self._install(_FakeUpstream(400, b'{"detail":"path outside the workspace"}'))
+                response = self.client.request(method, url, headers=self.auth)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("outside the workspace", response.text)
+
+    def test_an_unreachable_agent_is_a_502_on_every_endpoint(self) -> None:
+        import httpx
+
+        class _Broken:
+            def build_request(self, *args, **kwargs):
+                return {}
+
+            async def send(self, request, stream: bool = False):
+                raise httpx.ConnectError("sandbox-agent is unreachable")
+
+            async def get(self, *args, **kwargs):
+                raise httpx.ConnectError("sandbox-agent is unreachable")
+
+            async def delete(self, *args, **kwargs):
+                raise httpx.ConnectError("sandbox-agent is unreachable")
+
+        for method, url in self.ENDPOINTS:
+            with self.subTest(endpoint=f"{method} {url}"):
+                self.proxy.app.state.client = _Broken()
+                response = self.client.request(method, url, headers=self.auth)
+                self.assertEqual(response.status_code, 502)
 
 
 if __name__ == "__main__":
