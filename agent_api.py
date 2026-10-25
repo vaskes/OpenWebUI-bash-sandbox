@@ -82,6 +82,7 @@ from agent_core import (
     SESSION_ID_MAX_LEN,
     __version__,
     parse_capability_status,
+    rootfs_is_read_only,
     safe_id,
     sudo_posture,
     tmux_name,
@@ -266,6 +267,41 @@ def _warn_about_the_privilege_mode() -> None:
             "the privilege mode is ON: a command in this sandbox can run "
             "`sudo su` and become root inside the container. "
             "PRIVATE, SECURED DEPLOYMENTS ONLY."
+        )
+    _warn_about_the_read_only_rootfs()
+
+
+def _warn_about_the_read_only_rootfs(mountinfo: str | None = None) -> None:
+    """Say something when the root shell would own a filesystem it cannot write.
+
+    Escalation and usefulness are two different things. The privilege
+    mode hands the model a root shell; in a read-only container that
+    shell cannot install a package, edit ``/etc`` or write to ``/usr`` —
+    ``apt-get`` needs all three. A model that tries ``apt-get install``
+    gets *"Read-only file system"* and concludes the sandbox is broken,
+    while the deployment is merely a half-root.
+
+    A warning at startup is the difference between "the deployment is
+    misconfigured" and "the sandbox is flaky".
+
+    ``mountinfo`` is injectable for the tests; ``None`` means "read it
+    from ``/proc/self/mountinfo``".
+    """
+    if mountinfo is None:
+        try:
+            mountinfo = Path("/proc/self/mountinfo").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            logger.warning(
+                "/proc/self/mountinfo could not be read, so the root filesystem's "
+                "writability cannot be verified"
+            )
+            return
+    if rootfs_is_read_only(mountinfo):
+        logger.warning(
+            "the root filesystem is READ-ONLY: a root shell in this container "
+            "cannot install packages (apt-get), edit /etc or write to /usr. "
+            "Set AGENT_READ_ONLY=false in the sandbox's environment and "
+            "recreate the agent if the model needs a usable root."
         )
 
 

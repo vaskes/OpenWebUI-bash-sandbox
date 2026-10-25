@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 286](https://img.shields.io/badge/tests-286_passing-brightgreen)](tests/)
+[![Tests: 298](https://img.shields.io/badge/tests-298_passing-brightgreen)](tests/)
 
 ---
 
@@ -43,7 +43,7 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **286 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **298 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -126,6 +126,13 @@ The most important knobs:
   hands that code root. Two runtime settings have to give way as well
   (`AGENT_NO_NEW_PRIVILEGES=false`, `AGENT_CAP_DROP=SYS_ADMIN`); see
   [docs/SECURITY.md](docs/SECURITY.md#9-the-privilege-mode-sudo-su-inside-the-sandbox).
+- **`AGENT_READ_ONLY`** — `true` by default: the container's root
+  filesystem is read-only. A root shell in a read-only container is a
+  half-root — it cannot install a package (`apt-get` needs
+  `/var/lib/apt/lists`, `/var/lib/dpkg` and `/usr` to be writable).
+  `false` gives the privileged deployment a root that can actually
+  change something; the writable layer is the container's own and dies
+  with it, so the boundary does not move.
 
 ## Development
 

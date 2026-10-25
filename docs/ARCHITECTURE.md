@@ -125,7 +125,7 @@ importing FastAPI/Pydantic/httpx.
 | What                | Where                                       | Survives `docker compose restart`? |
 |---------------------|---------------------------------------------|------------------------------------|
 | `/workspace` files  | bind-mount `/opt/agent-workspace`           | yes (host filesystem)              |
-| installed apt pkgs  | named volume `sandbox-agent-apt`            | yes                                |
+| apt download cache  | named volume `sandbox-agent-apt` (`/var/cache/apt`) | yes (the cache only — packages themselves land in `/usr`, which is **not** a volume) |
 | installed pip pkgs  | named volume `sandbox-agent-pip`            | yes                                |
 | `~/.bashrc`, configs| the image's own `/home/agent` (code lives there) | no — but the code is baked in, not mounted |
 | tmux sessions       | `/tmp` inside container                     | no — but auto-recreate on first use|

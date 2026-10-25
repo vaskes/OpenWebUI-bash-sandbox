@@ -33,6 +33,11 @@ services:
     cap_drop: ["${AGENT_CAP_DROP:-ALL}"]
     security_opt: ["no-new-privileges:${AGENT_NO_NEW_PRIVILEGES:-true}"]
     stop_grace_period: 10s
+    # The stock posture: a read-only root filesystem, like production.
+    # The privilege mode's fourth setting — AGENT_READ_ONLY=false — makes
+    # the root filesystem writable, which is what a root shell needs to
+    # install packages. See docs/SECURITY.md, "The privilege mode".
+    read_only: "${AGENT_READ_ONLY:-true}"
     tmpfs:
       - /tmp:size=256m,mode=1777
       - /run:size=64m,mode=755
