@@ -39,7 +39,9 @@ GET  /files/meta?path=P
     Size, mtime, name and mime of a workspace file.
 GET  /files?path=P
     The file's **raw bytes** — no base64, no terminal pane. Honours a
-    single ``Range`` header.
+    single ``Range`` header. A file the agent's own process cannot read
+    (created by root, say) is a 403, decided before the response starts —
+    never a 200 with a truncated body.
 DELETE /files?path=P
     Remove a file from the workspace. The sandbox is a scratchpad, not
     storage: once a file has been delivered, the client can remove it.
@@ -993,17 +995,53 @@ def _parse_byte_range(header: str, size: int) -> tuple[int, int]:
     return start, min(end, size - 1) - start + 1
 
 
-def _iter_file(path: Path, start: int, length: int):
+def _open_for_download(path: Path):
+    """Open the file for reading, turning a refusal into a status code.
+
+    The download endpoint must know whether it can read the file *before*
+    it starts the response. Once the 200 and the ``Content-Length`` are on
+    the wire, a failure to open can only truncate the body: the client
+    asked for N bytes, got 0, and sees a broken connection rather than a
+    permission problem. That is not a cosmetic difference — a client that
+    reads "the side-car is unreachable" blames the wrong component, and
+    an operator spends the afternoon looking at the network instead of at
+    the file's mode.
+
+    So the open happens here, before any header is sent, and a refusal
+    becomes a status code with a message that says what to do about it.
+    """
+    try:
+        return path.open("rb")
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"permission denied: the sandbox agent cannot read {path.name}. "
+                "The file's owner or mode does not allow it (a root-owned 0600 "
+                "file, for example); make it readable, e.g. chmod 644."
+            ),
+        ) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"file not found: {path}") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"cannot read {path}: {exc}") from exc
+
+
+def _iter_file(handle, start: int, length: int):
     """Yield the file's bytes in chunks. The file is never fully in memory."""
-    remaining = length
-    with path.open("rb") as handle:
+    try:
         handle.seek(start)
+        remaining = length
         while remaining > 0:
             chunk = handle.read(min(_BINARY_CHUNK, remaining))
             if not chunk:
                 break
             remaining -= len(chunk)
             yield chunk
+    finally:
+        # The handle was opened before the response started, so it has to be
+        # closed here — including when the client disconnects mid-stream.
+        handle.close()
 
 
 @app.get("/files/meta", dependencies=[Depends(_require_token)])
@@ -1043,6 +1081,10 @@ async def download_file(
     The size limit is policy, not transport: a file over
     ``AGENT_BINARY_LIMIT`` is refused with its real size in the message,
     and the limit is raised by configuration rather than by the client.
+
+    A file the agent's own process cannot read is refused with a 403
+    *before* the response starts, so the client gets a status it can act
+    on instead of a promise of N bytes followed by silence.
     """
     target = _safe_file(path)
     size = target.stat().st_size
@@ -1061,6 +1103,11 @@ async def download_file(
         start, length = _parse_byte_range(range_header, size)
         status_code = 206
 
+    # Open the file before the response starts. Everything above can fail
+    # with a status code; this is the one failure that must not happen
+    # after the headers are out.
+    handle = _open_for_download(target)
+
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(length),
@@ -1077,7 +1124,7 @@ async def download_file(
         headers["Content-Range"] = f"bytes {start}-{start + length - 1}/{size}"
 
     return StreamingResponse(
-        _iter_file(target, start, length),
+        _iter_file(handle, start, length),
         status_code=status_code,
         headers=headers,
         media_type="application/octet-stream",
