@@ -768,6 +768,43 @@ async def download_file(
     )
 
 
+@app.delete("/files", operation_id="file_delete")
+async def delete_file(
+    request: Request,
+    path: str = Query(..., description="File in the sandbox"),
+    _: str = Depends(_require_token),
+) -> Response:
+    """Ask the sandbox to delete a file.
+
+    The sandbox is a scratchpad, not storage: once a client has pulled a
+    file out and delivered it, the artifact would otherwise live in two
+    places at once. This is how the sandbox copy is removed.
+
+    The upstream status is relayed as it is — a file that is not there
+    stays a 404, and an unreachable agent is a 502. Flattening either into
+    a 500 would tell the client "the sandbox is broken" when the answer
+    is a plain "no".
+    """
+    client = _client(request)
+    try:
+        upstream = await client.delete(
+            f"{SANDBOX_URL}/files",
+            params={"path": path},
+            headers=_upstream_headers(),
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"sandbox-agent request failed: {exc}") from exc
+
+    if upstream.status_code >= 400:
+        body = await upstream.aread()
+        await upstream.aclose()
+        raise HTTPException(
+            status_code=upstream.status_code, detail=_upstream_detail(body)
+        ) from None
+
+    return Response(status_code=upstream.status_code)
+
+
 # ---------------------------------------------------------------------------
 # WebSocket terminal
 # ---------------------------------------------------------------------------

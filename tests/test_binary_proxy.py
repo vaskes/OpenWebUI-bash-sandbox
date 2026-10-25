@@ -103,6 +103,12 @@ class _FakeClient:
         self.requests.append({"request": {"method": "GET", "url": url, **kwargs}, "stream": False})
         return self.upstream
 
+    async def delete(self, url: str, **kwargs):
+        self.requests.append(
+            {"request": {"method": "DELETE", "url": url, **kwargs}, "stream": False}
+        )
+        return self.upstream
+
 
 class TestProxyBinaryRelay(unittest.TestCase):
     def setUp(self) -> None:
@@ -213,6 +219,84 @@ class TestProxyBinaryRelay(unittest.TestCase):
         response = self.client.get("/files/meta?path=a.bin", headers=self.auth)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["name"], "a.bin")
+
+
+class TestProxyPurgeRelay(unittest.TestCase):
+    """The purge hop: the sandbox copy is removed after delivery.
+
+    Same three properties as the read hop — the status is relayed rather
+    than flattened, the upstream is reached, and an unreachable agent is a
+    502 and not a 500.
+    """
+
+    def setUp(self) -> None:
+        try:
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+        except ImportError:
+            self.skipTest("fastapi.testclient not available")
+        self.proxy = _fresh_proxy()
+        self.client = TestClient(self.proxy.app)
+        self.auth = {"Authorization": f"Bearer {TOKEN}"}
+
+    def _install(self, upstream: _FakeUpstream) -> _FakeClient:
+        fake = _FakeClient(upstream)
+        self.proxy.app.state.client = fake
+        return fake
+
+    def test_requires_auth(self) -> None:
+        self._install(_FakeUpstream(204))
+        self.assertIn(self.client.delete("/files?path=a.bin").status_code, (401, 403))
+
+    def test_the_delete_reaches_the_upstream_with_the_path(self) -> None:
+        fake = self._install(_FakeUpstream(204))
+        response = self.client.delete("/files?path=a.bin", headers=self.auth)
+        self.assertEqual(response.status_code, 204)
+        self.assertTrue(fake.requests, "the proxy did not call the upstream at all")
+        sent = fake.requests[0]["request"]
+        self.assertEqual(sent["method"], "DELETE")
+        self.assertTrue(sent["url"].endswith("/files"), sent["url"])
+        self.assertEqual(sent["params"]["path"], "a.bin")
+
+    def test_a_missing_file_keeps_its_404(self) -> None:
+        self._install(_FakeUpstream(404, b'{"detail":"file not found: nope.bin"}'))
+        response = self.client.delete("/files?path=nope.bin", headers=self.auth)
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("not found", response.text)
+
+    def test_the_error_is_not_wrapped_twice(self) -> None:
+        self._install(_FakeUpstream(404, b'{"detail":"file not found: nope.bin"}'))
+        response = self.client.delete("/files?path=nope.bin", headers=self.auth)
+        body = response.json()
+        self.assertEqual(body["detail"], "file not found: nope.bin")
+        self.assertNotIn("{", body["detail"])
+
+    def test_an_upstream_failure_is_a_502_not_a_500(self) -> None:
+        import httpx
+
+        class _Broken:
+            def build_request(self, *args, **kwargs):
+                return {}
+
+            async def send(self, request, stream: bool = False):
+                raise httpx.ConnectError("sandbox-agent is unreachable")
+
+            async def delete(self, *args, **kwargs):
+                raise httpx.ConnectError("sandbox-agent is unreachable")
+
+        self.proxy.app.state.client = _Broken()
+        response = self.client.delete("/files?path=a.bin", headers=self.auth)
+        self.assertEqual(response.status_code, 502)
+
+    def test_the_purge_is_not_rate_limited(self) -> None:
+        """Same reasoning as the read path: the file door has no budget.
+
+        A per-minute request budget would break a legitimate multi-request
+        transfer for a reason that has nothing to do with the transfer.
+        """
+        self._install(_FakeUpstream(204))
+        for _ in range(25):
+            response = self.client.delete("/files?path=a.bin", headers=self.auth)
+            self.assertEqual(response.status_code, 204)
 
 
 if __name__ == "__main__":

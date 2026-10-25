@@ -35,6 +35,14 @@ GET  /sessions/{session_id}/capture?lines=N
     Tail the tmux pane directly (no shell wrapper — cheap polling target).
 GET  /sessions/{session_id}/output?lines=N
     Alias of ``/capture`` kept for backwards compatibility.
+GET  /files/meta?path=P
+    Size, mtime, name and mime of a workspace file.
+GET  /files?path=P
+    The file's **raw bytes** — no base64, no terminal pane. Honours a
+    single ``Range`` header.
+DELETE /files?path=P
+    Remove a file from the workspace. The sandbox is a scratchpad, not
+    storage: once a file has been delivered, the client can remove it.
 """
 
 from __future__ import annotations
@@ -1031,6 +1039,39 @@ async def download_file(
         headers=headers,
         media_type="application/octet-stream",
     )
+
+
+@app.delete("/files", dependencies=[Depends(_require_token)])
+async def delete_file(
+    path: str = Query(..., description="Path of the file in the sandbox"),
+) -> Response:
+    """Remove a file from the sandbox workspace.
+
+    The sandbox is a **scratchpad**, not storage. Once a client has pulled
+    a file out and delivered it, the artifact exists twice — in the
+    workspace and wherever it was delivered — until somebody removes one
+    of the copies. This endpoint is how the sandbox copy is removed, so
+    the delivery can be the last one standing.
+
+    The path goes through the same resolution as the download endpoint:
+    a path outside the workspace, a symlink pointing out of it, or
+    anything that is not a regular file is refused. A file that is not
+    there is a 404 — "nothing to delete" is not the same as "deleted".
+
+    Deleting through a symlink removes the file the link points at (the
+    link itself stays, dangling). The target is always inside the
+    workspace, because that is what the resolution checks.
+    """
+    target = _safe_file(path)
+    try:
+        target.unlink()
+    except FileNotFoundError as exc:
+        # The file vanished between the resolution and the unlink. The
+        # caller's intent — "make sure this file is gone" — is satisfied.
+        raise HTTPException(status_code=404, detail=f"file not found: {path}") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"could not delete {path}: {exc}") from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 if __name__ == "__main__":

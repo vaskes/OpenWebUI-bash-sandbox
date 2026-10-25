@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 232](https://img.shields.io/badge/tests-232_passing-brightgreen)](tests/)
+[![Tests: 252](https://img.shields.io/badge/tests-252_passing-brightgreen)](tests/)
 
 ---
 
@@ -43,7 +43,7 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **232 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **252 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -151,6 +151,7 @@ the full development workflow.
 | GET    | `/sessions/{id}/output?lines=N`   | Alias of `/capture`                    |
 | GET    | `/files/meta?path=P`              | Size/mtime/name of a workspace file   |
 | GET    | `/files?path=P`                   | The file's **raw bytes** (no base64)   |
+| DELETE | `/files?path=P`                   | Remove a delivered file from the sandbox |
 
 ### `openapi-proxy` (port 8090, **bearer auth required**)
 
@@ -163,6 +164,7 @@ the full development workflow.
 | POST   | `/shell_exec`    | Alias of `/bash`                                        |
 | GET    | `/files/meta?path=P` | Size/mtime/name of a workspace file (streamed)       |
 | GET    | `/files?path=P`  | The file's **raw bytes** (streamed, no base64)          |
+| DELETE | `/files?path=P`  | Remove a delivered file from the sandbox               |
 | WS     | `/ws` (token via `Sec-WebSocket-Protocol: bearer.<token>` header) | Experimental terminal (per-connection session) |
 
 > **Never** pass the token via `?token=...` query param — reverse proxies
@@ -207,6 +209,62 @@ boundary — the model already has a shell.
 The endpoint is not rate limited on purpose: a per-minute request budget
 would break a chunked transfer for a reason that has nothing to do with
 the transfer.
+
+### What the sandbox does *not* do
+
+* **It does not stream a file that is not finished.** The door serves a file
+  that exists, completely, on disk. A download still in flight, or a file
+  still being written, has no URL here — the producer has to materialise
+  it first (`curl -o out.bin … && sha256sum out.bin && stat -c%s out.bin`).
+* **It is not a file host.** No sessions, no temporary storage, no quotas,
+  no garbage collection. A request is a request: a path in, bytes out.
+* **It is not a security boundary.** The workspace scope is hygiene; the
+  model already has a shell.
+
+### Delivering a file: the client's contract
+
+The sandbox hands out bytes; somebody else has to deliver them. The
+client (the bot) should:
+
+1. **Pull it as a stream** — `GET /files?path=P` with `Accept-Ranges`
+   honoured. The file never has to fit in the client's memory, and the
+   proxy never buffers it either.
+2. **Hash while reading** — the digest of the stream is free, and it is
+   what makes the delivery verifiable. No server-side digest endpoint is
+   needed for that.
+3. **Deliver it** — a Telegram document, an Open WebUI attachment, or
+   whatever the client's own channel is. After the upload, the client
+   holds the channel's own id for the file (`file_id` in Telegram), and
+   that id is the pointer: re-sending the file to another chat costs no
+   bytes at all.
+4. **Purge the sandbox copy** — `DELETE /files?path=P` removes it, so the
+   artifact does not live in two places at once. The sandbox is a
+   scratchpad; the delivery is the copy that counts.
+
+```bash
+# Pull it, verify it, deliver it, then drop the scratch copy.
+curl -H "Authorization: Bearer $OPENAPI_PROXY_TOKEN" \
+  -o report.pdf 'http://localhost:8090/files?path=report.pdf'
+sha256sum report.pdf
+# … upload report.pdf to the channel …
+curl -fsS -X DELETE -H "Authorization: Bearer $OPENAPI_PROXY_TOKEN" \
+  'http://localhost:8090/files?path=report.pdf'
+```
+
+Two limits worth knowing before sizing anything:
+
+* `AGENT_BINARY_LIMIT` (default `2048k`) is the **sandbox's** policy. A
+  file over it is refused with its real size in the message, so the
+  client can decide what to do instead of discovering a truncated file.
+* Telegram's `sendDocument` accepts **50 MB** through the public Bot API
+  (2000 MB with a local `telegram-bot-api`). A sandbox limit above the
+  channel's own limit is a limit nobody can use — raise the channel first,
+  then the sandbox.
+
+`DELETE /files` shows up in the proxy's OpenAPI spec, and Open WebUI
+turns that into a tool for the model. It is a client-lifecycle call, not
+a model tool — the model has a shell in the same workspace and could
+`rm` the file itself — but the client is the one that should make it.
 
 ## Examples
 
