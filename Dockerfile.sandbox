@@ -27,19 +27,71 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 # ---- runtime ----
 FROM ubuntu:24.04
 
+# The privilege mode. 0 (the default) = the agent's shell cannot become
+# root: there is no sudo in the image and no setuid binary that could
+# help. 1 = the image ships sudo and a NOPASSWD rule for the agent's
+# user, so a command in the sandbox can run ``sudo su`` and become root
+# *inside the container*.
+#
+# THIS IS FOR PRIVATE DEPLOYMENTS IN SECURED ENVIRONMENTS ONLY. The
+# sandbox is a scratchpad for a model whose input may be hostile; with
+# this on, a prompt injection that reaches the shell can become root
+# inside the container. The container is then the only boundary — see
+# docs/SECURITY.md, "The privilege mode".
+#
+# The flag also needs the runtime half of the switch: the setuid bit is
+# inert while the container's no-new-privileges flag is on, and su
+# cannot work at all while the capability bounding set is empty. Both
+# are compose knobs (AGENT_NO_NEW_PRIVILEGES, AGENT_CAP_DROP) so that
+# the default posture of a stock deployment does not change.
+ARG AGENT_ALLOW_SUDO=0
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH="/home/agent"
 
 # Production system packages. No build-essential, no sshpass —
 # see comments in agent_api.py for what gets installed vs runtime needs.
+# ``sudo`` is in the list only when the privilege mode asks for it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash tmux \
         openssh-client \
         git curl ca-certificates gnupg \
         jq ripgrep fd-find tree htop \
         python3 \
+        $( [ "$AGENT_ALLOW_SUDO" = "1" ] && echo sudo ) \
     && rm -rf /var/lib/apt/lists/*
+
+# The rule that lets the agent's user become root without a password.
+# The username is resolved from the uid the compose contract uses
+# (1000), so it does not matter whether the base image calls it
+# ``ubuntu``, ``agent`` or something else.
+#
+# ``visudo -c`` validates the file: a broken sudoers file would make
+# sudo refuse to run for *everybody*, including root, and the failure
+# would look like "sudo: command not found" to the model. It earns its
+# keep — it caught a bad ``Defaults!`` line while this was being
+# written.
+#
+# ``Defaults !use_pty`` is not a style choice. Sudo runs the command in
+# a pseudo-terminal of its own by default, and when that pty is torn
+# down the terminal is reset — and the reset wipes the completion
+# marker the agent's exec protocol depends on. The exec then times out
+# even though the command succeeded and its output is right there in
+# the pane. With ``!use_pty`` sudo runs the command in the same
+# terminal, and the marker survives.
+#
+# No ``requiretty`` line: Ubuntu's sudo does not require a terminal
+# (and the model's shell is a tty anyway), and the ``Defaults!user``
+# form does not take a negated flag the way it looks like it should.
+RUN if [ "$AGENT_ALLOW_SUDO" = "1" ]; then \
+        agent_user="$(getent passwd 1000 | cut -d: -f1)"; \
+        test -n "$agent_user"; \
+        printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$agent_user" > /etc/sudoers.d/agent-sudo; \
+        printf 'Defaults !use_pty\n' >> /etc/sudoers.d/agent-sudo; \
+        chmod 0440 /etc/sudoers.d/agent-sudo; \
+        visudo -c -f /etc/sudoers.d/agent-sudo; \
+    fi
 
 # Copy the pip install from the builder.
 #

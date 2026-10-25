@@ -4,6 +4,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-10-25
+
+The privilege mode: the agent's shell can become root inside the sandbox.
+
+Off by default. A stock image has **no `sudo`** and no setuid binary
+that could help, the container runs with an **empty capability bounding
+set** and **no-new-privileges** on — a command cannot become root,
+because there is nothing to become root *with*. When the operator turns
+the mode on, a command in the sandbox can run `sudo su` and get a root
+shell *inside the container*.
+
+> **This is for private deployments in secured environments only.** The
+> sandbox runs code whose input may be hostile, and the privilege mode
+> gives that code root inside the container. The container stays the
+> boundary — nothing here reaches the host — but inside it the model is
+> root.
+
+### Added
+
+- **`AGENT_ALLOW_SUDO`** — a build argument for the agent image. `1` = the
+  image ships `sudo` and a `NOPASSWD` rule for the agent's user (the
+  username is resolved from uid 1000 at build time, so it does not matter
+  what the base image calls it). The rule is validated with `visudo -c`:
+  a broken sudoers file would break sudo for everybody, root included.
+  `0` = the default, and then the image carries no setuid-root path at
+  all.
+- **`AGENT_NO_NEW_PRIVILEGES` and `AGENT_CAP_DROP`** — the runtime half of
+  the switch, in all three compose files. The setuid bit is inert while
+  the container's no-new-privileges flag is on, and `su` cannot change
+  the user while the capability bounding set is empty, so both have to
+  give way. The defaults are the stock posture — `true` and `ALL` — so a
+  deployment that touches nothing keeps the posture it has today.
+- **A startup warning.** When `sudo` is present, the agent says so: either
+  that the mode is on, or exactly which of the two runtime settings still
+  blocks it. A half-configured deployment is otherwise indistinguishable
+  from a broken sandbox — the model would report *"sudo: the 'no new
+  privileges' flag is set"* and the operator would go looking for the
+  wrong thing.
+- `parse_capability_status` and `sudo_posture` in `agent_core` — the pure
+  part of that check, unit-tested.
+- **`Defaults !use_pty` for sudo**, and it is load-bearing. Sudo runs the
+  command in a pseudo-terminal of its own by default; when that pty is
+  torn down the terminal is reset, and the reset wipes the completion
+  marker the exec protocol depends on. The command succeeds, its output
+  is in the pane, and the exec still times out and reports nothing —
+  a failure that is invisible in a manual test and shows up only as
+  "the sandbox hangs on sudo". With `!use_pty` the command runs in the
+  same terminal and the marker survives.
+- **The documentation:** `docs/SECURITY.md` section 9 ("The privilege
+  mode"), the configuration reference, the README and `.env.example` all
+  carry the warning, and a tripwire fails the build if one of them stops
+  carrying it.
+
+### Changed
+
+- Version 2.8.0; README test count 259 → 279.
+
 ## [2.7.1] - 2026-10-25
 
 The meta door told the truth about the file and lied about the status.
