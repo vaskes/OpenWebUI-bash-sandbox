@@ -15,6 +15,7 @@ for a broken sandbox instead of a missing setting.
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -192,6 +193,92 @@ class TestTheDocumentationSaysTheWarning(unittest.TestCase):
         """
         text = ENV_EXAMPLE.read_text(encoding="utf-8")
         self.assertIn("AGENT_READ_ONLY", text)
+
+
+class TestThePrivilegeTableAgreesWithItsProse(unittest.TestCase):
+    """The number in the prose is a claim about the table right below it.
+
+    v2.10.0 added a fourth setting to the table and left the sentence
+    above it saying "three settings" — the reader counted four rows and
+    a sentence that promised three. A count next to a table is a claim,
+    and a claim nobody checks is a claim that rots.
+    """
+
+    #: "four settings", "four of the settings", "4 settings" — the
+    #: wording may change, the number may not.
+    COUNT_RE = re.compile(
+        r"\b(one|two|three|four|five|six|seven|[1-7])\b[^.\n]{0,40}\bsettings?\b",
+        re.IGNORECASE,
+    )
+    WORDS = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+    }
+
+    def _section(self) -> str:
+        """The text of section 9 — the privilege mode."""
+        text = SECURITY_DOC.read_text(encoding="utf-8")
+        start = text.index("### 9.")
+        rest = text[start + 3 :]
+        end = rest.find("\n### ")
+        return rest[:end] if end != -1 else rest
+
+    def _table_rows(self, section: str) -> list[str]:
+        return [line for line in section.splitlines() if line.strip().startswith("| `AGENT_")]
+
+    def test_the_number_in_the_prose_matches_the_table(self) -> None:
+        section = self._section()
+        rows = self._table_rows(section)
+        self.assertGreaterEqual(
+            len(rows),
+            4,
+            "the privilege table must list every setting, including the "
+            "read-only one — this is the table a reader counts",
+        )
+
+        claimed: int | None = None
+        for line in section.splitlines():
+            match = self.COUNT_RE.search(line)
+            if match:
+                token = match.group(1).lower()
+                claimed = int(token) if token.isdigit() else self.WORDS[token]
+                break
+        self.assertIsNotNone(
+            claimed,
+            "the prose must say how many settings the privilege mode takes",
+        )
+        self.assertEqual(
+            claimed,
+            len(rows),
+            f"the prose says {claimed} setting(s), the table below it lists {len(rows)}",
+        )
+
+    def test_the_table_and_the_compose_files_agree(self) -> None:
+        """A row that names a setting the stacks do not have is a ghost.
+
+        The other direction of the same drift: the table promising a knob
+        that no compose file exposes would send an operator looking for
+        a switch that does not exist.
+        """
+        compose_text = "".join((ROOT / name).read_text(encoding="utf-8") for name in COMPOSE_FILES)
+        for row in self._table_rows(self._section()):
+            knob = row.strip().split("`")[1].split("=")[0]
+            with self.subTest(knob=knob):
+                # The knob must be *interpolated* by a compose file, not
+                # merely mentioned in a comment: only an interpolation
+                # makes it settable from the environment. A mention in
+                # prose is a claim about a switch that may not exist.
+                self.assertIn(
+                    "${" + knob,
+                    compose_text,
+                    f"{knob} is documented in the privilege table but no "
+                    "compose file exposes it as a settable knob",
+                )
 
 
 if __name__ == "__main__":
