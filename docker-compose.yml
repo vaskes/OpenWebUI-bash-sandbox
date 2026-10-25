@@ -52,8 +52,13 @@ services:
       - /opt/agent-workspace:/workspace
       - /opt/agent-workspace/.ssh:/home/agent/.ssh:ro
       - /opt/search:/opt/search:ro
-      # Persistent home for installed Python packages and configs.
-      - sandbox-agent-home:/home/agent:rw
+      # NOTE: there is deliberately NO volume mounted at /home/agent. The
+      # application code lives there (WORKDIR is /home/agent so the import
+      # path resolves), and Docker seeds a named volume from the image on
+      # first use and never re-syncs it. A volume at that path therefore
+      # shadows the code with the copy from the first run, and every later
+      # image rebuild becomes a no-op: the repository moves, the container
+      # does not. Sub-paths are fine — they do not cover the code.
       # Persistent apt cache (saves bandwidth + time on rebuilds).
       - sandbox-agent-apt:/var/cache/apt:rw
       # Persistent pip cache.
@@ -168,7 +173,6 @@ services:
         condition: service_started
 
 volumes:
-  sandbox-agent-home:
   sandbox-agent-apt:
   sandbox-agent-pip:
   open-webui-data:

@@ -36,6 +36,28 @@ The meta door told the truth about the file and lied about the status.
   `docs/HANDOFF-binary-transport.md`, so the contract the bot codes
   against includes the failure case and not only the happy one.
 
+### Fixed
+
+- **No stack mounts a volume over the agent's code any more.** The dev
+  and CI stacks both carried `sandbox-agent-home:/home/agent:rw` and
+  `ci-agent-home:/home/agent:rw`. The application's code lives in
+  `/home/agent` (`WORKDIR` is there so the import path resolves), and
+  Docker seeds a named volume from the image on first use and never
+  re-syncs it — so a volume at that path shadows the code with the copy
+  from the first run, and every later image rebuild becomes a no-op.
+  This is the defect that froze the production stack in v2.4.x; it was
+  fixed there, and left in place in the other two stacks, where a fresh
+  volume per run hides it. The CI stack now behaves like the production
+  one: the code comes from the image, and only the workspace is a
+  volume.
+- **The tripwire that should have caught it now can.** The old check
+  looked for a line *ending* in `/home/agent` — but the offending line
+  ends in `:rw`, so it matched nothing and guarded nothing. It is
+  replaced by `TestNoStackShadowsTheAgentCode`, which parses the volume
+  specification of every compose file, derives the code directory from
+  the Dockerfile instead of hard-coding it, and is mutation-checked
+  against the exact line that shipped.
+
 ## [2.7.0] - 2026-10-25
 
 The delivery side of the binary door, and a contract the bot can code against.

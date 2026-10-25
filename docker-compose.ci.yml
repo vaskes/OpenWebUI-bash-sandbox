@@ -29,9 +29,16 @@ services:
       - /run:size=64m,mode=755
     # Named volume, not a host bind-mount: CI has no host workspace to own.
     # This is the only writable path the agent needs.
+    #
+    # NOTE: there is deliberately NO volume mounted at /home/agent. The
+    # application code lives there (WORKDIR is /home/agent so the import
+    # path resolves), and Docker seeds a named volume from the image on
+    # first use and never re-syncs it. A volume at that path therefore
+    # shadows the code with the copy from the first run: on a fresh CI
+    # volume the two coincide and nobody notices, but any stack that is
+    # rebuilt and restarted keeps running its first-deploy code.
     volumes:
       - ci-agent-workspace:/workspace
-      - ci-agent-home:/home/agent:rw
     environment:
       - AGENT_WORKSPACE=/workspace
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
@@ -85,7 +92,6 @@ services:
 
 volumes:
   ci-agent-workspace:
-  ci-agent-home:
 
 networks:
   ci-net:

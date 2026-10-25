@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
 SANDBOX_DOCKERFILE = ROOT / "Dockerfile.sandbox"
@@ -317,6 +317,128 @@ if __name__ == "__main__":
 # check written so it fails on the shape rather than on a yaml library.
 
 
+class TestNoStackShadowsTheAgentCode(unittest.TestCase):
+    """No stack may mount a volume over the agent's application code.
+
+    The code lives in the directory the Dockerfile copies it into
+    (``WORKDIR /home/agent``, so the import path resolves). Docker seeds
+    a named volume from the image on first use and never re-syncs it, so
+    a volume mounted at that path shadows the code with the copy from the
+    first run — and every later image rebuild becomes a no-op. The
+    repository moves, the container does not.
+
+    This is not hypothetical. The production stack shipped with
+    ``tb-sandbox-home:/home/agent:rw``, and every deploy after the first
+    one was a no-op. The same volume was still sitting in the dev and CI
+    stacks, where a fresh volume per run hides the problem: the code on
+    disk and the code in the container coincide, and the defect only
+    shows up on the *second* deploy of the same stack.
+
+    A sub-path is fine — ``/home/agent/.ssh`` and
+    ``/home/agent/.cache/pip`` do not cover the code.
+    """
+
+    COMPOSE_FILES = (
+        "docker-compose.yml",
+        "docker-compose.ci.yml",
+        "docker-compose.production.yml",
+    )
+
+    @staticmethod
+    def _code_dir() -> str:
+        """The directory the agent's application code is copied into.
+
+        Derived from the Dockerfile rather than hard-coded, so moving the
+        code moves the rule with it.
+        """
+        parents = set()
+        for raw in SANDBOX_DOCKERFILE.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line.startswith("COPY "):
+                continue
+            dest = line.split()[-1]
+            if dest.endswith(".py"):
+                parents.add(str(PurePosixPath(dest).parent))
+        if len(parents) != 1:
+            raise AssertionError(f"cannot tell where the agent's code lives: {sorted(parents)}")
+        return parents.pop()
+
+    @staticmethod
+    def _volume_mounts(text: str) -> list[tuple[str, str, str, str]]:
+        """(service, source, target, mode) for every volume mount in a file.
+
+        The spec is parsed rather than string-matched. An earlier version
+        of this rule looked for a line *ending* in ``/home/agent`` and so
+        matched nothing at all: the offending line ends in ``:rw``.
+        """
+        mounts: list[tuple[str, str, str, str]] = []
+        service = None
+        in_volumes = False
+        for raw in text.splitlines():
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            indent = len(raw) - len(raw.lstrip())
+            if indent == 0:
+                service = None
+                in_volumes = False
+                continue
+            if indent == 2 and stripped.endswith(":"):
+                service = stripped[:-1]
+                in_volumes = False
+                continue
+            if indent >= 4 and stripped.endswith(":") and not stripped.startswith("-"):
+                in_volumes = stripped == "volumes:"
+                continue
+            if in_volumes and stripped.startswith("-"):
+                parts = stripped[1:].strip().split(":")
+                if len(parts) >= 2:
+                    mode = parts[2] if len(parts) > 2 else "rw"
+                    mounts.append((service or "?", parts[0], parts[1], mode))
+        return mounts
+
+    def test_no_volume_at_the_code_directory(self) -> None:
+        code_dir = self._code_dir().rstrip("/")
+        offenders = []
+        for name in self.COMPOSE_FILES:
+            path = ROOT / name
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8")
+            for service, source, target, mode in self._volume_mounts(text):
+                if target.rstrip("/") != code_dir:
+                    continue
+                offenders.append(f"{name}: {service}: {source}:{target}:{mode}")
+        self.assertEqual(
+            offenders,
+            [],
+            f"a volume mounted at {code_dir} shadows the agent's application "
+            "code with the copy seeded on the first run, so every later "
+            "image rebuild is silently ignored — the repository moves, the "
+            "container does not. Mount a sub-path instead (e.g. "
+            f"{code_dir}/.cache/pip). Offending mounts: {offenders}",
+        )
+
+    def test_the_rule_catches_the_line_it_was_written_for(self) -> None:
+        """A rule that cannot fail is worse than no rule.
+
+        This is the exact line the production stack shipped with, and the
+        exact line the CI stack still had. If the parser stops recognising
+        it, the tripwire above is decoration.
+        """
+        mounts = self._volume_mounts(
+            "services:\n"
+            "  sandbox-agent:\n"
+            "    volumes:\n"
+            "      - tb-sandbox-home:/home/agent:rw\n"
+            "      - /opt/agent-workspace:/workspace\n"
+        )
+        self.assertIn(
+            ("sandbox-agent", "tb-sandbox-home", "/home/agent", "rw"),
+            mounts,
+        )
+
+
 class TestProductionCompose(unittest.TestCase):
     """docker-compose.production.yml must not shadow the application code."""
 
@@ -329,32 +451,6 @@ class TestProductionCompose(unittest.TestCase):
         start = text.index("  sandbox-agent:")
         end = text.index("  openapi-proxy:")
         return text[start:end]
-
-    def test_no_volume_mounted_at_home_agent(self) -> None:
-        """A volume at /home/agent freezes the code at whatever the first deploy had.
-
-        The application code lives in /home/agent (Dockerfile.sandbox sets
-        WORKDIR there so the import path resolves). Docker seeds a fresh named
-        volume from the image on first use and never re-syncs it, so mounting
-        one at that path makes every later image rebuild a no-op and the agent
-        keeps running its first-deploy code forever.
-        """
-        block = self._agent_block(self._compose_text())
-        offenders = [
-            line.strip()
-            for line in block.splitlines()
-            if line.strip().startswith("-")
-            and line.rstrip().endswith("/home/agent")
-            and "rw" in line
-        ]
-        self.assertEqual(
-            offenders,
-            [],
-            "docker-compose.production.yml must not mount a writable volume at "
-            "/home/agent: it shadows agent_api.py/agent_core.py with the copy "
-            "seeded on the first deploy, so later image rebuilds are silently "
-            f"ignored. Offending lines: {offenders}",
-        )
 
     def test_deploy_command_documents_the_build_flag(self) -> None:
         """`up -d` alone reuses the existing image; operators must be told."""

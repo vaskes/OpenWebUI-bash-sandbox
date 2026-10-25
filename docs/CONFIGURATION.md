@@ -61,7 +61,7 @@ to this agent already caps tool results far lower than 512k.
 | Path                | Source                                  | Writable? |
 |---------------------|-----------------------------------------|-----------|
 | `/workspace`        | bind-mount `/opt/agent-workspace`       | yes       |
-| `/home/agent`       | named volume `sandbox-agent-home`       | yes       |
+| `/home/agent`       | the image itself (the code lives there)  | yes, but **never** mount a volume here |
 | `/var/cache/apt`    | named volume `sandbox-agent-apt`        | yes       |
 | `/home/agent/.cache/pip`  | named volume `sandbox-agent-pip` | yes       |
 | `/opt/sandbox/`     | baked into image                        | no        |
@@ -148,7 +148,6 @@ The `key` here is the same bearer token the proxy validates against
 
 | Name                  | Mounted at                   | Purpose                              |
 |-----------------------|------------------------------|--------------------------------------|
-| `sandbox-agent-home`  | `/home/agent`                | `~/.bashrc`, configs, installed tools |
 | `sandbox-agent-apt`   | `/var/cache/apt`             | apt download cache                   |
 | `sandbox-agent-pip`   | `/home/agent/.cache/pip`     | pip download cache                   |
 | `open-webui-data`     | `/app/backend/data`          | Open WebUI's SQLite DB (chats, users, settings) |
@@ -156,6 +155,15 @@ The `key` here is the same bearer token the proxy validates against
 The Open WebUI DB **must not** be bind-mounted into `/workspace` — that
 would let the LLM do `rm -rf /workspace/.open-webui-data` and wipe the
 entire chat history. Wave 3 fix #C1.
+
+**Nothing is mounted at `/home/agent` itself, and nothing may be.** The
+agent's code lives there (`WORKDIR` is `/home/agent` so the import path
+resolves), and Docker seeds a named volume from the image on first use
+and never re-syncs it. A volume at that path therefore shadows the code
+with the copy from the first run: every later image rebuild becomes a
+no-op, the repository moves and the container does not. That is exactly
+what the production stack did until v2.5.0. Mount a sub-path if you need
+to persist something — `/home/agent/.cache/pip` is the one that matters.
 
 Delete these with `docker volume rm <name>` to start fresh.
 
