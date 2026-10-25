@@ -57,7 +57,16 @@ services:
     security_opt:
       - "no-new-privileges:${AGENT_NO_NEW_PRIVILEGES:-true}"
     stop_grace_period: 30s
-    read_only: true
+    # A read-only root filesystem is the stock posture: the agent writes
+    # only through the bind-mounts and the tmpfs. It is also the fourth
+    # setting of the privilege mode, and the one that decides whether a
+    # root shell is useful: a root in a read-only container owns the
+    # filesystem and cannot change a byte of it — apt-get needs three
+    # writable paths (/var/lib/apt/lists, /var/lib/dpkg and /usr) and
+    # gets "Read-only file system" for all three. Set
+    # AGENT_READ_ONLY=false for a deployment whose privileged root has
+    # to install packages. See docs/SECURITY.md, "The privilege mode".
+    read_only: "${AGENT_READ_ONLY:-true}"
     tmpfs:
       - /tmp:size=512m,mode=1777
       - /run:size=64m,mode=755

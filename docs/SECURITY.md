@@ -106,15 +106,22 @@ lie inside the workspace root. Anything outside returns 400. The only
 files visible to the sandbox are:
 
 * `/workspace` (bind-mount — controlled by you)
-* `/home/agent` (named volume)
+* `/home/agent` (the image itself — the code lives there, and **no
+  volume is mounted there**; a volume there would shadow the code with
+  the copy seeded on the first deploy)
 * `/opt/search` (read-only bind-mount)
 * `/home/agent/.ssh` (read-only bind-mount)
 * `/var/cache/apt`, `/home/agent/.cache/pip` (named volumes)
 
 The `read_only: true` root filesystem + dropped caps prevent writes
-to anywhere else. Even if the LLM is "root" inside the container
-(it isn't — it runs as UID 1000), it cannot modify bind-mounted host
-files or write outside tmpfs.
+to anywhere else. The LLM runs as UID 1000, and it cannot modify
+bind-mounted host files or write outside tmpfs.
+
+The privilege mode (section 9) is the one exception, and it is opt-in:
+a command can become root inside the container, and with
+`AGENT_READ_ONLY=false` that root can write to the container's own
+filesystem. It still cannot reach anything outside the container —
+the boundary does not move.
 
 ### 3. LLM uses the SSH key to access your fleet
 
@@ -222,6 +229,18 @@ first alone is a broken half:
 | `AGENT_ALLOW_SUDO=1` | the sandbox's environment | the image is built with `sudo` and a `NOPASSWD` rule for the agent's user |
 | `AGENT_NO_NEW_PRIVILEGES=false` | the sandbox's environment | the kernel stops ignoring the setuid bit, so `sudo` can elevate at all |
 | `AGENT_CAP_DROP=SYS_ADMIN` | the sandbox's environment | the capability bounding set is no longer empty, so the process can hold `CAP_SETUID` and `su` can change the user |
+| `AGENT_READ_ONLY=false` | the sandbox's environment | the container's root filesystem is writable, so the root shell can actually change something |
+
+The fourth one is not part of the escalation — it decides whether the
+root is *useful*. Three of them give the model a root shell; with a
+read-only root filesystem that shell owns the filesystem and cannot
+change a byte of it. `apt-get` needs three writable paths
+(`/var/lib/apt/lists` for the index, `/var/lib/dpkg` for the package
+database, `/usr` for the packages themselves) and gets *"Read-only file
+system"* for all three. A model that tries `apt-get install` then
+concludes the sandbox is broken, while the deployment is merely a
+half-root. The agent announces this at startup, so the operator sees
+it before the model does.
 
 `AGENT_CAP_DROP=SYS_ADMIN` is the value to use: Docker does not grant
 `CAP_SYS_ADMIN` by default, so dropping it leaves the default
@@ -237,16 +256,38 @@ mount, no namespace trick, and no way out of the container's own
 namespaces.
 
 **What it does not give:** the host. The container is the boundary. The
-root shell can write anywhere *in the container* — including the
-workspace, which is a bind-mount, so that means the files the host
-shares with the sandbox. It cannot reach anything the container cannot
-see, and it cannot bypass the host's own permissions on the mount.
+root shell can write anywhere *in the container* that the container's
+own filesystem allows — including the workspace, which is a bind-mount,
+so that means the files the host shares with the sandbox. It cannot
+reach anything the container cannot see, and it cannot bypass the
+host's own permissions on the mount.
+
+**What a writable root filesystem changes — and what it does not.**
+`AGENT_READ_ONLY=false` gives the container a writable root layer: the
+root shell can install packages, edit `/etc` and modify the agent's own
+files under `/home/agent`. It does **not** give the host. The
+container's namespaces, capabilities, devices and mounts are exactly
+what they were, `CAP_SYS_ADMIN` is still absent, and the writable layer
+is the container's own — it is discarded when the container is
+recreated, so a modified `/usr` does not survive a redeploy. The
+boundary is the container, and the boundary did not move.
+
+The stock deployment keeps the root filesystem read-only, and a
+deployment that wants the privilege mode should decide deliberately
+which half of "root" it wants: escalation, usefulness, or both.
 
 **Verify it after turning it on:**
 
 ```bash
 docker exec <agent> sh -c 'sudo -n id'      # uid=0(root)
 docker logs <agent> | grep -i 'privilege mode'
+```
+
+And if the root is meant to be *useful*, verify that too — a root that
+cannot write is a half-root:
+
+```bash
+docker exec <agent> sh -c 'sudo -n apt-get update'   # E: Read-only file system → the rootfs is read-only
 ```
 
 **One setting inside sudo is load-bearing.** Sudo runs the command in a

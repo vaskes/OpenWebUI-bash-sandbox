@@ -4,6 +4,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.0] - 2026-10-25
+
+A root shell that cannot write is a half-root.
+
+### Fixed
+
+- **`apt` did not work for the agent, and the sudo implementation was
+  never the reason.** The privilege mode hands a command a root shell
+  inside the container, and the root shell could not install a package:
+  `apt-get` needs three writable paths — `/var/lib/apt/lists` for the
+  index, `/var/lib/dpkg` for the package database and `/usr` for the
+  packages themselves — and the deployment's `read_only: true` root
+  filesystem refuses all three. The measured failure, as root, in the
+  stock posture:
+
+  ```
+  # apt-get update
+  E: List directory /var/lib/apt/lists/partial is missing. - Acquire (30: Read-only file system)
+  # touch /usr/local/probe
+  Read-only file system
+  ```
+
+  The `tb-sandbox-apt` volume at `/var/cache/apt` — the download cache,
+  the smallest of the three — was the only writable apt path, and it
+  made the failure look like a sudo problem instead of a filesystem
+  problem.
+
+  The privilege mode now has a **fourth setting**,
+  `AGENT_READ_ONLY` (default `true`, so the stock posture does not
+  change). With `AGENT_READ_ONLY=false` the container's root
+  filesystem is writable and the privileged root can actually install
+  packages:
+
+  ```
+  AGENT_ALLOW_SUDO=1
+  AGENT_NO_NEW_PRIVILEGES=false
+  AGENT_CAP_DROP=SYS_ADMIN
+  AGENT_READ_ONLY=false
+  ```
+
+  The writable layer is the container's own: it is discarded when the
+  container is recreated, and it does not move the boundary. The
+  container's namespaces, capabilities, devices and mounts are exactly
+  what they were, and `CAP_SYS_ADMIN` is still absent.
+
+### Added
+
+- **`agent_core.rootfs_is_read_only()`** — parses `/proc/self/mountinfo`
+  and reports whether the root filesystem is mounted read-only. A mount
+  table that cannot be parsed counts as read-only: an unknown state
+  must never be read as "the root may write here".
+- **A startup warning for the hollow root.** The agent already announced
+  a privilege mode that could not escalate. It now also announces one
+  that *can* escalate but owns a filesystem it cannot change — the
+  operator sees it before the model does, instead of the model
+  reporting "the sandbox is broken".
+- **A `privilege` CI job.** It builds the agent image with `sudo` and
+  checks the matrix that matters: the escalation works and the root
+  filesystem is read-only → `apt-get` is refused with *"Read-only file
+  system"*; `AGENT_READ_ONLY=false` → `apt-get update` and
+  `apt-get install` both succeed and the package lands on the PATH.
+- **`tests/test_read_only_rootfs.py`** — 11 cases: the detection, the
+  warning, and the knob in all three stacks (with the default pinned to
+  the stock posture).
+
+### Changed
+
+- **`docs/SECURITY.md`** — the privilege mode's table carries the
+  fourth setting, and the claim that "the root shell can write anywhere
+  in the container" is now true only when `AGENT_READ_ONLY=false`
+  says so. Section 2 no longer lists `/home/agent` as a named volume
+  (it stopped being one in v2.7.1) and no longer claims the model can
+  never be root.
+- **`docs/CONFIGURATION.md`** — the knob, and a writable-surface table
+  that says what a read-only root filesystem actually blocks.
+- **`docs/ARCHITECTURE.md`** — the volume at `/var/cache/apt` is the
+  *download cache*, not installed packages: the packages land in `/usr`,
+  which is not a volume.
+- **`.env.example`** — the fourth setting, next to the other three.
+
+Version 2.10.0. README test count 286 -> 298.
+
 ## [2.9.1] - 2026-10-25
 
 The file door tells the truth about permissions.

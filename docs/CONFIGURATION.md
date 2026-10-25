@@ -17,6 +17,7 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_ALLOW_SUDO`     | `0`                                       | Build the image with `sudo`, so a command can become root. **Private, secured deployments only.** |
 | `AGENT_NO_NEW_PRIVILEGES` | `true`                                  | The container's `no-new-privileges` flag. `false` is required by the privilege mode. |
 | `AGENT_CAP_DROP`       | `ALL`                                     | Capabilities dropped from the container. `SYS_ADMIN` in the privilege mode. |
+| `AGENT_READ_ONLY`      | `true`                                    | The container's root filesystem is read-only. `false` gives the privilege mode's root a filesystem it can write. |
 
 If `AGENT_TOKEN` is empty, the agent refuses to serve any request
 except `/healthz` (returns 503). This is fail-closed by design.
@@ -43,10 +44,29 @@ AGENT_NO_NEW_PRIVILEGES=false
 AGENT_CAP_DROP=SYS_ADMIN
 ```
 
+**A fourth setting decides whether the root is useful.**
+`AGENT_READ_ONLY` defaults to `true`: the container's root filesystem
+is read-only, so the root shell owns the filesystem and cannot change
+a byte of it. `apt-get` needs three writable paths
+(`/var/lib/apt/lists`, `/var/lib/dpkg`, `/usr`) and gets *"Read-only
+file system"* for all three — a model that tries to install a package
+concludes the sandbox is broken, while the deployment is merely a
+half-root. A deployment whose privileged root has to install packages
+sets:
+
+```
+AGENT_READ_ONLY=false
+```
+
+The writable layer is the container's own: it is discarded when the
+container is recreated, and it does not move the boundary. The
+container stays the boundary either way.
+
 The agent logs a warning at startup when `sudo` is present — either
-that the mode is on, or which of the two runtime settings is still in
-the way. Full description, including what the mode does *not* give:
-[`docs/SECURITY.md`](SECURITY.md), section 9.
+that the mode is on, which of the two runtime settings is still in
+the way, or that the root filesystem is read-only. Full description,
+including what the mode does *not* give: [`docs/SECURITY.md`](SECURITY.md),
+section 9.
 
 ### Size values
 
@@ -91,13 +111,14 @@ to this agent already caps tool results far lower than 512k.
 | Path                | Source                                  | Writable? |
 |---------------------|-----------------------------------------|-----------|
 | `/workspace`        | bind-mount `/opt/agent-workspace`       | yes       |
-| `/home/agent`       | the image itself (the code lives there)  | yes, but **never** mount a volume here |
-| `/var/cache/apt`    | named volume `sandbox-agent-apt`        | yes       |
+| `/home/agent`       | the image itself (the code lives there)  | no — the root filesystem is read-only; **never** mount a volume here either |
+| `/var/cache/apt`    | named volume `sandbox-agent-apt`        | yes (the download cache only) |
 | `/home/agent/.cache/pip`  | named volume `sandbox-agent-pip` | yes       |
 | `/opt/sandbox/`     | baked into image                        | no        |
 | `/opt/search`       | bind-mount `/opt/search` (read-only)    | no        |
 | `/home/agent/.ssh`  | bind-mount `/opt/agent-workspace/.ssh` (read-only) | no |
 | `/tmp`              | container tmpfs                         | yes (ephemeral) |
+| `/usr`, `/etc`, `/var/lib/apt`, `/var/lib/dpkg` | the image itself | no — the read-only root filesystem is what makes `apt-get` fail in a privileged deployment (`AGENT_READ_ONLY=false` turns the root filesystem writable) |
 
 ### Healthcheck
 
