@@ -11,7 +11,7 @@
 # /workspace happens at runtime; we don't need it on the import path.
 
 # ---- builder ----
-FROM ubuntu:24.04 AS builder
+FROM ubuntu:26.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -25,7 +25,14 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     && rm /tmp/requirements.txt
 
 # ---- runtime ----
-FROM ubuntu:24.04
+FROM ubuntu:26.04
+#
+# The ``python3`` in this image is the one the Ubuntu release ships in
+# apt (3.14.4 on 26.04 — measured in the image, 2026-10-25). We do not
+# pin it, so a release bump moves it under us. That is what
+# tests/test_runtime_python_is_covered_by_ci.py is for: whatever python
+# the image ends up carrying has to be a version the CI matrix runs the
+# suite on.
 
 # The privilege mode. 0 (the default) = the agent's shell cannot become
 # root: there is no sudo in the image and no setuid binary that could
@@ -102,8 +109,14 @@ RUN if [ "$AGENT_ALLOW_SUDO" = "1" ]; then \
 # ``/usr/local/local/...``, which the interpreter does not search, and the
 # container dies with "No module named uvicorn" at startup.
 #
+# Verified on ubuntu:26.04 (2026-10-25): ``pip3 install --prefix=/install``
+# in that image produces ``/install/local``. If a future Ubuntu release
+# switches to the platform scheme, this copy breaks and the build fails
+# loudly — which is the point of not "fixing" it to match the proxy's
+# Dockerfile.
+#
 # Copy the *contents* of /install/local so the runtime layout is the
-# standard /usr/local/{bin,lib}. (python:3.11-slim does NOT add the
+# standard /usr/local/{bin,lib}. (python:3.14-slim does NOT add the
 # ``local`` component — see Dockerfile.openapi-proxy, where a plain
 # ``/install/`` copy is correct. The two differ on purpose.)
 COPY --from=builder /install/local/ /usr/local/
@@ -112,8 +125,10 @@ COPY --from=builder /install/local/ /usr/local/
 # docker-compose.yml ``user: "1000:1000"``). We reference it numerically
 # instead of creating named users, because:
 #
-#   * ubuntu:24.04 already ships uid 1000 + gid 1000 as ``ubuntu``, so
-#     ``groupadd -g 1000 agent`` dies with "GID '1000' already exists";
+#   * ubuntu:26.04 ships uid 1000 + gid 1000 as ``ubuntu`` (verified
+#     2026-10-25: ``getent passwd 1000`` -> ``ubuntu:x:1000:1000:...``),
+#     so ``groupadd -g 1000 agent`` dies with "GID '1000' already
+#     exists";
 #   * swallowing that error (``|| true``) does not help — ``useradd``
 #     then fails, and every later ``chown agent:agent`` fails too.
 #

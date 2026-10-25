@@ -1,6 +1,12 @@
 # Runtime dependencies for sandbox-agent and openapi-proxy.
-# Ranges match the Dockerfiles (ubuntu:24.04 for sandbox-agent,
-# python:3.11-slim for openapi-proxy).
+# Ranges match the Dockerfiles (ubuntu:26.04 for sandbox-agent,
+# python:3.14-slim for openapi-proxy).
+#
+# The lower bounds are the versions a fresh install resolves to today —
+# the ones the images are built against and the suite runs against.
+# fastapi is the exception: no advisory applies to it, so its floor stays
+# where it is. A floor is not a pin: every ceiling stays <1.0, so a fresh
+# install still picks the newest release in range.
 #
 # Do NOT narrow a pin to work around an application error — fix the code.
 # A narrow pin makes a *fresh install* silently ship an old, unaudited
@@ -10,6 +16,6 @@
 # keyword is passed to FastAPI(), so no pin is needed to hide that class
 # of bug.
 fastapi>=0.110,<1.0
-uvicorn[standard]>=0.27,<1.0
-pydantic>=2.0,<3.0
-httpx>=0.27,<1.0
+uvicorn[standard]>=0.54.0,<1.0
+pydantic>=2.14.0,<3.0
+httpx>=0.28.1,<1.0
