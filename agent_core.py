@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-__version__ = "2.8.0"
+__version__ = "2.9.0"
 
 TMUX_PREFIX = "agent_"
 SESSION_ID_MAX_LEN = 64

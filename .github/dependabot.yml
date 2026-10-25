@@ -5,6 +5,14 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # One PR for the whole dependency set instead of one branch per
+    # package. Eleven single-package branches is how the branch list
+    # became a mess in the first place — and a closed PR leaves its
+    # branch behind, so the mess only grows.
+    groups:
+      pip:
+        patterns:
+          - "*"
     commit-message:
       prefix: "chore(deps)"
     labels:
@@ -14,11 +22,18 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      actions:
+        patterns:
+          - "*"
     commit-message:
       prefix: "ci"
     labels:
       - "dependencies"
 
+  # Docker is deliberately NOT grouped: the two base images move
+  # independently and carry independent risk (a base bump changes the
+  # runtime python), so they deserve one PR each.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
