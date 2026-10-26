@@ -120,6 +120,9 @@ services:
       - OPENAPI_PROXY_RATE_LIMIT_RPM=${OPENAPI_PROXY_RATE_LIMIT_RPM:-120}
       - OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS=${OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS:-10000}
       - OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT=${OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT:-300}
+      # The longest a single command may run. The proxy waits longer than this,
+      # so the answer that says "this timed out" survives the trip.
+      - AGENT_EXEC_TIMEOUT=${AGENT_EXEC_TIMEOUT:-60}
       - OPENAPI_PROXY_LOG_LEVEL=INFO
     mem_limit: 512m
     cpus: "1.0"

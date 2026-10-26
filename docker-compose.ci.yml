@@ -93,6 +93,7 @@ services:
       - SANDBOX_URL=http://sandbox-agent:8082
       - OPENAPI_PROXY_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
       - OPENAPI_PROXY_RATE_LIMIT_RPM=0
+      - AGENT_EXEC_TIMEOUT=${AGENT_EXEC_TIMEOUT:-60}
       - OPENAPI_PROXY_LOG_LEVEL=WARNING
     depends_on:
       sandbox-agent:
