@@ -221,3 +221,130 @@ class TestMarkerLength(_AgentTestBase):
         for prefix in ("__AGENT_DONE_", "__AGENT_BEGIN_", "__AGENT_EC_"):
             for token in re.findall(rf"{re.escape(prefix)}([0-9a-f]+)__", payload):
                 self.assertEqual(len(token), 16, f"{prefix}{token}")
+
+
+# ---------------------------------------------------------------------------
+# M3 — the token must survive being interpolated into JSON
+# ---------------------------------------------------------------------------
+class TestTokenShape(unittest.TestCase):
+    """The token is not only a bearer token: the compose file interpolates
+    it into a JSON document that Open WebUI has to parse. A token that
+    breaks that JSON leaves the UI without the sandbox tool, quietly."""
+
+    def test_an_empty_token_is_a_problem(self) -> None:
+        from proxy_core import token_problem  # noqa: PLC0415
+
+        problem = token_problem("")
+        self.assertIsNotNone(problem)
+        self.assertIn("empty", problem)
+
+    def test_a_hex_token_is_fine(self) -> None:
+        from proxy_core import token_problem  # noqa: PLC0415
+
+        self.assertIsNone(token_problem("0123456789abcdef" * 4))
+
+    def test_a_quote_breaks_it(self) -> None:
+        from proxy_core import token_problem  # noqa: PLC0415
+
+        problem = token_problem('abc"def')
+        self.assertIsNotNone(problem)
+        self.assertIn('"', problem)
+
+    def test_a_backslash_breaks_it(self) -> None:
+        from proxy_core import token_problem  # noqa: PLC0415
+
+        self.assertIsNotNone(token_problem("abc\\def"))
+
+    def test_whitespace_breaks_it(self) -> None:
+        from proxy_core import token_problem  # noqa: PLC0415
+
+        self.assertIsNotNone(token_problem("abc def"))
+        self.assertIsNotNone(token_problem("abc\ndef"))
+
+    def test_non_ascii_breaks_it(self) -> None:
+        from proxy_core import token_problem  # noqa: PLC0415
+
+        self.assertIsNotNone(token_problem("токен"))
+
+
+class TestTheDeployGateRefusesABrokenToken(unittest.TestCase):
+    """``make check-env`` is chained into build, up and restart. A check
+    that is written but never fires is a comment."""
+
+    def _run_check_env(self, env_line: str) -> int:
+        import shutil  # noqa: PLC0415
+        import subprocess  # noqa: PLC0415
+        import tempfile  # noqa: PLC0415
+
+        if shutil.which("make") is None:
+            self.skipTest("make is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(ROOT / "Makefile", Path(tmp) / "Makefile")
+            (Path(tmp) / ".env").write_text(env_line + "\n", encoding="utf-8")
+            return subprocess.call(
+                ["make", "-f", "Makefile", "check-env"],
+                cwd=tmp,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+    def test_a_good_token_passes(self) -> None:
+        self.assertEqual(self._run_check_env("OPENAPI_PROXY_TOKEN=" + "a" * 64), 0)
+
+    def test_a_token_with_a_quote_is_refused(self) -> None:
+        self.assertNotEqual(self._run_check_env('OPENAPI_PROXY_TOKEN=has"quote'), 0)
+
+    def test_a_token_with_a_backslash_is_refused(self) -> None:
+        self.assertNotEqual(self._run_check_env("OPENAPI_PROXY_TOKEN=back\\slash"), 0)
+
+    def test_a_token_with_a_space_is_refused(self) -> None:
+        self.assertNotEqual(self._run_check_env("OPENAPI_PROXY_TOKEN=has space"), 0)
+
+    def test_a_token_with_non_ascii_is_refused(self) -> None:
+        self.assertNotEqual(self._run_check_env("OPENAPI_PROXY_TOKEN=токен"), 0)
+
+    def test_an_empty_token_is_refused(self) -> None:
+        self.assertNotEqual(self._run_check_env("OPENAPI_PROXY_TOKEN="), 0)
+
+
+class TestTheProxySaysSoAtStartup(unittest.TestCase):
+    """A stack started with ``docker compose up`` does not run
+    ``make check-env`` — so the proxy has to say it itself."""
+
+    def test_the_lifespan_logs_the_problem(self) -> None:
+        import asyncio  # noqa: PLC0415
+
+        import openapi_proxy  # noqa: PLC0415
+
+        records: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        logger = logging.getLogger("openapi-proxy")
+        old_level = logger.level
+        logger.setLevel(logging.INFO)
+        handler = _Capture()
+        logger.addHandler(handler)
+        self.addCleanup(logger.removeHandler, handler)
+        self.addCleanup(logger.setLevel, old_level)
+
+        class _State:
+            pass
+
+        class _App:
+            def __init__(self) -> None:
+                self.state = _State()
+
+        old_token = openapi_proxy.PROXY_TOKEN
+        openapi_proxy.PROXY_TOKEN = 'bad"token'
+        try:
+
+            async def run() -> None:
+                async with openapi_proxy.lifespan(_App()):
+                    pass
+
+            asyncio.run(run())
+        finally:
+            openapi_pro
