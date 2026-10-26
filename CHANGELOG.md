@@ -4,6 +4,116 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.0] - 2026-10-26
+
+The Qwen review of the whole repository, worked through finding by
+finding: what was real is fixed, what was already true is written down,
+and what was wrong is left alone — with the reason.
+
+### Fixed
+
+- **The `ssh` shortcut took a key it could not protect.** The
+  identity file was checked in the proxy — "is it a regular file
+  inside the workspace?" — while the file itself was opened later, by
+  `ssh`, in the sandbox. Between the two there is a round-trip, and a
+  model with a second session could swap the checked file for a
+  symlink. The old code said so in its own docstring: "the TOCTOU
+  window ... is exploitable".
+
+  A path rule cannot be made race-free there: the only check that
+  cannot be raced is the permission check the shell performs when it
+  opens the file. So `-i` is now refused outright, with a message that
+  says why. Nothing is lost: a plain `ssh -i ...` inside the sandbox
+  was always possible, and the shortcut was never a boundary.
+
+- **The command preview in the log carried secrets.** Every executed
+  command is logged with a 200-character preview of its text, so that
+  an operator can reconstruct what the model ran. A command carrying a
+  credential — `export API_KEY=…`, `curl -H "Authorization: Bearer …"`,
+  `mysql --password …`, `sshpass -p …`, a pasted private key — wrote
+  that credential into the log file.
+
+  The preview is redacted now: the values of assignments, flags and
+  `name: value` pairs whose name looks secret, the value of an
+  `Authorization` header, the value of `sshpass -p` and PEM private-key
+  blocks. The names stay, so the log still says what the command was
+  doing. The redaction matches *shapes*, not meaning — the log is
+  still sensitive, and docs/SECURITY.md says so.
+
+- **The protocol markers were 32 bits wide.** The marker names the
+  bookkeeping line that tells the agent the command is over, and a
+  command that prints a line of its own must not be able to
+  impersonate it. 16 hex characters (64 bits) instead of 8.
+
+- **A token with a quote broke the Open WebUI tool connection.** The
+  compose file interpolates the token into the `TOOL_SERVER_CONNECTIONS`
+  JSON, and Open WebUI parses that document. A quote or a backslash in
+  the token made it unparseable — and the failure was quiet: the UI
+  came up without the sandbox tool and said nothing about why. The
+  token is now checked (the deploy gate `make check-env` refuses one
+  that would break the JSON, and the proxy logs the problem at
+  start-up for the stacks that do not run the gate).
+
+- **The process limit was a constant.** `pids_limit: 256` is plenty
+  for a shell and too few for a build that fans out; when the limit is
+  hit, even legitimate commands fail with "Resource temporarily
+  unavailable". It is a knob now (`AGENT_PIDS_LIMIT`), with the safe
+  default kept: the operator who hits the wall raises it, everybody
+  else keeps the fork-bomb protection.
+
+- **The log lines were JSON only when the message had no quotes.**
+  Both services logged JSON by interpolating the message into a JSON
+  string — and the agent logs the text of every command, which is
+  full of quotes. The busiest log in the system was the one that
+  produced lines no parser could read. A shared formatter escapes the
+  message properly now.
+
+- **The proxy image installed curl for one healthcheck.** The probe
+  asks Python now, and the image installs nothing from the
+  distribution at all. The sandbox image keeps curl: the model's shell
+  uses it.
+
+### Added
+
+- **A Prometheus exposition on both services.** `/metrics`, bearer
+  token required like every other endpoint: requests, rate-limit
+  refusals, upstream timeouts and upstream errors on the proxy;
+  commands, timeouts and active sessions on the agent.
+
+- **A monitoring example.** `docker-compose.monitoring.yml` brings up
+  Prometheus, Grafana and cAdvisor as a separate compose project, with
+  the datasource and the dashboard provisioned from files. A tripwire
+  renders the dashboard and compares every metric it asks for against
+  what the services actually expose — an example that asks for a
+  metric nobody publishes is worse than no example.
+
+- **The single-operator warning moved to the top of the README.** The
+  stack is single-operator by design (one bearer token, one tmux
+  server, one workspace). That belongs above the fold, not in
+  Limitations where nobody reads before deploying.
+
+### Changed
+
+- The proxy image no longer carries a package manager.
+- The `ssh` shortcut refuses `-i` (see above).
+- `docs/SECURITY.md` now says what the SSH allowlist is: a guardrail
+  on the naive path, not a boundary. Inside the sandbox the model has
+  a real shell, and what protects the operator's key is the
+  permissions of its read-only mount.
+
+### Reviewed and deliberately not changed
+
+- **M1 — "the path check is fragile".** It is `realpath` +
+  `commonpath` against the workspace root already; the review's
+  suggestion (a string `startswith`) is *weaker* than what is there.
+- **H2 — "tmux sessions leak on SIGTERM".** They die with the
+  container, and killing them on shutdown was the v2.1 behaviour that
+  broke persistence across restarts.
+- **"the secrets in `.env.example` are not documented".** The template
+  has said `openssl rand -hex 32` since v2.4.2.
+- **"the path validation is duplicated between the services".** The
+  proxy's copy went away together with the `-i` flag.
+
 ## [2.10.2] - 2026-10-26
 
 A command can no longer eat the protocol, and the timeout answer survives
