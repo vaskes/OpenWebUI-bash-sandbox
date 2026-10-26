@@ -65,6 +65,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from json_logging import configure_logging
 from proxy_core import (
     DEFAULT_SESSION_ID,
     EXEC_TIMEOUT_SECONDS,
@@ -152,10 +153,10 @@ SSH_SAFE_OPTIONS: set[str] = {
 }
 
 logger = logging.getLogger("openapi-proxy")
-logging.basicConfig(
-    level=os.environ.get("OPENAPI_PROXY_LOG_LEVEL", "INFO"),
-    format='{"ts":"%(asctime)s","logger":"%(name)s","level":"%(levelname)s","msg":"%(message)s"}',
-)
+# One JSON line per record, with the message escaped properly — the
+# proxy logs user-supplied text (a rejected ssh command, for example),
+# and the old format string broke the JSON on the first quote in it.
+configure_logging(os.environ.get("OPENAPI_PROXY_LOG_LEVEL", "INFO"))
 
 
 # ---------------------------------------------------------------------------
