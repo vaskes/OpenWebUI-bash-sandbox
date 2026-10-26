@@ -45,6 +45,8 @@ GET  /files?path=P
 DELETE /files?path=P
     Remove a file from the workspace. The sandbox is a scratchpad, not
     storage: once a file has been delivered, the client can remove it.
+GET  /metrics
+    Prometheus exposition (requests, refusals, active sessions).
 """
 
 from __future__ import annotations
@@ -78,6 +80,8 @@ from agent_config import (
     PANE_WIDTH,
     STDOUT_LIMIT_BYTES,
 )
+from json_logging import configure_logging
+
 from agent_core import (
     SESSION_ID_MAX_LEN,
     __version__,
@@ -116,10 +120,10 @@ BINARY_LIMIT_BYTES = _BINARY_LIMIT_BYTES
 AGENT_TOKEN: str = os.environ.get("AGENT_TOKEN", "")
 
 logger = logging.getLogger("sandbox-agent")
-logging.basicConfig(
-    level=os.environ.get("AGENT_LOG_LEVEL", "INFO"),
-    format='{"ts":"%(asctime)s","logger":"%(name)s","level":"%(levelname)s","msg":"%(message)s"}',
-)
+# One JSON line per record, with the message escaped properly. The old
+# format string interpolated the message into a JSON string, so a
+# command containing a quote produced a line no parser could read.
+configure_logging(os.environ.get("AGENT_LOG_LEVEL", "INFO"))
 
 
 # ---------------------------------------------------------------------------

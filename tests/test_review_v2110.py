@@ -457,3 +457,61 @@ class TestTheProxyImageCarriesNoCurl(unittest.TestCase):
         model commands — lost it."""
         text = (ROOT / "Dockerfile.sandbox").read_text(encoding="utf-8")
         self.assertRegex(text, r"(?m)^\s*git curl ")
+
+
+# ---------------------------------------------------------------------------
+# ops — the logs are JSON, and the JSON is valid
+# ---------------------------------------------------------------------------
+class TestTheLogsAreJson(unittest.TestCase):
+    """Both services claimed to log JSON and both did it the same way:
+    the message was interpolated into a JSON string by the format
+    string. The agent logs the text of every command, and a command is
+    full of quotes — so the busiest log in the system was the one that
+    broke the format."""
+
+    def _record(self, message: str, *args: object) -> logging.LogRecord:
+        return logging.LogRecord("sandbox-agent", logging.INFO, "f.py", 1, message, args, None)
+
+    def test_a_message_with_quotes_is_valid_json(self) -> None:
+        import json
+
+        from json_logging import JsonFormatter  # noqa: PLC0415
+
+        record = self._record("cmd=%r", 'echo "hi"')
+        line = JsonFormatter().format(record)
+        self.assertEqual(json.loads(line)["msg"], "cmd='echo \"hi\"'")
+
+    def test_a_message_with_a_newline_stays_on_one_line(self) -> None:
+        import json
+
+        from json_logging import JsonFormatter  # noqa: PLC0415
+
+        record = self._record("first\nsecond")
+        line = JsonFormatter().format(record)
+        self.assertNotIn("\n", line)
+        self.assertEqual(json.loads(line)["msg"], "first\nsecond")
+
+    def test_both_services_write_json_lines(self) -> None:
+        import agent_api  # noqa: F401, PLC0415
+        import openapi_proxy  # noqa: F401, PLC0415
+        from json_logging import JsonFormatter  # noqa: PLC0415
+
+        root = logging.getLogger()
+        ours = [
+            handler
+            for handler in root.handlers
+            if isinstance(getattr(handler, "formatter", None), JsonFormatter)
+        ]
+        self.assertTrue(ours, "neither service installed the JSON formatter on the root logger")
+        self.assertEqual(
+            len(ours),
+            1,
+            "the JSON handler is installed more than once — every line would print twice",
+        )
+
+    def test_no_service_interpolates_the_message_into_json_by_hand(self) -> None:
+        """The old format string is the bug; it must not come back."""
+        for name in ("agent_api.py", "openapi_proxy.py"):
+            with self.subTest(module=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                self.assertNotIn('"msg":"%(message)s"', text)
