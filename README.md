@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 387](https://img.shields.io/badge/tests-387_passing-brightgreen)](tests/)
+[![Tests: 390](https://img.shields.io/badge/tests-390_passing-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -64,7 +64,7 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **387 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **390 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -233,6 +233,10 @@ so the sandbox starts and works without it:
 ```bash
 mkdir -p monitoring/secrets
 grep '^OPENAPI_PROXY_TOKEN=' .env | cut -d= -f2 > monitoring/secrets/proxy_token
+# Prometheus reads the file as the user it runs as — 65534 (nobody).
+# A root-owned 0600 file is unreadable for it, and the scrape fails
+# with "unable to read authorization credentials".
+chown 65534:65534 monitoring/secrets/proxy_token
 chmod 600 monitoring/secrets/proxy_token
 
 MONITOR_NETWORK=agent-stack_agent-net \

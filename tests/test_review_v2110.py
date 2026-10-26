@@ -594,6 +594,42 @@ class TestTheAccessLogIsJsonToo(unittest.TestCase):
                 )
 
 
+class TestTheMonitoringExampleRuns(unittest.TestCase):
+    """The example was shipped broken and only a live run showed it.
+
+    Prometheus reads the bearer token as the user it runs as (65534 =
+    nobody). The instructions said "chmod 600", the file was owned by
+    root, and every scrape failed with "unable to read authorization
+    credentials" — a target that stays down with no hint of why.
+
+    The instructions now say to chown the file. This tripwire keeps
+    them saying it: a documentation fix that nothing protects is a
+    documentation fix that comes back.
+    """
+
+    def test_the_instructions_give_the_file_to_prometheus(self) -> None:
+        for name in ("README.md", "docker-compose.monitoring.yml", "monitoring/prometheus.yml"):
+            with self.subTest(file=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                self.assertIn(
+                    "chown 65534:65534",
+                    text,
+                    f"{name} does not say who has to own the token file",
+                )
+
+    def test_the_compose_says_which_user_prometheus_runs_as(self) -> None:
+        text = (ROOT / "docker-compose.monitoring.yml").read_text(encoding="utf-8")
+        self.assertIn('user: "65534:65534"', text)
+
+    def test_the_monitoring_compose_is_valid_yaml(self) -> None:
+        import yaml  # noqa: PLC0415
+
+        data = yaml.safe_load((ROOT / "docker-compose.monitoring.yml").read_text(encoding="utf-8"))
+        self.assertIn("services", data)
+        for name in ("prometheus", "grafana", "cadvisor"):
+            self.assertIn(name, data["services"])
+
+
 # ---------------------------------------------------------------------------
 # ops — the metrics endpoint and the monitoring example
 # ---------------------------------------------------------------------------
