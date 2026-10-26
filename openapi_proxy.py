@@ -73,6 +73,7 @@ from proxy_core import (
     WEB_SEARCH_PREFIX,
     WEBSOCKET_POLL_INTERVAL,
     parse_exec_timeout,
+    token_problem,
 )
 from proxy_core import (
     __version__ as _PROXY_CORE_VERSION,
@@ -412,6 +413,19 @@ async def lifespan(app: FastAPI):
         AGENT_EXEC_TIMEOUT,
         int(PROXY_REQUEST_TIMEOUT_SECONDS),
     )
+    # The token is not only a bearer token: the compose file interpolates
+    # it into the Open WebUI tool connection as JSON. A token that breaks
+    # that JSON leaves the UI without the sandbox tool and says nothing
+    # about why — so the proxy says it here, at start-up, where an
+    # operator is looking.
+    problem = token_problem(PROXY_TOKEN)
+    if problem:
+        logger.error(
+            "proxy.token_invalid %s — Open WebUI will not be able to parse "
+            "the tool connection with this token. Regenerate it with: "
+            "openssl rand -hex 32",
+            problem,
+        )
     try:
         yield
     finally:
