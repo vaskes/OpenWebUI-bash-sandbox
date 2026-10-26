@@ -35,7 +35,7 @@ release-prep patch — see the CHANGELOG.
 | Persistent session registry | ❌ in-memory only | ✅ JSON file on `/workspace` | survives container restart |
 | Startup reaper for stale sessions | ❌ | ✅ `_reap_dead_sessions` in lifespan | phantom sessions removed on boot |
 | Structured logging | ❌ | ✅ JSON-formatted `logger.info` with sid/cmd_len/cmd_preview/exit/duration | audit-ready |
-| Command preview in log (cmd content) | ❌ | ✅ `cmd=%r` (200-char preview + `+N bytes` suffix) | sandbox-recommendations #C1 |
+| Command preview in log (cmd content) | ❌ | ✅ `cmd=%r` (200-char preview + `+N bytes` suffix), secret-shaped values redacted | sandbox-recommendations #C1, review #H1 |
 | Rate limiting | ❌ | ✅ token-bucket per token, LRU-evicted | `OPENAPI_PROXY_RATE_LIMIT_RPM`, `OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS` |
 | Open WebUI DB in named volume | ❌ bind-mount into `/workspace` | ✅ `open-webui-data` named volume | LLM can no longer `rm -rf` the chat DB |
 | Coverage threshold in CI | ❌ | ✅ `--cov-fail-under=70` | fails build if drops |
@@ -353,6 +353,29 @@ Two consequences worth knowing:
   (`echo }`) is run unwrapped, exactly as before. Wrapping it would
   change what it means, and a command that means something else is worse
   than a command that waits.
+
+### 11. The log keeps the command — and the command may carry a secret
+
+Every executed command is logged with a 200-character preview of its
+text, so that an operator can reconstruct what the model ran. A command
+that carries a credential — `export API_KEY=…`, `curl -H "Authorization:
+Bearer …"`, `mysql --password …`, `sshpass -p …`, a pasted private key
+— would otherwise put that credential into the log file.
+
+**Mitigations:**
+
+* The preview is redacted before it is logged (v2.11.0): the values of
+  assignments, flags and `name: value` pairs whose name looks secret,
+  the value of an `Authorization:` header, the value of `sshpass -p`
+  and PEM private-key blocks are replaced with `[REDACTED]`. The names
+  stay, so the log still says what the command was doing.
+* The redaction is a safety net, not a guarantee: it matches *shapes*,
+  not *meaning*. A credential in a shape it does not know (a bare token
+  as a positional argument, say) still reaches the log. Treat the
+  agent's log as sensitive and keep it out of places where it does not
+  belong.
+* The command's *output* is not logged — only its text — so a secret
+  the model prints does not reach the log through this path.
 
 ## What's intentionally not implemented
 
