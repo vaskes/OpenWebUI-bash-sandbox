@@ -109,6 +109,112 @@ class TestSecretRedaction(unittest.TestCase):
         self.assertEqual(self._redact(""), "")
 
 
+class TestThePossessivePatternsMeanTheSameThing(unittest.TestCase):
+    """The redaction patterns use possessive quantifiers.
+
+    A possessive quantifier never gives characters back, and that is
+    what makes the match linear (CodeQL: py/polynomial-redos). But a
+    redaction that quietly stops matching is worse than a slow one: the
+    log would carry a secret that the operator believes is hidden.
+
+    So the possessive patterns are compared against the greedy ones they
+    replaced, over a corpus that covers the shapes a command has.
+    """
+
+    GREEDY = {
+        "assignment": re.compile(
+            r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)(?P<eq>\s*=\s*)"
+            r"(?P<value>\"[^\"]*\"|'[^']*'|[^\s]+)"
+        ),
+        "flag": re.compile(
+            r"(?P<flag>--[A-Za-z0-9][A-Za-z0-9-]*)(?P<eq>=|\s+)"
+            r"(?P<value>\"[^\"]*\"|'[^']*'|[^\s]+)"
+        ),
+        "colon": re.compile(
+            r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)(?P<eq>\s*:\s*)(?P<value>[^\s\"']+)"
+        ),
+    }
+
+    CORPUS = (
+        "export OPENAI_API_KEY=sk-test-value",
+        "export MY_KEY='quoted value'",
+        'export OTHER_KEY="double quoted"',
+        "curl -H 'Authorization: Bearer abc123' https://example.com",
+        "mysql -uroot --password hunter2 db",
+        "mysql -uroot --password=hunter2 db",
+        "sshpass -p topsecret ssh host",
+        "apiKey:abc123",
+        "foo.bar=baz",
+        "1KEY=secret",
+        ".KEY=secret",
+        "x--password=secret",
+        "--password=secret",
+        "a=b c=d",
+        "KEY=",
+        "=",
+        "--flag",
+        "no secrets here",
+        "A" * 300,
+        "A" * 300 + "=value",
+        "key=value" * 40,
+    )
+
+    def test_the_possessive_patterns_match_what_the_greedy_ones_matched(self) -> None:
+        from agent_core import _ASSIGNMENT_RE, _COLON_RE, _FLAG_RE  # noqa: PLC0415
+
+        pairs = {
+            "assignment": (_ASSIGNMENT_RE, self.GREEDY["assignment"]),
+            "flag": (_FLAG_RE, self.GREEDY["flag"]),
+            "colon": (_COLON_RE, self.GREEDY["colon"]),
+        }
+        for name, (new, old) in pairs.items():
+            for text in self.CORPUS:
+                with self.subTest(pattern=name, text=text[:40]):
+                    self.assertEqual(
+                        new.sub(lambda m: m.group(0), text),
+                        old.sub(lambda m: m.group(0), text),
+                    )
+
+    def test_the_name_groups_are_not_greedy_stars(self) -> None:
+        """The quantifier that makes the match linear has to stay.
+
+        A greedy star in the name (or the flag) gives characters back
+        when the rest of the pattern does not match, and that is what
+        makes the cost of the match quadratic in the length of the
+        command. The CI CodeQL job reports it as py/polynomial-redos,
+        and this test reports it faster and with a name that says what
+        to do.
+
+        Both a possessive quantifier ("*+") and a bounded repetition
+        ("{0,256}") are accepted here: the test pins the property, not
+        one spelling of it.
+        """
+        from agent_core import _ASSIGNMENT_RE, _COLON_RE, _FLAG_RE  # noqa: PLC0415
+
+        for pattern in (_ASSIGNMENT_RE, _FLAG_RE, _COLON_RE):
+            for group in ("name", "flag"):
+                match = re.search(rf"\(\?P<{group}>([^)]*)\)", pattern.pattern)
+                if match is None:
+                    continue
+                self.assertFalse(
+                    match.group(1).endswith("*"),
+                    f"the {group} group of {pattern.pattern!r} is a greedy "
+                    "star: it can be given back, and the match becomes "
+                    "quadratic in the length of the command",
+                )
+
+    def test_the_possessive_patterns_still_find_the_secret(self) -> None:
+        """A pattern that matches nothing would pass the comparison above."""
+        from agent_core import _ASSIGNMENT_RE, _COLON_RE, _FLAG_RE  # noqa: PLC0415
+
+        self.assertIn(
+            "sk-test-value",
+            _ASSIGNMENT_RE.search("export OPENAI_API_KEY=sk-test-value").group("value"),
+        )
+        self.assertIn("hunter2", _FLAG_RE.search("mysql --password hunter2 db").group("value"))
+        self.assertIn("abc123", _COLON_RE.search("apiKey:abc123").group("value"))
+
+
 class _AgentTestBase(unittest.TestCase):
     """Boots the agent app against a fake tmux and records what the
     endpoint typed into the terminal."""
