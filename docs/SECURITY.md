@@ -38,6 +38,7 @@ release-prep patch — see the CHANGELOG.
 | Command preview in log (cmd content) | ❌ | ✅ `cmd=%r` (200-char preview + `+N bytes` suffix), secret-shaped values redacted | sandbox-recommendations #C1, review #H1 |
 | Rate limiting | ❌ | ✅ token-bucket per token, LRU-evicted | `OPENAPI_PROXY_RATE_LIMIT_RPM`, `OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS` |
 | Open WebUI DB in named volume | ❌ bind-mount into `/workspace` | ✅ `open-webui-data` named volume | LLM can no longer `rm -rf` the chat DB |
+| Metrics endpoint | ❌ | ✅ `/metrics` on both services, bearer token required | no open endpoint on a published port |
 | Coverage threshold in CI | ❌ | ✅ `--cov-fail-under=70` | fails build if drops |
 | Ruff B-rules SAST in CI | ❌ | ✅ `ruff check . --select B` | replaces Bandit |
 | Gitleaks secret scan in CI | ❌ | ✅ | |

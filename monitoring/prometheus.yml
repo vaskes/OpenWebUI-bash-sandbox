@@ -1,0 +1,39 @@
+# Prometheus scrape configuration for the sandbox stack.
+#
+# The bearer token is read from a file, not from an environment variable:
+# Prometheus does not expand variables in its config, and the token must
+# not be pasted in here either. Create the file once:
+#
+#   grep '^OPENAPI_PROXY_TOKEN=' .env | cut -d= -f2 > monitoring/secrets/proxy_token
+#   chmod 600 monitoring/secrets/proxy_token
+#
+# The agent and the proxy share the token by default. If you set
+# OPENAPI_PROXY_UPSTREAM_TOKEN, give the agent its own file the same way
+# and point its scrape job at it.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    stack: sandbox
+
+scrape_configs:
+  - job_name: sandbox-proxy
+    metrics_path: /metrics
+    bearer_token_file: /etc/prometheus/secrets/proxy_token
+    static_configs:
+      - targets: ["openapi-proxy:8090"]
+
+  - job_name: sandbox-agent
+    metrics_path: /metrics
+    bearer_token_file: /etc/prometheus/secrets/proxy_token
+    static_configs:
+      - targets: ["sandbox-agent:8082"]
+
+  # Container-level memory and CPU. cAdvisor needs host mounts and
+  # privileged mode — it is the only way to get per-container memory
+  # into Prometheus. Drop this job (and the service) if you do not want
+  # a privileged container on the host.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]

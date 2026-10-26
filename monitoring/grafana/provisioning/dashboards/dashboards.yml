@@ -1,0 +1,14 @@
+apiVersion: 1
+
+# Where the dashboard JSON below is loaded from. Grafana loads it at
+# start-up, so a change to the file shows up after a restart of the
+# grafana container (or a refresh of the provisioning API).
+providers:
+  - name: sandbox
+    orgId: 1
+    folder: Sandbox
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
