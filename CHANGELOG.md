@@ -4,6 +4,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.2] - 2026-10-26
+
+A command can no longer eat the protocol, and the timeout answer survives
+the trip.
+
+### Fixed
+
+- **A command that reads stdin ate the completion marker.** The agent
+  types the command and the bookkeeping lines that follow it into the
+  same terminal, so the rest of the block was still sitting in the input
+  buffer when the command started. A command that reads stdin — `read x`,
+  `apt-get` — read those lines instead of waiting, the completion marker
+  never appeared, and the caller waited out the whole limit for an
+  answer that never came. The package got installed and the answer was
+  lost.
+
+  The command now runs inside a brace group whose stdin is
+  `/dev/null`. It reads EOF, the bookkeeping stays in the buffer where
+  the command cannot reach it, and the answer comes back — with the
+  output intact.
+
+  The group is transparent to the caller: the stdout is byte-for-byte
+  what it was before, including the shell's echo of the command line.
+  Two shell details make that true, and both are load-bearing. The
+  shell parses a whole group before running any of it, so the output
+  arrives *after* the line that closes the group — the bookkeeping
+  therefore sits on that line, and the extraction drops that line
+  instead of everything from it. And a continuation line is redrawn
+  with `PS2` instead of `PS1`, so the block sets `PS2="$PS1"` and the
+  redraw looks exactly like the one the command had without the group.
+
+  A command that contains a brace bash would read as a group delimiter
+  (`echo }`) is run unwrapped, exactly as before: wrapping it would
+  change what it means, and a command that means something else is worse
+  than a command that waits. The scan reports only braces it is sure
+  about — `echo '}'`, `echo a}b`, `find -exec {} \;` and `${HOME}` are
+  all grouped normally.
+
+- **The proxy and the agent used the same number.** The proxy asked the
+  agent for a 60-second command and gave up waiting after 60 seconds
+  too, so the answer that said "this timed out" arrived at the very
+  moment the proxy stopped listening. The caller got a transport error
+  with an empty reason, and an empty reason sends the operator to the
+  network instead of to the clock.
+
+  The proxy now waits `AGENT_EXEC_TIMEOUT + 15` seconds — always
+  strictly longer than the limit it asked for — and a timeout names
+  itself: `"sandbox-agent request timed out after 75s (exec limit
+  60s): ReadTimeout('')"`.
+
+- **A transport error had no cause in it either.** `str(exc)` of an
+  httpx error is often empty. The reason is now `repr(exc)`, so the
+  exception class is in the text: `ConnectError("[Errno 111]
+  Connection refused")`.
+
+- **The startup reaper formatted a list of session ids with `%d`.** That
+  raised a TypeError inside the logging machinery, which swallowed the
+  message and printed a formatting error instead of the line that says
+  which sessions were dropped. It now says how many and which.
+
+### Added
+
+- **The exec limit is a knob.** `AGENT_EXEC_TIMEOUT` (5..600 seconds,
+  default 60) on the proxy service, in all three compose files,
+  `.env.example` and `docs/CONFIGURATION.md`. A value outside the range
+  is a startup failure, not a clamp.
+
+- **`docs/HANDOFF-stdin-and-timeouts.md`** — the sidecar half of the
+  handoff: what changed, what did not, the knob, and the exact compose
+  lines the bot side quotes.
+
+### Changed
+
+- A command that reads stdin now reads EOF. `cat` with no argument
+  returns empty instead of hanging, and an interactive program exits
+  instead of taking over the pane. That is the right answer for a
+  one-shot tool, and it is a change: before, those commands ran until
+  the exec limit expired.
+
+Version 2.10.2. README test count 300 -> 336.
+
 ## [2.10.1] - 2026-10-25
 
 The documentation counts its settings.
