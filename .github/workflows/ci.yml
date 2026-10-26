@@ -366,6 +366,12 @@ jobs:
           grep -qE '^sandbox_proxy_requests_total [0-9]+' /tmp/metrics.txt \
             || { echo "::error::the request counter has no value"; exit 1; }
 
+      # The monitoring example must parse. It is a separate compose
+      # project, so nothing else in this job touches it — and a compose
+      # file that does not parse is an example that does not run.
+      - name: The monitoring example is a valid compose file
+        run: docker compose -f docker-compose.monitoring.yml config > /dev/null
+
       - name: Dump logs on failure
         if: failure()
         run: docker compose -f docker-compose.ci.yml logs || true

@@ -95,6 +95,14 @@ and what was wrong is left alone — with the reason.
   what the services actually expose — an example that asks for a
   metric nobody publishes is worse than no example.
 
+  The example was broken when it was written and only a live run
+  showed it: Prometheus reads the bearer token as the user it runs as
+  (65534 = nobody), and the instructions said "chmod 600" on a
+  root-owned file — so every scrape failed with "unable to read
+  authorization credentials" and the targets stayed down with no hint
+  of why. The instructions now hand the file to that user, and a
+  tripwire keeps them saying so.
+
 - **The single-operator warning moved to the top of the README.** The
   stack is single-operator by design (one bearer token, one tmux
   server, one workspace). That belongs above the fold, not in

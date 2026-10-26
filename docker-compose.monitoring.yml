@@ -10,7 +10,14 @@ name: sandbox-monitoring
 #
 #        mkdir -p monitoring/secrets
 #        grep '^OPENAPI_PROXY_TOKEN=' .env | cut -d= -f2 > monitoring/secrets/proxy_token
+#        chown 65534:65534 monitoring/secrets/proxy_token
 #        chmod 600 monitoring/secrets/proxy_token
+#
+#      The chown is not optional. Prometheus reads the token file as the
+#      user it runs as (65534 = nobody), and a root-owned 0600 file is
+#      unreadable for it: the scrape then fails with "unable to read
+#      authorization credentials", and the target stays down with no
+#      hint of why.
 #
 #   2. Point it at the network of the stack it watches. The name is the
 #      one the stack's own compose file creates — `<project>_<network>`;
@@ -34,6 +41,9 @@ services:
     image: prom/prometheus:v3.15.1
     container_name: sandbox-prometheus
     restart: unless-stopped
+    # Stated explicitly, because the token file has to belong to this
+    # user: Prometheus reads it as the user it runs as.
+    user: "65534:65534"
     networks:
       - monitor-net
     volumes:

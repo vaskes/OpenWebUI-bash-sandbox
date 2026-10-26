@@ -5,7 +5,11 @@
 # not be pasted in here either. Create the file once:
 #
 #   grep '^OPENAPI_PROXY_TOKEN=' .env | cut -d= -f2 > monitoring/secrets/proxy_token
+#   chown 65534:65534 monitoring/secrets/proxy_token
 #   chmod 600 monitoring/secrets/proxy_token
+#
+# The chown matters: Prometheus reads the file as the user it runs as
+# (65534 = nobody), and a root-owned 0600 file is not readable for it.
 #
 # The agent and the proxy share the token by default. If you set
 # OPENAPI_PROXY_UPSTREAM_TOKEN, give the agent its own file the same way
