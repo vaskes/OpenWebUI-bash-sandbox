@@ -270,22 +270,48 @@ _SECRET_NAME_PARTS = frozenset(
 #: What a redacted value is replaced with.
 REDACTED = "[REDACTED]"
 
+# The redaction patterns below are matched against a *command*, which is
+# attacker-controlled text. Two properties matter, and they pull in
+# opposite directions: the pattern has to find a secret wherever it sits,
+# and it must not take time proportional to the square of the command
+# length.
+#
+# The possessive quantifiers are what keep the match linear. A greedy
+# star gives characters back when the rest of the pattern does not
+# match, so a command made of 100 000 "A"s is retried at every position
+# of the run: the cost of the match is quadratic in the length of the
+# command. A possessive quantifier never gives anything back, so there
+# is nothing to retry. (CodeQL: py/polynomial-redos.)
+#
+# The possessive form also has to *mean* the same thing as the greedy
+# one — the two are compared over a corpus in
+# tests/test_review_v2110.py, because a redaction that quietly stops
+# matching is worse than a slow one.
+#
+# Possessive quantifiers arrived in Python 3.11, and the project runs
+# 3.11 and newer.
+
 _ASSIGNMENT_RE = re.compile(
-    r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)(?P<eq>\s*=\s*)"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*+)(?P<eq>\s*=\s*)"
     r"(?P<value>\"[^\"]*\"|'[^']*'|[^\s]+)"
 )
 _FLAG_RE = re.compile(
-    r"(?P<flag>--[A-Za-z0-9][A-Za-z0-9-]*)(?P<eq>=|\s+)"
+    r"(?P<flag>--[A-Za-z0-9][A-Za-z0-9-]*+)(?P<eq>=|\s+)"
     r"(?P<value>\"[^\"]*\"|'[^']*'|[^\s]+)"
 )
-_COLON_RE = re.compile(r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)(?P<eq>\s*:\s*)(?P<value>[^\s\"']+)")
+_COLON_RE = re.compile(r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*+)(?P<eq>\s*:\s*)(?P<value>[^\s\"']+)")
 _AUTH_RE = re.compile(
     r"(?P<head>\b[Aa]uthorization\s*:\s*)(?P<scheme>[Bb]earer|[Bb]asic)\s+"
     r"(?P<value>[^\s\"']+)"
 )
 _SSHPASS_RE = re.compile(r"(?P<head>\bsshpass\s+-p\s+)(?P<value>[^\s]+)")
 _PEM_RE = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+    # The body is bounded: a private key is a few kilobytes, and an
+    # unbounded ".*?" between two markers means that every marker in the
+    # text starts a scan to the end of the text — the cost of the match
+    # becomes the square of the length of the command.
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?P<body>.{0,8192}?)"
+    r"-----END [A-Z ]*PRIVATE KEY-----",
     re.DOTALL,
 )
 
