@@ -198,6 +198,23 @@ The binary door hands out the raw bytes of a workspace file, and
   pointing out of the workspace is resolved and refused before anything
   is removed.
 
+**How the containment check is written.** The path is resolved with
+`os.path.realpath` (so `..` and symlinks are gone) and compared with
+`startswith(<workspace root><separator>)`. The separator is part of the
+prefix on purpose: a check written as `startswith(<root>)` cannot tell
+`/workspace` from a sibling directory called `/workspace-evil`, and a
+sibling directory is a real place on the disk where a file can sit. With
+the separator, and after the resolution, the check is equivalent to the
+`commonpath` check it replaces — not weaker, not stronger — and it is
+written in a form a reviewer and a static analyser can both follow.
+
+The same check is used for the file door and for `cwd`; the difference
+between them is the order of the two questions. The file door asks
+"is this a regular file inside the workspace?" and answers 400 when it
+is not. The `cwd` check asks the same question about a directory, and
+the answer is the 400 that `POST /sessions` returns for a path outside
+the workspace.
+
 The file door is deliberately **not** rate limited: a per-minute request
 budget would break a chunked transfer for a reason that has nothing to
 do with the transfer. The bearer token and the workspace scope are the
