@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import uuid
 
-__version__ = "2.10.2"
+__version__ = "2.11.0"
 
 TMUX_PREFIX = "agent_"
 
@@ -278,9 +278,7 @@ _FLAG_RE = re.compile(
     r"(?P<flag>--[A-Za-z0-9][A-Za-z0-9-]*)(?P<eq>=|\s+)"
     r"(?P<value>\"[^\"]*\"|'[^']*'|[^\s]+)"
 )
-_COLON_RE = re.compile(
-    r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)(?P<eq>\s*:\s*)(?P<value>[^\s\"']+)"
-)
+_COLON_RE = re.compile(r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)(?P<eq>\s*:\s*)(?P<value>[^\s\"']+)")
 _AUTH_RE = re.compile(
     r"(?P<head>\b[Aa]uthorization\s*:\s*)(?P<scheme>[Bb]earer|[Bb]asic)\s+"
     r"(?P<value>[^\s\"']+)"
@@ -337,9 +335,7 @@ def redact_secrets(text: str) -> str:
     if not text:
         return text
     text = _PEM_RE.sub(REDACTED + " PRIVATE KEY", text)
-    text = _AUTH_RE.sub(
-        lambda m: f"{m.group('head')}{m.group('scheme')} {REDACTED}", text
-    )
+    text = _AUTH_RE.sub(lambda m: f"{m.group('head')}{m.group('scheme')} {REDACTED}", text)
     text = _SSHPASS_RE.sub(lambda m: f"{m.group('head')}{REDACTED}", text)
 
     def _flag_sub(match: re.Match[str]) -> str:
