@@ -10,6 +10,27 @@
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
 [![Tests: 336](https://img.shields.io/badge/tests-336_passing-brightgreen)](tests/)
 
+> ## ⚠️ NOT MULTI-TENANT — single operator only
+>
+> This stack assumes **one operator controls the Open WebUI instance and
+> the agents behind it**. One bearer token, one tmux server, one
+> workspace: anyone who can talk to the UI can read another chat's
+> session and run commands with the same privileges.
+>
+> **This is the original design, not a gap left open.** The alternative —
+> bolting per-user authentication onto a shared tmux server — would be
+> the wrong abstraction, because the isolation has to happen at the
+> container boundary, not at the token boundary.
+>
+> Do not expose this to the public internet, and do not hand one
+> instance to users who are supposed to be isolated from each other.
+> For a multi-tenant deployment, run a **separate `sandbox-agent` per
+> user**, each with its own `AGENT_TOKEN`, its own `/workspace` and its
+> own volumes.
+>
+> What this means in practice is spelled out under
+> [Limitations → Single trust boundary](#single-trust-boundary-by-design-not-by-accident).
+
 ---
 
 ## Why this exists
@@ -74,6 +95,9 @@ see `/workspace` and the contents of the workspace.
 ## Production deployment
 
 See [docs/SECURITY.md](docs/SECURITY.md) for the full hardening checklist.
+The instance you are about to expose is a **single-operator** one — see
+the warning at the top of this file; every user of it shares one trust
+boundary.
 The minimum required before exposing this on a network:
 
 1. Fill in `.env` from `.env.example`. **Never commit `.env`.**
