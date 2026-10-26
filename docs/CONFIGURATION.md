@@ -18,6 +18,7 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_NO_NEW_PRIVILEGES` | `true`                                  | The container's `no-new-privileges` flag. `false` is required by the privilege mode. |
 | `AGENT_CAP_DROP`       | `ALL`                                     | Capabilities dropped from the container. `SYS_ADMIN` in the privilege mode. |
 | `AGENT_READ_ONLY`      | `true`                                    | The container's root filesystem is read-only. `false` gives the privilege mode's root a filesystem it can write. |
+| `AGENT_PIDS_LIMIT`     | `256`                                     | How many processes the agent's shell may spawn. Raise it for builds that fan out. |
 
 If `AGENT_TOKEN` is empty, the agent refuses to serve any request
 except `/healthz` (returns 503). This is fail-closed by design.
@@ -213,6 +214,16 @@ curl -fsS http://127.0.0.1:8090/openapi.json
 
 The `key` here is the same bearer token the proxy validates against
 `OPENAPI_PROXY_TOKEN`. If they don't match, every call returns 401.
+
+The token is *interpolated into this JSON by the compose file*, so it
+has to survive that: no quote, no backslash, no whitespace, no
+non-ASCII characters. A token that breaks the JSON does not fail loudly
+— Open WebUI comes up without the sandbox tool and says nothing about
+why. `openssl rand -hex 32` produces a token that always works, and
+`make check-env` (which `make build`, `make up` and `make restart` all
+run first) refuses a token that would break the document. The proxy
+also logs the problem at start-up, so a stack started with
+`docker compose up` directly is not silent about it.
 
 ## Volume mounts (named)
 
