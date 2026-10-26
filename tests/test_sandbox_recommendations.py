@@ -125,6 +125,7 @@ class TestSshIdentityFlagIsRefused(unittest.TestCase):
         self.assertIsNone(host)
         self.assertIn("identity", err.lower())
 
+
 # ---------------------------------------------------------------------------
 # #M3 — WebSocket idle timeout
 # ---------------------------------------------------------------------------
