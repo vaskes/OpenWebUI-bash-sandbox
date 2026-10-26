@@ -163,10 +163,16 @@ jobs:
           # The stdout must not grow a line because of the group the
           # command runs in. The caller's stdout is the command's output,
           # and it stays that way.
-          echo "$out" | grep -q 'dev/null' \
-            && { echo "::error::the protocol leaked into the stdout"; exit 1; }
-          echo "$out" | grep -qE '\{|\}' \
-            && { echo "::error::the group leaked into the stdout"; exit 1; }
+          #
+          # NOTE: `if` and not `grep ... && { ...; }` — under `set -e` the
+          # AND-list exits non-zero when the grep finds nothing, and the
+          # step dies on a *passing* check.
+          if echo "$out" | grep -q 'dev/null'; then
+            echo "::error::the protocol leaked into the stdout"; exit 1
+          fi
+          if echo "$out" | grep -qE '\{|\}'; then
+            echo "::error::the group leaked into the stdout"; exit 1
+          fi
 
       - name: Agent healthz must not leak the workspace path
         run: |
