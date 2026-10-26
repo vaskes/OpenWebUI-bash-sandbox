@@ -68,9 +68,11 @@ from pydantic import BaseModel, Field
 from proxy_core import (
     DEFAULT_SESSION_ID,
     EXEC_TIMEOUT_SECONDS,
+    PROXY_WAIT_GRACE_SECONDS,
     SSH_PREFIX,
     WEB_SEARCH_PREFIX,
     WEBSOCKET_POLL_INTERVAL,
+    parse_exec_timeout,
 )
 from proxy_core import (
     __version__ as _PROXY_CORE_VERSION,
@@ -100,6 +102,23 @@ RATE_LIMIT_RPM: int = int(os.environ.get("OPENAPI_PROXY_RATE_LIMIT_RPM", "120"))
 # this we evict the least-recently-used key — prevents unbounded growth
 # under token-spraying attacks.
 RATE_LIMIT_MAX_KEYS: int = int(os.environ.get("OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS", "10000"))
+#: The exec limit the proxy asks the sandbox-agent for, in seconds. It is
+#: the longest a single command may run before the agent gives up on it
+#: and answers ``timed_out: true``.
+#:
+#: Configurable via ``AGENT_EXEC_TIMEOUT`` (5..600, default 60). A value
+#: outside the range is a start-up failure, not a clamp: a limit nobody
+#: can trust is worse than a container that refuses to boot.
+AGENT_EXEC_TIMEOUT: int = parse_exec_timeout(
+    os.environ.get("AGENT_EXEC_TIMEOUT", str(int(EXEC_TIMEOUT_SECONDS)))
+)
+#: How long the proxy waits for the agent. Strictly larger than the exec
+#: limit it asked for — see ``PROXY_WAIT_GRACE_SECONDS``. With the same
+#: number on both sides, a command that runs out of time loses its
+#: answer: the agent answers at the very moment the proxy stops
+#: listening, and the caller sees a transport error instead of the
+#: timeout.
+PROXY_REQUEST_TIMEOUT_SECONDS: float = AGENT_EXEC_TIMEOUT + PROXY_WAIT_GRACE_SECONDS
 # Idle timeout for WebSocket terminal connections (sandbox-recommendations #M3).
 # Connections with no inbound traffic for this long are closed by the server
 # so a forgotten browser tab does not pin a file descriptor and a tmux
@@ -409,15 +428,17 @@ async def lifespan(app: FastAPI):
     and a single connection pool, which matters for high-frequency calls
     (e.g. WebSocket polling)."""
     app.state.client = httpx.AsyncClient(
-        timeout=EXEC_TIMEOUT_SECONDS,
+        timeout=PROXY_REQUEST_TIMEOUT_SECONDS,
         limits=httpx.Limits(max_connections=50, max_keepalive_connections=10),
     )
     logger.info(
-        "proxy.startup token=%s cors=%d ssh_allowlist=%d rate_limit=%d",
+        "proxy.startup token=%s cors=%d ssh_allowlist=%d rate_limit=%d exec_timeout=%d wait=%d",
         "DISABLED" if not PROXY_TOKEN else "ENABLED",
         len(CORS_ORIGINS),
         len(SSH_ALLOWLIST),
         RATE_LIMIT_RPM,
+        AGENT_EXEC_TIMEOUT,
+        int(PROXY_REQUEST_TIMEOUT_SECONDS),
     )
     try:
         yield
@@ -570,13 +591,15 @@ async def _do_ssh(client: httpx.AsyncClient, rest: str, session_id: str) -> dict
     try:
         r = await client.post(
             f"{SANDBOX_URL}/sessions/{session_id}/exec",
-            json={"command": cmd, "timeout": int(EXEC_TIMEOUT_SECONDS)},
+            json={"command": cmd, "timeout": AGENT_EXEC_TIMEOUT},
             headers=_upstream_headers(),
         )
         r.raise_for_status()
         return r.json()
+    except httpx.TimeoutException as exc:
+        return {"error": _upstream_timeout_reason(exc)}
     except httpx.HTTPError as exc:
-        return {"error": f"sandbox-agent request failed: {exc}"}
+        return {"error": f"sandbox-agent request failed: {exc!r}"}
 
 
 async def _do_exec(client: httpx.AsyncClient, command: str, session_id: str) -> dict[str, Any]:
@@ -584,13 +607,31 @@ async def _do_exec(client: httpx.AsyncClient, command: str, session_id: str) -> 
     try:
         r = await client.post(
             f"{SANDBOX_URL}/sessions/{session_id}/exec",
-            json={"command": command, "timeout": int(EXEC_TIMEOUT_SECONDS)},
+            json={"command": command, "timeout": AGENT_EXEC_TIMEOUT},
             headers=_upstream_headers(),
         )
         r.raise_for_status()
         return r.json()
+    except httpx.TimeoutException as exc:
+        return {"error": _upstream_timeout_reason(exc)}
     except httpx.HTTPError as exc:
-        return {"error": f"sandbox-agent request failed: {exc}"}
+        return {"error": f"sandbox-agent request failed: {exc!r}"}
+
+
+def _upstream_timeout_reason(exc: httpx.TimeoutException) -> str:
+    """Describe a timeout towards the agent in words.
+
+    A timeout must say so. The bare ``str()`` of an httpx timeout is
+    empty, and ``sandbox-agent request failed: `` with nothing after it
+    sends the operator to the network instead of to the clock. The
+    numbers are in the message for the same reason: the caller has to be
+    able to tell "the command ran out of time" from "the proxy ran out
+    of patience".
+    """
+    return (
+        f"sandbox-agent request timed out after {int(PROXY_REQUEST_TIMEOUT_SECONDS)}s "
+        f"(exec limit {AGENT_EXEC_TIMEOUT}s): {exc!r}"
+    )
 
 
 def _upstream_headers() -> dict[str, str]:
