@@ -328,8 +328,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     behaviour and it broke persistence across restarts.
     """
     reaped = await _reap_dead_sessions()
-    if reaped:
-        logger.info("startup reaper dropped %d stale session(s): %s", reaped, ",".join(reaped))
+    _log_reaped_sessions(reaped)
     _warn_about_the_privilege_mode()
     try:
         yield
@@ -341,6 +340,23 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
                 await _save_sessions()
             except Exception as exc:  # noqa: BLE001
                 logger.error("final sessions flush failed: %s", exc)
+
+
+def _log_reaped_sessions(reaped: list[str]) -> None:
+    """Log the sessions the startup reaper dropped.
+
+    The count and the ids are two different things: the count is a
+    number, the ids are a list. Formatting the list with ``%d`` raised a
+    TypeError inside the logging machinery, which swallowed the message
+    and printed a formatting error instead of the line that says which
+    sessions were dropped.
+    """
+    if reaped:
+        logger.info(
+            "startup reaper dropped %d stale session(s): %s",
+            len(reaped),
+            ",".join(reaped),
+        )
 
 
 async def _reap_dead_sessions() -> list[str]:
