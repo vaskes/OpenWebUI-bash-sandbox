@@ -181,3 +181,43 @@ class TestTheLoggedPreviewIsRedacted(_AgentTestBase):
         messages = "\n".join(record.getMessage() for record in records)
         self.assertIn("API_KEY", messages)
         self.assertIn("cmd_len=", messages)
+
+
+# ---------------------------------------------------------------------------
+# M2 — the completion markers must not be guessable
+# ---------------------------------------------------------------------------
+class TestMarkerLength(_AgentTestBase):
+    """The exec protocol names its bookkeeping lines in the terminal. A
+    command that prints a line of its own must not be able to
+    impersonate one. 32 bits was the width; 64 is the claim."""
+
+    def test_the_marker_carries_at_least_64_bits(self) -> None:
+        from agent_core import MARKER_HEX_LEN  # noqa: PLC0415
+
+        self.assertGreaterEqual(MARKER_HEX_LEN, 16)
+
+    def test_a_fresh_token_has_that_length(self) -> None:
+        from agent_core import MARKER_HEX_LEN, new_marker_token  # noqa: PLC0415
+
+        token = new_marker_token()
+        self.assertEqual(len(token), MARKER_HEX_LEN)
+        self.assertTrue(re.fullmatch(r"[0-9a-f]+", token))
+
+    def test_two_tokens_differ(self) -> None:
+        from agent_core import new_marker_token  # noqa: PLC0415
+
+        self.assertNotEqual(new_marker_token(), new_marker_token())
+
+    def test_the_command_carries_three_wide_markers(self) -> None:
+        """The end-to-end claim: what the endpoint actually types into
+        the terminal names all three markers with 16 hex characters."""
+        response = self.exec_command("echo hello")
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = "\n".join(self.sent)
+        for prefix in ("__AGENT_DONE_", "__AGENT_BEGIN_", "__AGENT_EC_"):
+            self.assertRegex(payload, rf"{re.escape(prefix)}[0-9a-f]{{16}}__")
+        # And nothing narrower: an 8-hex marker would match the pattern
+        # above only if the width grew, so pin the width explicitly.
+        for prefix in ("__AGENT_DONE_", "__AGENT_BEGIN_", "__AGENT_EC_"):
+            for token in re.findall(rf"{re.escape(prefix)}([0-9a-f]+)__", payload):
+                self.assertEqual(len(token), 16, f"{prefix}{token}")

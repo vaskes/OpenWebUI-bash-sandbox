@@ -100,7 +100,7 @@ class TestMarkerRegexLastWins(_AgentBase):
             if cmd == "send-keys":
                 # Extract the marker from the wrapped full_cmd.
                 payload = " ".join(str(a) for a in args)
-                m = re.search(r"__AGENT_DONE_[0-9a-f]{8}__", payload)
+                m = re.search(r"__AGENT_DONE_[0-9a-f]+__", payload)
                 if m:
                     state["real_marker"] = m.group(0)
                 return (0, "", "")
