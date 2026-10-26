@@ -347,4 +347,60 @@ class TestTheProxySaysSoAtStartup(unittest.TestCase):
 
             asyncio.run(run())
         finally:
-            openapi_pro
+            openapi_proxy.PROXY_TOKEN = old_token
+
+        messages = "\n".join(record.getMessage() for record in records)
+        self.assertIn("token_invalid", messages)
+
+
+# ---------------------------------------------------------------------------
+# H3 — the process limit is a knob, not a constant
+# ---------------------------------------------------------------------------
+class TestPidsLimitIsAKnob(unittest.TestCase):
+    """256 processes is enough for a shell and not enough for a build.
+    The knob is the answer — but only if every stack interpolates it and
+    the default stays the safe one.
+
+    The check is on the *interpolation*, not on the name: a compose file
+    that mentions ``AGENT_PIDS_LIMIT`` in a comment and hardcodes 256
+    would satisfy a name search and change nothing.
+    """
+
+    COMPOSE_FILES = (
+        "docker-compose.yml",
+        "docker-compose.production.yml",
+        "docker-compose.ci.yml",
+    )
+    KNOB = 'pids_limit: "${AGENT_PIDS_LIMIT:-256}"'
+
+    def test_every_stack_carries_the_knob(self) -> None:
+        for name in self.COMPOSE_FILES:
+            with self.subTest(compose=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                self.assertIn(self.KNOB, text)
+
+    def test_only_the_agent_service_carries_the_knob(self) -> None:
+        """The proxy is a thin process; it keeps its own strict limit."""
+        for name in self.COMPOSE_FILES:
+            with self.subTest(compose=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                if "  sandbox-agent:" not in text:
+                    continue
+                agent = text.split("  sandbox-agent:", 1)[1].split("  openapi-proxy:", 1)[0]
+                self.assertIn(self.KNOB, agent)
+
+    def test_the_default_is_still_the_safe_one(self) -> None:
+        """A knob whose default is not the old value changes every
+        deployment that upgrades without touching .env."""
+        for name in self.COMPOSE_FILES:
+            with self.subTest(compose=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                agent = text.split("  sandbox-agent:", 1)[1].split("  openapi-proxy:", 1)[0]
+                self.assertNotIn("pids_limit: 256", agent)
+                self.assertIn(":-256}", agent)
+
+    def test_the_knob_is_documented(self) -> None:
+        for name in (".env.example", "docs/CONFIGURATION.md"):
+            with self.subTest(document=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                self.assertIn("AGENT_PIDS_LIMIT", text)

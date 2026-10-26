@@ -38,7 +38,11 @@ services:
     # it stops a fork-bomb from killing the host kernel.
     mem_limit: 2g
     cpus: "2.0"
-    pids_limit: 256
+    # How many processes the agent's shell may spawn. 256 is the safe
+    # default — a fork-bomb dies here, not on the host. Raise it when a
+    # build fans out (make -j, npm, pip workers) and the legitimate
+    # processes start failing with "Resource temporarily unavailable".
+    pids_limit: "${AGENT_PIDS_LIMIT:-256}"
     # Drop all capabilities, then re-add only what's needed. tmux, ssh,
     # and basic networking do not need any of the dropped caps.
     #
