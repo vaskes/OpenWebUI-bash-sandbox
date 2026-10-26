@@ -317,6 +317,11 @@ jobs:
       # is a log that half of the queries silently miss, and the part
       # that is missed is the part that says who called what.
       - name: The logs are JSON — the access log included
+        env:
+          # compose interpolates the environment of the file it reads,
+          # and it refuses to do anything without a token — even for
+          # `logs`, which needs no token to work.
+          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
         run: |
           set -euo pipefail
           docker compose -f docker-compose.ci.yml logs --no-log-prefix > /tmp/logs.txt || true
@@ -374,6 +379,11 @@ jobs:
 
       - name: Dump logs on failure
         if: failure()
+        env:
+          # Without the token, compose refuses to interpolate the file
+          # and prints nothing at all — the step that exists to show
+          # the logs was showing none.
+          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
         run: docker compose -f docker-compose.ci.yml logs || true
 
       - name: Tear down
@@ -489,6 +499,11 @@ jobs:
 
       - name: Dump logs on failure
         if: failure()
+        env:
+          # Without the token, compose refuses to interpolate the file
+          # and prints nothing at all — the step that exists to show
+          # the logs was showing none.
+          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
         run: docker compose -f docker-compose.ci.yml logs || true
 
       - name: Tear down
