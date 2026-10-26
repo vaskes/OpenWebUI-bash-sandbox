@@ -74,3 +74,17 @@ check-env: ## Fail if .env still has CHANGE_ME placeholders
 		grep -E '^[A-Z_]+=(CHANGE_ME|CHANGE_ME_)' .env >&2; \
 		exit 1; \
 	fi
+	@if grep -E '^OPENAPI_PROXY_TOKEN=[[:space:]]*$$' .env >/dev/null 2>&1; then \
+		echo "ERROR: OPENAPI_PROXY_TOKEN is empty." >&2; \
+		echo "       Generate one with: openssl rand -hex 32" >&2; \
+		exit 1; \
+	fi
+	@if LC_ALL=C grep -E '^OPENAPI_PROXY_TOKEN=.*[^[:print:]]' .env >/dev/null 2>&1 \
+		|| LC_ALL=C grep -E '^OPENAPI_PROXY_TOKEN=.*(["\\]|[[:space:]])' .env >/dev/null 2>&1; then \
+		echo "ERROR: OPENAPI_PROXY_TOKEN contains a character that breaks its use." >&2; \
+		echo "       The token is embedded into the Open WebUI tool connection as JSON" >&2; \
+		echo "       and travels in an HTTP header: a quote, a backslash, whitespace or" >&2; \
+		echo "       a non-ASCII character breaks one of them, and the failure is quiet." >&2; \
+		echo "       Regenerate the token with: openssl rand -hex 32" >&2; \
+		exit 1; \
+	fi

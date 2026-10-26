@@ -50,3 +50,40 @@ def parse_exec_timeout(raw: str) -> int:
             f"{EXEC_TIMEOUT_MIN_SECONDS}..{EXEC_TIMEOUT_MAX_SECONDS}s"
         )
     return value
+
+
+def token_problem(token: str) -> str | None:
+    """Return why ``token`` cannot be used, or ``None`` when it is fine.
+
+    The token is not only a bearer token. The compose file interpolates
+    it into a JSON document — ``"key":"${OPENAPI_PROXY_TOKEN}"`` inside
+    ``TOOL_SERVER_CONNECTIONS`` — and that document is parsed by Open
+    WebUI. A quote or a backslash in the token turns it into something
+    Open WebUI cannot parse, and the failure is quiet: the UI comes up
+    without the sandbox tool and nobody is told why.
+
+    The same token also travels in an ``Authorization`` header, where a
+    newline is a header injection rather than a broken JSON.
+
+    So the token has to be non-empty and made of printable ASCII
+    without whitespace. ``openssl rand -hex 32`` satisfies all of that,
+    which is why the template asks for it.
+    """
+    if not token:
+        return "the token is empty"
+    bad = sorted(
+        {
+            char
+            for char in token
+            if char.isspace() or not (0x20 <= ord(char) < 0x7F) or char in '"\\'
+        }
+    )
+    if bad:
+        shown = ", ".join(repr(char) for char in bad)
+        return (
+            f"the token contains {shown} — it is embedded into the Open WebUI "
+            f"tool connection as JSON and travels in an HTTP header, and those "
+            f"characters break one or the other. Regenerate it with: "
+            f"openssl rand -hex 32"
+        )
+    return None
