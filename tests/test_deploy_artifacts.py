@@ -199,14 +199,21 @@ class TestProxyDockerfile(unittest.TestCase):
         Probing ``/healthz`` here marks the container permanently
         unhealthy, and ``depends_on: service_healthy`` then stops every
         dependent service from starting.
+
+        The probe is Python since v2.11.0 (the image installs no curl),
+        so the check looks for the URL rather than for a particular
+        probe binary.
         """
         body = _strip_comments(PROXY_DOCKERFILE.read_text(encoding="utf-8"))
-        match = re.search(r"(?ms)^HEALTHCHECK.*?^\s+CMD\s+curl\s+-fsS\s+(\S+)", body)
-        self.assertIsNotNone(match, "Dockerfile.openapi-proxy has no HEALTHCHECK curl probe")
-        probe_url = match.group(1)
+        self.assertRegex(
+            body,
+            r"(?ms)^HEALTHCHECK.*?openapi\.json",
+            "Dockerfile.openapi-proxy has no HEALTHCHECK probe of /openapi.json",
+        )
+        instruction = body.split("HEALTHCHECK", 1)[1]
         self.assertNotIn(
             "/healthz",
-            probe_url,
+            instruction,
             "The Dockerfile HEALTHCHECK probes /healthz, which requires a "
             "bearer token. Use the unauthenticated /openapi.json, matching "
             "docker-compose.yml.",

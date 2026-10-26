@@ -23,9 +23,12 @@ FROM python:3.14-slim
 # passwd/group creation entirely. (This is a name collision, unlike the
 # sandbox image which has a genuine id collision — check each base
 # image separately.)
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /home/proxy && chown 1000:1000 /home/proxy
+#
+# No apt-get here: the image installs nothing from the distribution.
+# The healthcheck used to need curl and pulled it in for that one
+# purpose; it now asks Python (which is already in the image) instead,
+# so the proxy image carries no package manager and no extra binaries.
+RUN mkdir -p /home/proxy && chown 1000:1000 /home/proxy
 
 # Copy the pip install from the builder.
 #
@@ -51,8 +54,13 @@ EXPOSE 8090
 # since v2.4.3), so probing it here marks the container permanently
 # unhealthy. /openapi.json is unauthenticated and is the same endpoint
 # docker-compose.yml already uses for this service.
+#
+# The probe is Python, not curl: curl was installed into this image for
+# the healthcheck alone, and a package manager plus an HTTP client are
+# a bigger surface than the check is worth. A non-2xx answer raises and
+# exits non-zero, which is what the healthcheck needs.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8090/openapi.json || exit 1
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/openapi.json', timeout=2).read()"]
 
 # Use exec form so SIGTERM is forwarded to uvicorn (graceful shutdown).
 CMD ["python", "-m", "uvicorn", "openapi_proxy:app", \
