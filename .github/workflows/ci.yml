@@ -128,6 +128,46 @@ jobs:
           echo "$out" | grep -qE '(^|[^0-9])1000([^0-9]|$)' \
             || { echo "::error::agent is not running as uid 1000"; exit 1; }
 
+      # A command that reads stdin must not eat the protocol.
+      #
+      # The agent types the command and the bookkeeping lines that follow
+      # it into the same terminal, so the rest of the block is still in the
+      # input buffer when the command starts. A command that reads stdin —
+      # `read x`, `apt-get` — used to read those lines instead of waiting,
+      # the completion marker never appeared, and the caller waited out the
+      # whole limit for an answer that never came.
+      #
+      # The answer has to arrive, and it has to arrive *quickly*: a command
+      # that waits for input is a timeout, not a result.
+      - name: A command that reads stdin must answer, and answer at once
+        env:
+          TOKEN: ci-smoke-token-not-a-secret-0000
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          out=$(curl -fsS --max-time 120 \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"command":"read x","session_id":"ci-smoke","timeout":30}' \
+            http://127.0.0.1:8099/bash)
+          elapsed=$(( $(date +%s) - start ))
+          echo "proxy response after ${elapsed}s: $out"
+          [ "$elapsed" -lt 20 ] \
+            || { echo "::error::the command waited ${elapsed}s for input"; exit 1; }
+          echo "$out" | grep -q '"timed_out": *false' \
+            || { echo "::error::the command timed out instead of reading EOF"; exit 1; }
+          # `read` gets EOF and fails the way a failed read does.
+          echo "$out" | grep -q '"exit_code": *1' \
+            || { echo "::error::read did not report its exit code"; exit 1; }
+
+          # The stdout must not grow a line because of the group the
+          # command runs in. The caller's stdout is the command's output,
+          # and it stays that way.
+          echo "$out" | grep -q 'dev/null' \
+            && { echo "::error::the protocol leaked into the stdout"; exit 1; }
+          echo "$out" | grep -qE '\{|\}' \
+            && { echo "::error::the group leaked into the stdout"; exit 1; }
+
       - name: Agent healthz must not leak the workspace path
         run: |
           # docker exec on the container directly, NOT `docker compose exec`:
@@ -321,6 +361,9 @@ jobs:
       - name: AGENT_READ_ONLY=false gives the root a filesystem it can write
         env:
           OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
+          # The agent and the proxy share one token, so the agent's own
+          # API can be reached with it from inside the container.
+          TOKEN: ci-smoke-token-not-a-secret-0000
           AGENT_ALLOW_SUDO: "1"
           AGENT_NO_NEW_PRIVILEGES: "false"
           AGENT_CAP_DROP: SYS_ADMIN
@@ -349,6 +392,27 @@ jobs:
           docker exec ci-sandbox-agent sh -c 'echo "2+3" | sudo -n bc' | grep -q '^5$' \
             || { echo "::error::the installed package does not run"; exit 1; }
           echo "the privilege mode installs packages"
+
+          # And the install has to come back with its answer. `apt-get`
+          # reads stdin, and before v2.10.2 the command ate the protocol
+          # lines that followed it: the package was installed and the
+          # answer was lost, so the caller only saw a timeout.
+          #
+          # The install is a no-op here (the step above installed it
+          # already) — that is the point: the *answer* is what is being
+          # checked, and it has to arrive with the output intact.
+          out=$(docker exec ci-sandbox-agent curl -fsS --max-time 180 \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            -d '{"command":"sudo -n apt-get install -y -qq --no-install-recommends bc","timeout":120}' \
+            http://127.0.0.1:8082/sessions/ci-apt/exec)
+          echo "$out" | tail -c 400
+          echo "$out" | grep -q '"timed_out": *false' \
+            || { echo "::error::the install timed out instead of answering"; exit 1; }
+          echo "$out" | grep -q '"exit_code": *0' \
+            || { echo "::error::the install failed: $out"; exit 1; }
+          echo "$out" | grep -qi 'bc' \
+            || { echo "::error::the install came back without its output"; exit 1; }
+          echo "the install answers with its output"
 
       - name: Dump logs on failure
         if: failure()
