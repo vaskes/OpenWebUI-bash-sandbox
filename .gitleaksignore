@@ -1,0 +1,8 @@
+# Fake secrets that were committed as literals in the H1 commit and are
+# built at runtime now. The tree is clean; these entries cover the
+# history, so a full-history scan does not cry wolf over a test
+# fixture that was never a secret.
+d99666bcd65ae81b933347d58d61d65484cc9a67:tests/test_review_v2110.py:curl-auth-header:63
+d99666bcd65ae81b933347d58d61d65484cc9a67:tests/test_review_v2110.py:generic-api-key:44
+d99666bcd65ae81b933347d58d61d65484cc9a67:tests/test_review_v2110.py:generic-api-key:172
+d99666bcd65ae81b933347d58d61d65484cc9a67:tests/test_review_v2110.py:generic-api-key:180
