@@ -140,6 +140,7 @@ Runs every 10 s; container is marked unhealthy after 3 consecutive failures.
 | `OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS`     | `10000`                          | LRU cap on the in-memory rate-limit dict. Past this, oldest key evicted. |
 | `OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT` | `300`                            | Close `/ws` connections idle this long (sec). `0` = disabled. New in v2.4.0. |
 | `OPENAPI_PROXY_LOG_LEVEL`              | `INFO`                           | uvicorn log level.                                                      |
+| `AGENT_EXEC_TIMEOUT`                   | `60`                             | Longest a single command may run, in seconds (5..600). The proxy asks the agent for exactly this limit and then waits longer. New in v2.10.2. |
 | `OPENAPI_PROXY_PORT`                   | `8090`                           | uvicorn listen port.                                                    |
 | `SANDBOX_URL`                          | `http://127.0.0.1:8082`          | Upstream sandbox-agent URL.                                             |
 | `SEARXNG_URL`                          | `http://127.0.0.1:8888`          | SearXNG instance used by `web_search`.                                  |
@@ -148,6 +149,24 @@ Runs every 10 s; container is marked unhealthy after 3 consecutive failures.
 returns `{"error": "sandbox-agent request failed: ..."}`. After changing it
 in `docker-compose.yml` you must run `docker compose up -d` (not
 `docker compose restart` — that doesn't re-read env).
+
+### `AGENT_EXEC_TIMEOUT`
+
+How long a single command may run before the agent gives up on it and
+answers `timed_out: true` with the output it managed to produce. The
+default is 60 seconds; the accepted range is 5..600. A value outside the
+range is a **startup failure**, not a clamp — a limit nobody can trust is
+worse than a container that refuses to boot.
+
+The proxy waits `AGENT_EXEC_TIMEOUT + 15` seconds for the agent, and that
+gap is load-bearing. The agent answers *after* the limit expires — that is
+what "timed out" means — so with the same number on both sides the answer
+arrives at the very moment the proxy stops listening, and the caller gets
+a transport error instead of the timeout it asked for.
+
+The limit is a property of the command, not of the transport: a longer
+command is not a faster answer, it is the same answer with more of it
+already produced when the limit hits.
 
 ### Healthcheck
 
