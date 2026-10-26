@@ -68,6 +68,14 @@ and what was wrong is left alone — with the reason.
   produced lines no parser could read. A shared formatter escapes the
   message properly now.
 
+  The access log was the other half: uvicorn installs an access log of
+  its own, in plain text, when the server starts, and a container
+  whose stdout is half JSON is a log that half of the queries silently
+  miss. The access log is taken over as well — the client address, the
+  method, the path, the HTTP version and the status code stay fields
+  instead of being buried in a sentence, so a log query can count a
+  status code instead of matching it out of a line of text.
+
 - **The proxy image installed curl for one healthcheck.** The probe
   asks Python now, and the image installs nothing from the
   distribution at all. The sandbox image keeps curl: the model's shell

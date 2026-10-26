@@ -517,6 +517,83 @@ class TestTheLogsAreJson(unittest.TestCase):
                 self.assertNotIn('"msg":"%(message)s"', text)
 
 
+class TestTheAccessLogIsJsonToo(unittest.TestCase):
+    """uvicorn installs its own access log, in plain text, when the
+    server starts. The application's records being JSON is only half of
+    the job: the access log is the line an operator reads first, and a
+    parser that chokes on it drops the rest of the stream."""
+
+    def _access_record(self) -> logging.LogRecord:
+        return logging.LogRecord(
+            "uvicorn.access",
+            logging.INFO,
+            "uvicorn/middleware/log.py",
+            1,
+            '"%s %s HTTP/%s" %d',
+            ("127.0.0.1", "GET", "/healthz", "1.1", 200),
+            None,
+        )
+
+    def test_the_access_record_keeps_its_fields(self) -> None:
+        import json
+
+        from json_logging import UvicornAccessFormatter  # noqa: PLC0415
+
+        line = UvicornAccessFormatter().format(self._access_record())
+        payload = json.loads(line)
+        self.assertEqual(payload["method"], "GET")
+        self.assertEqual(payload["path"], "/healthz")
+        self.assertEqual(payload["status"], 200)
+        self.assertEqual(payload["client"], "127.0.0.1")
+
+    def test_both_services_take_the_access_log_over(self) -> None:
+        import agent_api  # noqa: F401, PLC0415
+        import openapi_proxy  # noqa: F401, PLC0415
+        from json_logging import UvicornAccessFormatter  # noqa: PLC0415
+
+        access = logging.getLogger("uvicorn.access")
+        ours = [
+            handler
+            for handler in access.handlers
+            if isinstance(getattr(handler, "formatter", None), UvicornAccessFormatter)
+        ]
+        self.assertTrue(
+            ours,
+            "the access log still uses uvicorn's own plain-text formatter",
+        )
+
+    def test_no_line_is_printed_twice(self) -> None:
+        """uvicorn's "uvicorn.error" propagates to "uvicorn". A handler on
+        both would print every error line twice — which is how a log
+        starts to look like it counts things twice."""
+        import agent_api  # noqa: F401, PLC0415
+        import openapi_proxy  # noqa: F401, PLC0415
+        from json_logging import JsonFormatter, UvicornAccessFormatter  # noqa: PLC0415
+
+        for name, formatter in (
+            ("uvicorn", JsonFormatter),
+            ("uvicorn.error", JsonFormatter),
+            ("uvicorn.access", UvicornAccessFormatter),
+        ):
+            with self.subTest(logger=name):
+                logger = logging.getLogger(name)
+                self.assertFalse(
+                    logger.propagate,
+                    f"{name} propagates to a parent that also has a handler",
+                )
+                ours = [
+                    handler
+                    for handler in logger.handlers
+                    if isinstance(getattr(handler, "formatter", None), formatter)
+                ]
+                self.assertEqual(
+                    len(ours),
+                    1,
+                    f"{name} must carry exactly one JSON handler — "
+                    "more than one prints every line twice",
+                )
+
+
 # ---------------------------------------------------------------------------
 # ops — the metrics endpoint and the monitoring example
 # ---------------------------------------------------------------------------
