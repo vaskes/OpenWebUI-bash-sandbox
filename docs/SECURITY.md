@@ -23,7 +23,7 @@ release-prep patch — see the CHANGELOG.
 | `read_only` root filesystem | ❌ `false` | ✅ `true` + tmpfs for `/tmp`, `/run` | |
 | Dropped capabilities | ❌ default | ✅ `cap_drop: [ALL]` | no caps re-added |
 | `no-new-privileges` | ❌ off | ✅ on | blocks setuid binaries |
-| Resource limits | ❌ none | ✅ `mem_limit`, `cpus`, `pids_limit` | kills fork-bombs at 256 PIDs |
+| Resource limits | ❌ none | ✅ `mem_limit`, `cpus`, `pids_limit` | kills fork-bombs at 256 PIDs (`AGENT_PIDS_LIMIT` raises it) |
 | SSH host allowlist | ❌ `accept-new` for any host | ✅ `OPENAPI_PROXY_SSH_ALLOWLIST` (CIDR/hostname) | empty = disabled |
 | SSH `-o` option whitelist | ❌ | ✅ `SSH_SAFE_OPTIONS` (10 safe keys) | LocalCommand / LocalForward / DynamicForward all rejected |
 | SSH `-i` identity file | ❌ | ✅ refused outright (v2.11.0) | a path check cannot be made atomic with the call that opens the file |
