@@ -81,6 +81,7 @@ from agent_config import (
 from agent_core import (
     SESSION_ID_MAX_LEN,
     __version__,
+    build_exec_block,
     parse_capability_status,
     rootfs_is_read_only,
     safe_id,
@@ -660,12 +661,12 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     # from the output — otherwise the caller receives the internals of
     # the protocol along with the command's own output.
     ec_var = f"__AGENT_EC_{uuid.uuid4().hex[:8]}__"
-    full_cmd = (
-        f"printf '\\n{begin_marker}\\n'\n"
-        f"{body.command}\n"
-        f"{ec_var}=$?\n"
-        f"printf '\\n{marker}=%d\\n' \"${ec_var}\""
-    )
+    # The command runs inside a brace group whose stdin is /dev/null, so
+    # it cannot read the protocol lines that follow it in the terminal's
+    # input buffer. Without that, a command that reads stdin — `read x`,
+    # `apt-get` — swallows the completion marker and the caller gets a
+    # timeout instead of an answer.
+    full_cmd, grouped = build_exec_block(body.command, begin_marker, ec_var, marker)
     # ``send-keys -l`` writes the command as a literal string. Without
     # ``-l`` tmux interprets special tokens (``C-c``, ``Enter``, ``Tab``,
     # arrow keys, etc.) which can silently corrupt or terminate the
@@ -709,7 +710,9 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     else:
         # Timed out — return whatever we have so the model can decide.
         capture = await _capture_command_output(name, history_before)
-        output, _, head_survived = _extract_command_output(capture, begin_marker, marker, ec_var)
+        output, _, head_survived = _extract_command_output(
+            capture, begin_marker, marker, ec_var, grouped
+        )
         if not head_survived and output.strip():
             output = _HEAD_LOST_NOTICE + output
         output = _truncate_output(output)
@@ -734,7 +737,7 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     # only way to tell whether it survived the scrollback.
     capture = await _capture_command_output(name, history_before)
     output, exit_code, head_survived = _extract_command_output(
-        capture, begin_marker, marker, ec_var
+        capture, begin_marker, marker, ec_var, grouped
     )
     if not head_survived and output.strip():
         # The pane overflowed and the beginning of the output is gone.
@@ -822,7 +825,7 @@ async def _capture_command_output(name: str, history_before: int) -> str:
 
 
 def _extract_command_output(
-    capture: str, begin_marker: str, done_marker: str, ec_var: str
+    capture: str, begin_marker: str, done_marker: str, ec_var: str, grouped: bool = False
 ) -> tuple[str, int | None, bool]:
     """Cut this command's output out of a pane capture.
 
@@ -845,6 +848,15 @@ def _extract_command_output(
     marker is gone, the pane overflowed and only the tail of the output
     is left — which has to be reported, not passed off as a whole
     result.
+
+    ``grouped`` says the command ran inside a brace group. Two things
+    change then. The shell parses the whole group before it runs any of
+    it, so the command's output arrives *after* the line that closes
+    the group — and that line carries the bookkeeping. The bookkeeping
+    line is therefore dropped on its own, with the output kept, and the
+    shell's redraw of the line that opens the group is cut away too.
+    What is left is exactly what the caller got before the group
+    existed.
 
     Returns ``(output, exit_code, head_survived)``.
     """
@@ -879,9 +891,44 @@ def _extract_command_output(
 
     ec_hits = list(re.finditer(rf"(?m)^.*?{re.escape(ec_var)}.*$", region))
     if ec_hits:
-        region = region[: ec_hits[0].start()]
+        if grouped:
+            # The bookkeeping sits on the line that closes the group, and
+            # the shell parses the whole group before running any of it —
+            # so the command's output arrives *after* that line. Drop the
+            # line itself and keep what follows it. Cutting the other way
+            # (dropping everything from the line on) would take the
+            # output with it.
+            hit = ec_hits[0]
+            end = region.find("\n", hit.end())
+            region = region[: hit.start()] + (region[end + 1 :] if end != -1 else "")
+        else:
+            region = region[: ec_hits[0].start()]
+
+    if grouped:
+        region = _strip_group_open(region)
 
     return region.strip("\n"), exit_code, head_survived
+
+
+def _strip_group_open(region: str) -> str:
+    """Remove the shell's redraw of the line that opens the brace group.
+
+    The group is opened by a line of its own, so the first line of the
+    region is that line — the prompt followed by a ``{``. It is
+    protocol, not output: without this cut the caller's stdout would
+    grow a line it never had before.
+
+    Only a line that ends in ``{`` is removed. If the pane scrolled and
+    the line is gone, the first line is the redraw of the command
+    itself, and it stays.
+    """
+    lines = region.split("\n")
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    if index < len(lines) and lines[index].rstrip().endswith("{"):
+        del lines[index]
+    return "\n".join(lines)
 
 
 def _truncate_output(s: str) -> str:
