@@ -225,6 +225,33 @@ run first) refuses a token that would break the document. The proxy
 also logs the problem at start-up, so a stack started with
 `docker compose up` directly is not silent about it.
 
+## Metrics and monitoring
+
+Both services expose a Prometheus exposition at `/metrics`. The endpoint
+is authenticated like every other one — the numbers are harmless, but
+an unauthenticated endpoint on a published port is a habit worth not
+having.
+
+| Metric                                | Service | What it counts                      |
+|---------------------------------------|---------|-------------------------------------|
+| `sandbox_proxy_requests_total`        | proxy   | requests handled                    |
+| `sandbox_proxy_rate_limited_total`    | proxy   | requests refused with 429           |
+| `sandbox_proxy_exec_timeouts_total`   | proxy   | upstream calls that ran out of time |
+| `sandbox_proxy_upstream_errors_total` | proxy   | upstream calls that failed otherwise |
+| `sandbox_agent_exec_total`            | agent   | commands executed                   |
+| `sandbox_agent_exec_timeouts_total`   | agent   | commands that ran out of time       |
+| `sandbox_agent_active_sessions`       | agent   | sessions held right now             |
+
+The counters live in the process, so they reset when the container
+restarts — that is what a counter is for. The rates Prometheus computes
+from them are what a dashboard shows.
+
+A ready-made stack (Prometheus + Grafana + cAdvisor) is in
+`docker-compose.monitoring.yml`. It is a separate compose project, so
+the sandbox starts and works without it. The steps — creating the token
+file, pointing the stack at the network of the sandbox, and the URLs it
+lands on — are in the README, under "Monitoring".
+
 ## Volume mounts (named)
 
 | Name                  | Mounted at                   | Purpose                              |

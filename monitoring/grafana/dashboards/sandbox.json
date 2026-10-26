@@ -1,0 +1,167 @@
+{
+  "annotations": { "list": [] },
+  "description": "The sandbox stack: requests, refusals, sessions, memory.",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Requests / min",
+      "description": "Everything the proxy handled, per minute.",
+      "id": 1,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "rate(sandbox_proxy_requests_total[5m]) * 60", "refId": "A" }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 1 },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Rate-limit hits / min",
+      "description": "Requests refused by the token bucket (HTTP 429).",
+      "id": 2,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        { "expr": "rate(sandbox_proxy_rate_limited_total[5m]) * 60", "refId": "A" }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 1 },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Active sessions",
+      "description": "Sessions the agent holds right now.",
+      "id": 3,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "sandbox_agent_active_sessions", "refId": "A" }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 0 },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Exec timeouts / min",
+      "description": "Commands that ran out of time.",
+      "id": 4,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        { "expr": "rate(sandbox_proxy_exec_timeouts_total[5m]) * 60", "refId": "A" }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 1 },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory of the sandbox containers",
+      "description": "cAdvisor's view of the working set, per container.",
+      "id": 5,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_usage_bytes{container_label_com_docker_compose_service=~\"sandbox-agent|openapi-proxy\"})",
+          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Commands per minute",
+      "description": "What the model actually ran.",
+      "id": 6,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "rate(sandbox_agent_exec_total[5m]) * 60",
+          "legendFormat": "exec",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(sandbox_agent_exec_timeouts_total[5m]) * 60",
+          "legendFormat": "timed out",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["sandbox"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "OpenWebUI bash sandbox",
+  "uid": "sandbox-overview",
+  "version": 1,
+  "weekStart": ""
+}

@@ -515,3 +515,104 @@ class TestTheLogsAreJson(unittest.TestCase):
             with self.subTest(module=name):
                 text = (ROOT / name).read_text(encoding="utf-8")
                 self.assertNotIn('"msg":"%(message)s"', text)
+
+
+# ---------------------------------------------------------------------------
+# ops — the metrics endpoint and the monitoring example
+# ---------------------------------------------------------------------------
+class TestTheMetricsEndpoint(unittest.TestCase):
+    """Both services expose a Prometheus exposition. It is authenticated
+    like everything else: the numbers are harmless, but an open endpoint
+    on a published port is a habit worth not having."""
+
+    def _proxy_client(self):
+        """Import the proxy with the token this test needs.
+
+        The module reads its configuration from the environment at import
+        time, and other test files import it with their own token — so
+        the module is imported fresh here rather than taken from
+        ``sys.modules``.
+        """
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        os.environ["OPENAPI_PROXY_TOKEN"] = "test-token"
+        os.environ["OPENAPI_PROXY_RATE_LIMIT_RPM"] = "0"
+        sys.modules.pop("openapi_proxy", None)
+        import openapi_proxy  # noqa: PLC0415
+
+        return TestClient(openapi_proxy.app)
+
+    def test_the_proxy_metrics_need_the_token(self) -> None:
+        client = self._proxy_client()
+        self.assertEqual(client.get("/metrics").status_code, 401)
+
+    def test_the_proxy_metrics_answer_with_the_token(self) -> None:
+        client = self._proxy_client()
+        response = client.get("/metrics", headers={"Authorization": "Bearer test-token"})
+        self.assertEqual(response.status_code, 200)
+        body = response.text
+        self.assertIn("# TYPE sandbox_proxy_requests_total counter", body)
+        self.assertRegex(body, r"(?m)^sandbox_proxy_requests_total \d")
+
+    def test_the_agent_metrics_answer_with_the_token(self) -> None:
+        import agent_api  # noqa: PLC0415
+
+        assert agent_api.METRICS is not None
+        body = agent_api.METRICS.render()
+        self.assertIn("# TYPE sandbox_agent_active_sessions gauge", body)
+        self.assertIn("# TYPE sandbox_agent_exec_total counter", body)
+
+    def test_every_exposition_line_is_a_name_and_a_number(self) -> None:
+        """The exposition format is one metric per line, name and value.
+        A line that does not parse is a line Prometheus drops."""
+        import agent_api  # noqa: PLC0415
+        import openapi_proxy  # noqa: PLC0415
+
+        for rendered in (agent_api.METRICS.render(), openapi_proxy.METRICS.render()):
+            for line in rendered.splitlines():
+                if line.startswith("#") or not line.strip():
+                    continue
+                self.assertRegex(line, r"^[a-zA-Z_:][a-zA-Z0-9_:]*\s+[-+0-9.eE]+$", line)
+
+
+class TestTheMonitoringExampleIsNotALie(unittest.TestCase):
+    """A dashboard that asks for a metric nobody exposes is the worst
+    kind of example: it looks right and shows nothing."""
+
+    def test_every_metric_the_dashboard_asks_for_exists(self) -> None:
+        import json  # noqa: PLC0415
+        import re  # noqa: PLC0415
+
+        import agent_api  # noqa: PLC0415
+        import openapi_proxy  # noqa: PLC0415
+
+        exposed: set[str] = set()
+        for rendered in (agent_api.METRICS.render(), openapi_proxy.METRICS.render()):
+            for line in rendered.splitlines():
+                if line.startswith("# TYPE "):
+                    exposed.add(line.split()[2])
+
+        dashboard = json.loads(
+            (ROOT / "monitoring/grafana/dashboards/sandbox.json").read_text(encoding="utf-8")
+        )
+        asked: set[str] = set()
+        for panel in dashboard["panels"]:
+            for target in panel.get("targets", []):
+                asked.update(re.findall(r"\bsandbox_[a-z_]+\b", target.get("expr", "")))
+        self.assertTrue(asked, "the dashboard asks for nothing at all")
+        missing = sorted(asked - exposed)
+        self.assertEqual(missing, [], f"the dashboard asks for metrics nobody exposes: {missing}")
+
+    def test_the_prometheus_config_scrapes_both_services(self) -> None:
+        text = (ROOT / "monitoring/prometheus.yml").read_text(encoding="utf-8")
+        self.assertIn("openapi-proxy:8090", text)
+        self.assertIn("sandbox-agent:8082", text)
+        self.assertIn("bearer_token_file", text)
+        self.assertIn("/metrics", text)
+
+    def test_the_monitoring_stack_joins_the_stack_network(self) -> None:
+        text = (ROOT / "docker-compose.monitoring.yml").read_text(encoding="utf-8")
+        self.assertIn("prom/prometheus", text)
+        self.assertIn("grafana/grafana", text)
+        self.assertIn("external: true", text)
+        self.assertIn("MONITOR_NETWORK", text)

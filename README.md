@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 377](https://img.shields.io/badge/tests-377_passing-brightgreen)](tests/)
+[![Tests: 384](https://img.shields.io/badge/tests-384_passing-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -64,7 +64,7 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **377 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **384 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -190,6 +190,7 @@ the full development workflow.
 | GET    | `/files/meta?path=P`              | Size/mtime/name of a workspace file   |
 | GET    | `/files?path=P`                   | The file's **raw bytes** (no base64)   |
 | DELETE | `/files?path=P`                   | Remove a delivered file from the sandbox |
+| GET    | `/metrics`                        | Prometheus exposition (bearer token)   |
 
 ### `openapi-proxy` (port 8090, **bearer auth required**)
 
@@ -203,11 +204,49 @@ the full development workflow.
 | GET    | `/files/meta?path=P` | Size/mtime/name of a workspace file (streamed)       |
 | GET    | `/files?path=P`  | The file's **raw bytes** (streamed, no base64)          |
 | DELETE | `/files?path=P`  | Remove a delivered file from the sandbox               |
+| GET    | `/metrics`       | Prometheus exposition (auth required)                   |
 | WS     | `/ws` (token via `Sec-WebSocket-Protocol: bearer.<token>` header) | Experimental terminal (per-connection session) |
 
 > **Never** pass the token via `?token=...` query param — reverse proxies
 > (nginx, Caddy, Cloudflare, ALB) log URLs by default and that is a token
 > leak. Token is rejected if you try, see `tests/test_wave2_fixes.py`.
+
+## Monitoring
+
+Both services expose a Prometheus exposition at `/metrics` (bearer token
+required, like every other endpoint):
+
+| Metric                                | Service | What it counts                        |
+|---------------------------------------|---------|---------------------------------------|
+| `sandbox_proxy_requests_total`        | proxy   | requests handled                      |
+| `sandbox_proxy_rate_limited_total`    | proxy   | requests refused with 429             |
+| `sandbox_proxy_exec_timeouts_total`   | proxy   | upstream calls that ran out of time   |
+| `sandbox_proxy_upstream_errors_total` | proxy   | upstream calls that failed otherwise  |
+| `sandbox_agent_exec_total`            | agent   | commands executed                     |
+| `sandbox_agent_exec_timeouts_total`   | agent   | commands that ran out of time         |
+| `sandbox_agent_active_sessions`       | agent   | sessions held right now               |
+
+A ready-made stack — Prometheus, Grafana and cAdvisor — is in
+`docker-compose.monitoring.yml`. It is a **separate** compose project,
+so the sandbox starts and works without it:
+
+```bash
+mkdir -p monitoring/secrets
+grep '^OPENAPI_PROXY_TOKEN=' .env | cut -d= -f2 > monitoring/secrets/proxy_token
+chmod 600 monitoring/secrets/proxy_token
+
+MONITOR_NETWORK=agent-stack_agent-net \
+  docker compose -f docker-compose.monitoring.yml up -d
+```
+
+Prometheus lands on `127.0.0.1:9090`, Grafana on `127.0.0.1:3002`
+(admin/admin — change the password on the first login). The dashboard is
+provisioned from `monitoring/grafana/dashboards/sandbox.json`.
+
+`MONITOR_NETWORK` is the network of the stack you want to watch — find
+its name with `docker network ls | grep agent-net`. Prometheus reads the
+bearer token from a file, because it cannot expand variables in its
+config and the token has no business being pasted into one.
 
 ## Moving files out of the sandbox
 

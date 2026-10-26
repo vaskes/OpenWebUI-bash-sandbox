@@ -1,0 +1,95 @@
+name: sandbox-monitoring
+
+# The monitoring stack: Prometheus, Grafana and cAdvisor next to the
+# sandbox. It is a SEPARATE compose project on purpose — the sandbox
+# must start and work without it.
+#
+#   1. Prometheus needs the bearer token as a FILE (it cannot read it
+#      from the environment, and the token must not be pasted into a
+#      config file):
+#
+#        mkdir -p monitoring/secrets
+#        grep '^OPENAPI_PROXY_TOKEN=' .env | cut -d= -f2 > monitoring/secrets/proxy_token
+#        chmod 600 monitoring/secrets/proxy_token
+#
+#   2. Point it at the network of the stack it watches. The name is the
+#      one the stack's own compose file creates — `<project>_<network>`;
+#      find it with `docker network ls | grep agent-net`:
+#
+#        MONITOR_NETWORK=agent-stack_agent-net \
+#          docker compose -f docker-compose.monitoring.yml up -d
+#
+#      The default above matches docker-compose.yml. The production
+#      stack uses its own project name — check it before starting.
+#
+#   3. Prometheus is on 127.0.0.1:9090, Grafana on 127.0.0.1:3002
+#      (admin/admin — change the password on the first login).
+#
+# cAdvisor needs privileged mode and host mounts: it is the only way to
+# get per-container memory into Prometheus. Drop the service and its
+# scrape job if you would rather not have a privileged container.
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    container_name: sandbox-prometheus
+    restart: unless-stopped
+    networks:
+      - monitor-net
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/secrets:/etc/prometheus/secrets:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+
+  grafana:
+    image: grafana/grafana:12.4.13
+    container_name: sandbox-grafana
+    restart: unless-stopped
+    networks:
+      - monitor-net
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3002:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    depends_on:
+      - prometheus
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    container_name: sandbox-cadvisor
+    restart: unless-stopped
+    networks:
+      - monitor-net
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "127.0.0.1:8088:8080"
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  monitor-net:
+    external: true
+    name: "${MONITOR_NETWORK:-agent-stack_agent-net}"
