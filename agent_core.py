@@ -15,7 +15,6 @@ TMUX_PREFIX = "agent_"
 SESSION_ID_MAX_LEN = 64
 SESSION_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_-]")
 
-
 def safe_id(raw: str) -> str:
     """Sanitize a user-supplied session id.
 
@@ -225,3 +224,125 @@ def build_exec_block(command: str, begin_marker: str, ec_var: str, marker: str) 
         + f"printf '\\n{marker}=%d\\n' \"${{{ec_var}}}\""
     )
     return block, False
+
+
+# ---------------------------------------------------------------------------
+# Secret redaction for the command preview that goes into the log
+# ---------------------------------------------------------------------------
+
+#: The words that make an identifier secret. Matched per *segment*, so
+#: ``API_KEY`` and ``apiKey`` count while ``monkey`` does not.
+_SECRET_NAME_PARTS = frozenset(
+    {
+        "key",
+        "keys",
+        "token",
+        "tokens",
+        "secret",
+        "secrets",
+        "password",
+        "passwd",
+        "pwd",
+        "credential",
+        "credentials",
+    }
+)
+
+#: What a redacted value is replaced with.
+REDACTED = "[REDACTED]"
+
+_ASSIGNMENT_RE = re.compile(
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)(?P<eq>\s*=\s*)"
+    r"(?P<value>\"[^\"]*\"|'[^']*'|[^\s]+)"
+)
+_FLAG_RE = re.compile(
+    r"(?P<flag>--[A-Za-z0-9][A-Za-z0-9-]*)(?P<eq>=|\s+)"
+    r"(?P<value>\"[^\"]*\"|'[^']*'|[^\s]+)"
+)
+_COLON_RE = re.compile(
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)(?P<eq>\s*:\s*)(?P<value>[^\s\"']+)"
+)
+_AUTH_RE = re.compile(
+    r"(?P<head>\b[Aa]uthorization\s*:\s*)(?P<scheme>[Bb]earer|[Bb]asic)\s+"
+    r"(?P<value>[^\s\"']+)"
+)
+_SSHPASS_RE = re.compile(r"(?P<head>\bsshpass\s+-p\s+)(?P<value>[^\s]+)")
+_PEM_RE = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+    re.DOTALL,
+)
+
+
+def _name_parts(name: str) -> set[str]:
+    """Split an identifier into lowercase words.
+
+    ``OPENAI_API_KEY`` -> ``{openai, api, key}``, ``apiKey`` ->
+    ``{api, key}``, ``monkey`` -> ``{monkey}``. The split is what keeps
+    ``monkey=banana`` out of the redacted set.
+    """
+    parts: set[str] = set()
+    for chunk in re.findall(r"[A-Za-z]+|[0-9]+", name):
+        for word in re.findall(r"[A-Z]+(?![a-z])|[A-Z][a-z]*|[a-z]+", chunk):
+            parts.add(word.lower())
+    return parts
+
+
+def _is_secret_name(name: str) -> bool:
+    """True when an identifier looks like it holds a secret."""
+    return bool(_name_parts(name) & _SECRET_NAME_PARTS)
+
+
+def _redact_value(value: str) -> str:
+    """Replace a value with the marker, keeping its quotes."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[0] + REDACTED + value[0]
+    return REDACTED
+
+
+def redact_secrets(text: str) -> str:
+    """Hide secret-shaped values in a string that is about to be logged.
+
+    The agent logs a 200-character preview of every command, so that an
+    operator can reconstruct what the model ran. A command that carries
+    a token — ``curl -H "Authorization: Bearer …"``, ``export API_KEY=…``,
+    ``mysql --password …`` — would otherwise put that token into the
+    log file, where it stays readable by everything that can read the
+    logs.
+
+    What is redacted: the values of assignments, flags and ``name:
+    value`` pairs whose name looks secret; the value of an
+    ``Authorization:`` header; the value of ``sshpass -p``; and PEM
+    private-key blocks. The names stay, so the log still says what the
+    command was doing — a redacted log is still an audit trail.
+    """
+    if not text:
+        return text
+    text = _PEM_RE.sub(REDACTED + " PRIVATE KEY", text)
+    text = _AUTH_RE.sub(
+        lambda m: f"{m.group('head')}{m.group('scheme')} {REDACTED}", text
+    )
+    text = _SSHPASS_RE.sub(lambda m: f"{m.group('head')}{REDACTED}", text)
+
+    def _flag_sub(match: re.Match[str]) -> str:
+        flag = match.group("flag")
+        if not _is_secret_name(flag.lstrip("-").replace("-", "_")):
+            return match.group(0)
+        return f"{flag}{match.group('eq')}{_redact_value(match.group('value'))}"
+
+    text = _FLAG_RE.sub(_flag_sub, text)
+
+    def _assignment_sub(match: re.Match[str]) -> str:
+        name = match.group("name")
+        if not _is_secret_name(name):
+            return match.group(0)
+        return f"{name}{match.group('eq')}{_redact_value(match.group('value'))}"
+
+    text = _ASSIGNMENT_RE.sub(_assignment_sub, text)
+
+    def _colon_sub(match: re.Match[str]) -> str:
+        name = match.group("name")
+        if not _is_secret_name(name):
+            return match.group(0)
+        return f"{name}{match.group('eq')}{REDACTED}"
+
+    return _COLON_RE.sub(_colon_sub, text)

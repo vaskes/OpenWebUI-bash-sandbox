@@ -83,6 +83,7 @@ from agent_core import (
     __version__,
     build_exec_block,
     parse_capability_status,
+    redact_secrets,
     rootfs_is_read_only,
     safe_id,
     sudo_posture,
@@ -656,7 +657,13 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     # what the LLM actually ran. ``cmd_preview`` is truncated to 200 chars
     # so a runaway 1 MB command does not flood the log; the
     # ``cmd_len=N`` field preserves the original length for inspection.
-    cmd_preview = (
+    #
+    # The preview is redacted before it is logged. A command that carries
+    # a token — ``export API_KEY=…``, ``curl -H "Authorization: Bearer …"``
+    # — would otherwise write that token into the log file, where it
+    # stays readable by everything that can read the logs. The names
+    # survive the redaction, so the log still says what the command did.
+    cmd_preview = redact_secrets(
         body.command
         if len(body.command) <= 200
         else body.command[:200] + f"... (+{len(body.command) - 200} bytes)"
