@@ -8,12 +8,31 @@ sanitization, naming conventions) lives here.
 from __future__ import annotations
 
 import re
+import uuid
 
 __version__ = "2.10.2"
 
 TMUX_PREFIX = "agent_"
+
+#: How many hex characters a protocol marker carries. The marker names
+#: the bookkeeping lines the exec protocol leaves in the terminal, so a
+#: command that prints a line of its own must not be able to impersonate
+#: one. 16 hex characters are 64 bits: the chance of a collision is not
+#: a number anybody needs to compute any more.
+MARKER_HEX_LEN = 16
 SESSION_ID_MAX_LEN = 64
 SESSION_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def new_marker_token() -> str:
+    """A fresh random token for the exec protocol's markers.
+
+    Three markers are used per command (begin, exit-code variable, done)
+    and they must not collide with anything the command prints, nor with
+    each other.
+    """
+    return uuid.uuid4().hex[:MARKER_HEX_LEN]
+
 
 def safe_id(raw: str) -> str:
     """Sanitize a user-supplied session id.
