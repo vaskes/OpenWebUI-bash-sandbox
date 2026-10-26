@@ -66,6 +66,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from json_logging import configure_logging
+from metrics import Metrics
 from proxy_core import (
     DEFAULT_SESSION_ID,
     EXEC_TIMEOUT_SECONDS,
@@ -199,6 +200,14 @@ class _RateLimiter:
 
 _rate_limiter = _RateLimiter(RATE_LIMIT_RPM, RATE_LIMIT_MAX_KEYS)
 
+#: What the proxy exposes on ``/metrics``. Counters only go up; the
+#: gauge is read at scrape time.
+METRICS = Metrics("sandbox_proxy")
+METRICS.counter("requests_total", "Requests the proxy handled.")
+METRICS.counter("rate_limited_total", "Requests refused by the rate limiter.")
+METRICS.counter("exec_timeouts_total", "Upstream calls that ran out of time.")
+METRICS.counter("upstream_errors_total", "Upstream calls that failed for another reason.")
+
 
 # ---------------------------------------------------------------------------
 # Authentication
@@ -254,6 +263,7 @@ async def _rate_limit(request: Request) -> None:
 
     key = _hashlib.sha256(auth.encode("utf-8")).hexdigest()
     if not _rate_limiter.check(key):
+        METRICS.inc("rate_limited_total")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="rate limit exceeded",
@@ -461,6 +471,13 @@ MAX_BODY_BYTES = 2 * 1024 * 1024
 
 
 @app.middleware("http")
+async def _count_requests(request, call_next):
+    """Count every request the proxy handled."""
+    METRICS.inc("requests_total")
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def _body_size_limit(request, call_next):
     content_length = request.headers.get("content-length")
     if content_length is not None:
@@ -529,6 +546,21 @@ async def health(_: str = Depends(_require_token)) -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/metrics", operation_id="metrics")
+async def metrics(_: str = Depends(_require_token)) -> Response:
+    """Prometheus exposition.
+
+    Authenticated like every other endpoint: the counters are harmless,
+    but an unauthenticated endpoint on a published port is a habit
+    worth not having. Prometheus reads the token from a file
+    (``bearer_token_file``) — see ``docker-compose.monitoring.yml``.
+    """
+    return Response(
+        content=METRICS.render(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
 @app.get("/api/config")
 async def api_config(_: str = Depends(_require_token)) -> dict[str, Any]:
     """Open WebUI capability probe. Returning ``features.system=False`` disables
@@ -584,8 +616,10 @@ async def _do_ssh(client: httpx.AsyncClient, rest: str, session_id: str) -> dict
         r.raise_for_status()
         return r.json()
     except httpx.TimeoutException as exc:
+        METRICS.inc("exec_timeouts_total")
         return {"error": _upstream_timeout_reason(exc)}
     except httpx.HTTPError as exc:
+        METRICS.inc("upstream_errors_total")
         return {"error": f"sandbox-agent request failed: {exc!r}"}
 
 
@@ -600,8 +634,10 @@ async def _do_exec(client: httpx.AsyncClient, command: str, session_id: str) -> 
         r.raise_for_status()
         return r.json()
     except httpx.TimeoutException as exc:
+        METRICS.inc("exec_timeouts_total")
         return {"error": _upstream_timeout_reason(exc)}
     except httpx.HTTPError as exc:
+        METRICS.inc("upstream_errors_total")
         return {"error": f"sandbox-agent request failed: {exc!r}"}
 
 

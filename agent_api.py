@@ -80,8 +80,6 @@ from agent_config import (
     PANE_WIDTH,
     STDOUT_LIMIT_BYTES,
 )
-from json_logging import configure_logging
-
 from agent_core import (
     SESSION_ID_MAX_LEN,
     __version__,
@@ -94,6 +92,8 @@ from agent_core import (
     sudo_posture,
     tmux_name,
 )
+from json_logging import configure_logging
+from metrics import Metrics
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -124,6 +124,17 @@ logger = logging.getLogger("sandbox-agent")
 # format string interpolated the message into a JSON string, so a
 # command containing a quote produced a line no parser could read.
 configure_logging(os.environ.get("AGENT_LOG_LEVEL", "INFO"))
+
+#: What the agent exposes on ``/metrics``. The gauge is read at scrape
+#: time, so it reflects the sessions that exist right now.
+METRICS = Metrics("sandbox_agent")
+METRICS.counter("exec_total", "Commands the agent executed.")
+METRICS.counter("exec_timeouts_total", "Commands that ran out of time.")
+METRICS.gauge(
+    "active_sessions",
+    "Sessions the agent currently holds.",
+    lambda: float(len(SESSIONS)),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -496,6 +507,21 @@ async def healthz() -> dict[str, Any]:
     return {"status": "ok"}
 
 
+@app.get("/metrics", dependencies=[Depends(_require_token)])
+async def metrics() -> Response:
+    """Prometheus exposition.
+
+    Authenticated like every other endpoint: the numbers are harmless,
+    but an unauthenticated endpoint on a reachable port is a habit
+    worth not having. Prometheus reads the token from a file
+    (``bearer_token_file``) — see ``docker-compose.monitoring.yml``.
+    """
+    return Response(
+        content=METRICS.render(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
 @app.get("/sessions", dependencies=[Depends(_require_token)])
 async def list_sessions() -> dict[str, Any]:
     """List active sessions, reaping any whose tmux backend has died.
@@ -650,6 +676,7 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     On timeout, the partial output is returned with ``exit_code=None`` and
     ``timed_out=True`` so the caller can decide whether to retry.
     """
+    METRICS.inc("exec_total")
     sid = safe_id(session_id)
     name = tmux_name(sid)
     if not await tmux_session_exists(name):
@@ -745,6 +772,7 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
             output = _HEAD_LOST_NOTICE + output
         output = _truncate_output(output)
         duration_ms = int((time.time() - start) * 1000)
+        METRICS.inc("exec_timeouts_total")
         logger.warning(
             "exec.timeout sid=%s duration_ms=%d cmd_len=%d cmd=%r",
             sid,
