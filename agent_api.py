@@ -195,6 +195,16 @@ def _resolve_workspace_root() -> str:
 
 WORKSPACE_REAL = _resolve_workspace_root()
 
+#: The prefix every path the agent serves has to start with. The trailing
+#: separator is part of the prefix on purpose: without it a sibling
+#: directory whose name merely *starts with* the workspace's name
+#: ("/workspace-evil") would pass the check, and the comparison would be
+#: weaker than the ``commonpath`` check it replaces. With the separator,
+#: and after the path has been resolved (no "..", no symlinks), the two
+#: checks agree — and the prefix can be read by a human and by a static
+#: analyser, which is worth more than a helper call.
+WORKSPACE_PREFIX = WORKSPACE_REAL if WORKSPACE_REAL.endswith(os.sep) else WORKSPACE_REAL + os.sep
+
 
 def _safe_cwd(candidate: str) -> str:
     """Resolve symlinks and confirm the path is rooted at the workspace.
@@ -207,17 +217,20 @@ def _safe_cwd(candidate: str) -> str:
     * symlinks pointing outside the workspace.
     """
     real = os.path.realpath(candidate)
-    if not os.path.isdir(real):
-        raise HTTPException(status_code=400, detail=f"cwd is not a directory: {candidate}")
-    # ``commonpath`` raises if the drives differ on Windows; both paths are
-    # absolute here so this is safe.
-    try:
-        common = os.path.commonpath([real, WORKSPACE_REAL])
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"invalid cwd: {exc}") from exc
-    if common != WORKSPACE_REAL:
-        raise HTTPException(status_code=400, detail=f"cwd outside workspace: {candidate}")
-    return real
+    if real == WORKSPACE_REAL:
+        # The root itself: a constant comes back, so nothing the caller
+        # supplied travels with it.
+        return WORKSPACE_REAL
+    if real.startswith(WORKSPACE_PREFIX):
+        # The check on the filesystem comes *after* the containment
+        # check, and inside it: the path is already known to be inside
+        # the workspace, so the question that is left is only whether it
+        # is a directory. (It also keeps the flow of the data obvious:
+        # resolve, confirm the containment, then touch the file.)
+        if not os.path.isdir(real):
+            raise HTTPException(status_code=400, detail=f"cwd is not a directory: {candidate}")
+        return real
+    raise HTTPException(status_code=400, detail=f"cwd outside workspace: {candidate}")
 
 
 # ---------------------------------------------------------------------------
@@ -1056,16 +1069,7 @@ async def tail_output(
 _BINARY_CHUNK = 64 * 1024
 
 
-def _within_workspace(real: str) -> bool:
-    """True when ``real`` is the workspace root or lives under it."""
-    try:
-        common = os.path.commonpath([real, WORKSPACE_REAL])
-    except ValueError:
-        return False
-    return common == WORKSPACE_REAL
-
-
-def _safe_file(candidate: str) -> Path:
+def _safe_file(candidate: str) -> str:
     """Resolve a client-supplied path to a regular file inside the workspace.
 
     The model knows the *logical* workspace path (``/workspace/out.bin``),
@@ -1077,6 +1081,13 @@ def _safe_file(candidate: str) -> Path:
     Symlinks are resolved before the check, so a link pointing out of the
     workspace is refused rather than followed. Only regular files are
     served: a directory, a fifo or a device is not a file to hand out.
+
+    The answer is the resolved path **as a string**, and the callers open
+    exactly that string. Two things depend on it: the containment check
+    below is what makes the path safe, so a caller that re-derived a path
+    from it would lose the guarantee; and a string is what the check
+    itself is written against, which is the form a reviewer (and a static
+    analyser) can read.
     """
     raw = str(candidate or "").strip()
     if not raw:
@@ -1086,24 +1097,31 @@ def _safe_file(candidate: str) -> Path:
     if os.path.isabs(raw):
         if raw == logical:
             raise HTTPException(status_code=400, detail="path is a directory, not a file")
-        prefix = logical + os.sep
-        if raw.startswith(prefix):
-            raw = raw[len(prefix) :]
-    else:
-        raw = str(Path(WORKSPACE_REAL) / raw)
+        if raw.startswith(logical + os.sep):
+            # A logical path inside the workspace: re-anchor it on the
+            # real root, which may live somewhere else entirely.
+            raw = raw[len(logical) + 1 :]
+    # A relative path, or an absolute one outside the logical workspace:
+    # both are joined onto the real root. ``os.path.join`` keeps an
+    # absolute second argument as it is, so "/etc/passwd" stays
+    # "/etc/passwd" and is refused by the check below instead of being
+    # quietly re-anchored inside the workspace.
+    raw = os.path.join(WORKSPACE_REAL, raw)
 
     try:
-        resolved = Path(raw).resolve(strict=True)
+        resolved = os.path.realpath(raw, strict=True)
     except OSError as exc:
         raise HTTPException(status_code=404, detail=f"file not found: {candidate}") from exc
     except RuntimeError as exc:  # symlink loop
         raise HTTPException(status_code=400, detail=f"unresolvable path: {candidate}") from exc
 
-    if not _within_workspace(str(resolved)):
-        raise HTTPException(status_code=400, detail=f"path outside the workspace: {candidate}")
-    if not resolved.is_file():
-        raise HTTPException(status_code=400, detail=f"not a regular file: {candidate}")
-    return resolved
+    if resolved == WORKSPACE_REAL:
+        raise HTTPException(status_code=400, detail="path is a directory, not a file")
+    if resolved.startswith(WORKSPACE_PREFIX):
+        if not os.path.isfile(resolved):
+            raise HTTPException(status_code=400, detail=f"not a regular file: {candidate}")
+        return resolved
+    raise HTTPException(status_code=400, detail=f"path outside the workspace: {candidate}")
 
 
 def _content_disposition(name: str) -> str:
@@ -1134,7 +1152,7 @@ def _parse_byte_range(header: str, size: int) -> tuple[int, int]:
     return start, min(end, size - 1) - start + 1
 
 
-def _open_for_download(path: Path):
+def _open_for_download(name: str):
     """Open the file for reading, turning a refusal into a status code.
 
     The download endpoint must know whether it can read the file *before*
@@ -1148,22 +1166,26 @@ def _open_for_download(path: Path):
 
     So the open happens here, before any header is sent, and a refusal
     becomes a status code with a message that says what to do about it.
+
+    The name is the string that :func:`_safe_file` resolved and checked;
+    it is opened as it is, so that the file that is served is the file
+    that was vetted.
     """
     try:
-        return path.open("rb")
+        return open(name, "rb")
     except PermissionError as exc:
         raise HTTPException(
             status_code=403,
             detail=(
-                f"permission denied: the sandbox agent cannot read {path.name}. "
+                f"permission denied: the sandbox agent cannot read {os.path.basename(name)}. "
                 "The file's owner or mode does not allow it (a root-owned 0600 "
                 "file, for example); make it readable, e.g. chmod 644."
             ),
         ) from exc
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"file not found: {path}") from exc
+        raise HTTPException(status_code=404, detail=f"file not found: {name}") from exc
     except OSError as exc:
-        raise HTTPException(status_code=400, detail=f"cannot read {path}: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"cannot read {name}: {exc}") from exc
 
 
 def _iter_file(handle, start: int, length: int):
@@ -1193,11 +1215,11 @@ async def file_meta(path: str = Query(..., description="Path of the file in the 
     one.
     """
     target = _safe_file(path)
-    stat = target.stat()
-    guessed, _ = mimetypes.guess_type(target.name)
+    stat = os.stat(target)
+    guessed, _ = mimetypes.guess_type(target)
     return {
-        "name": target.name,
-        "path": str(target),
+        "name": os.path.basename(target),
+        "path": target,
         "size": stat.st_size,
         "mtime": int(stat.st_mtime),
         "mime": guessed or "application/octet-stream",
@@ -1226,7 +1248,7 @@ async def download_file(
     on instead of a promise of N bytes followed by silence.
     """
     target = _safe_file(path)
-    size = target.stat().st_size
+    size = os.stat(target).st_size
 
     if BINARY_LIMIT_BYTES and size > BINARY_LIMIT_BYTES:
         raise HTTPException(
@@ -1247,16 +1269,17 @@ async def download_file(
     # after the headers are out.
     handle = _open_for_download(target)
 
+    file_name = os.path.basename(target)
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(length),
         "Content-Type": "application/octet-stream",
-        "Content-Disposition": _content_disposition(target.name),
+        "Content-Disposition": _content_disposition(file_name),
         # HTTP header values are latin-1, and a file name may be anything.
         # Content-Disposition already carries the name in both a sanitised
         # ASCII form and RFC 5987 form; this one is percent-encoded so a
         # client can read it back without parsing the disposition.
-        "X-File-Name": urllib.parse.quote(target.name, safe=""),
+        "X-File-Name": urllib.parse.quote(file_name, safe=""),
         "X-File-Size": str(size),
     }
     if status_code == 206:
@@ -1293,7 +1316,7 @@ async def delete_file(
     """
     target = _safe_file(path)
     try:
-        target.unlink()
+        os.remove(target)
     except FileNotFoundError as exc:
         # The file vanished between the resolution and the unlink. The
         # caller's intent — "make sure this file is gone" — is satisfied.
