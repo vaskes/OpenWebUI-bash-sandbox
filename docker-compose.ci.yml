@@ -60,7 +60,9 @@ services:
     environment:
       - AGENT_WORKSPACE=/workspace
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
-      - AGENT_LOG_LEVEL=WARNING
+      # INFO, not WARNING: the deploy job reads the logs to prove they
+      # are JSON, and the access log is INFO by nature.
+      - AGENT_LOG_LEVEL=INFO
       # How much text one command may return. 32k..1024k.
       # The pane scrollback is derived from it, so the limit is
       # honest: an output that fits comes back whole, every time.
@@ -98,7 +100,7 @@ services:
       - OPENAPI_PROXY_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
       - OPENAPI_PROXY_RATE_LIMIT_RPM=0
       - AGENT_EXEC_TIMEOUT=${AGENT_EXEC_TIMEOUT:-60}
-      - OPENAPI_PROXY_LOG_LEVEL=WARNING
+      - OPENAPI_PROXY_LOG_LEVEL=INFO
     depends_on:
       sandbox-agent:
         condition: service_healthy
