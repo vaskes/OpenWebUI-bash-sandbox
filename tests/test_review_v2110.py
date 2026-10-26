@@ -404,3 +404,56 @@ class TestPidsLimitIsAKnob(unittest.TestCase):
             with self.subTest(document=name):
                 text = (ROOT / name).read_text(encoding="utf-8")
                 self.assertIn("AGENT_PIDS_LIMIT", text)
+
+
+# ---------------------------------------------------------------------------
+# quality — the proxy image does not carry a package manager for one probe
+# ---------------------------------------------------------------------------
+def _without_comments(text: str) -> str:
+    """Drop whole-line comments.
+
+    The checks below are about what the build and the compose files
+    *do*, not about what they talk about: a file that explains in a
+    comment that it no longer installs curl must still pass.
+    """
+    return "\n".join(line for line in text.splitlines() if not line.strip().startswith("#"))
+
+
+class TestTheProxyImageCarriesNoCurl(unittest.TestCase):
+    """curl was installed into the proxy image for one healthcheck and
+    nothing else. The probe now asks Python, which is already in the
+    image, so the image installs nothing from the distribution at all."""
+
+    COMPOSE_FILES = (
+        "docker-compose.yml",
+        "docker-compose.production.yml",
+        "docker-compose.ci.yml",
+    )
+
+    def test_the_proxy_image_installs_nothing(self) -> None:
+        text = _without_comments((ROOT / "Dockerfile.openapi-proxy").read_text(encoding="utf-8"))
+        self.assertNotIn("apt-get", text)
+        self.assertNotIn("curl", text.lower())
+
+    def test_the_image_healthcheck_uses_python(self) -> None:
+        text = (ROOT / "Dockerfile.openapi-proxy").read_text(encoding="utf-8")
+        instruction = text.split("HEALTHCHECK", 1)[1]
+        instruction = _without_comments(instruction)
+        self.assertNotIn("curl", instruction.lower())
+        self.assertIn("urllib.request", instruction)
+
+    def test_every_stack_probes_the_proxy_with_python(self) -> None:
+        for name in self.COMPOSE_FILES:
+            with self.subTest(compose=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                block = text.split("  openapi-proxy:", 1)[1]
+                probe = _without_comments(block.split("healthcheck:", 1)[1])
+                self.assertNotIn("curl", probe.lower())
+                self.assertIn("urllib.request", probe)
+
+    def test_the_sandbox_image_still_ships_curl(self) -> None:
+        """The other way round: the *sandbox* image keeps curl, because
+        the model's shell uses it. Only the proxy image — which runs no
+        model commands — lost it."""
+        text = (ROOT / "Dockerfile.sandbox").read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?m)^\s*git curl ")
