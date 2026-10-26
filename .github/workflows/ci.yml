@@ -310,6 +310,62 @@ jobs:
           # root cannot unlink those files from the workspace — and the
           # tear-down step deletes the volume anyway.
 
+      # The logs must be JSON — every line of them, the access log
+      # included. uvicorn installs an access log of its own, in plain
+      # text, when the server starts; the application's records being
+      # JSON is only half the job. A container whose stdout is half JSON
+      # is a log that half of the queries silently miss, and the part
+      # that is missed is the part that says who called what.
+      - name: The logs are JSON — the access log included
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.ci.yml logs --no-log-prefix > /tmp/logs.txt || true
+          echo "--- log sample:"; head -5 /tmp/logs.txt
+          # uvicorn's plain-text access line: '127.0.0.1:1234 - "GET /x HTTP/1.1" 200 OK'
+          if grep -qE ' - "(GET|POST|PUT|DELETE|PATCH) ' /tmp/logs.txt; then
+            echo "::error::the access log is not JSON"
+            grep -nE ' - "(GET|POST|PUT|DELETE|PATCH) ' /tmp/logs.txt | head -5
+            exit 1
+          fi
+          # Every line that looks like a record must parse as JSON.
+          python3 -c "
+          import json, sys
+          bad = []
+          for n, line in enumerate(open('/tmp/logs.txt', encoding='utf-8', errors='replace'), 1):
+              line = line.strip()
+              if not line.startswith('{'):
+                  continue
+              try:
+                  json.loads(line)
+              except ValueError as exc:
+                  bad.append((n, str(exc), line[:200]))
+          for n, exc, line in bad[:5]:
+              print('::error::log line %d is not JSON: %s: %s' % (n, exc, line))
+          sys.exit(1 if bad else 0)
+          "
+          # And there has to be an access record — otherwise the check
+          # above proved nothing about the access log.
+          grep -q '"msg": *"access"' /tmp/logs.txt \
+            || { echo "::error::no JSON access record in the logs"; exit 1; }
+          grep -q '"path": *"/' /tmp/logs.txt \
+            || { echo "::error::the access record does not carry the path"; exit 1; }
+
+      # The metrics endpoint exists, and it is not an open door.
+      - name: The metrics answer — and only with the token
+        env:
+          TOKEN: ci-smoke-token-not-a-secret-0000
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 http://127.0.0.1:8099/metrics)
+          [ "$code" = "401" ] \
+            || { echo "::error::/metrics answered $code without a token, expected 401"; exit 1; }
+          curl -fsS --max-time 30 -H "Authorization: Bearer $TOKEN" \
+            http://127.0.0.1:8099/metrics > /tmp/metrics.txt
+          grep -q '^# TYPE sandbox_proxy_requests_total counter' /tmp/metrics.txt \
+            || { echo "::error::the proxy does not expose the request counter"; head -20 /tmp/metrics.txt; exit 1; }
+          grep -qE '^sandbox_proxy_requests_total [0-9]+' /tmp/metrics.txt \
+            || { echo "::error::the request counter has no value"; exit 1; }
+
       - name: Dump logs on failure
         if: failure()
         run: docker compose -f docker-compose.ci.yml logs || true
