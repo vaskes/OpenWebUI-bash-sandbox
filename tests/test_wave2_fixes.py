@@ -320,29 +320,38 @@ class TestSshCommandInjection(_ProxyBase):
         self.assertIn("lab.local", sent)
 
     def test_ssh_with_known_flag_accepted(self) -> None:
-        """``-p`` (port) is whitelisted. ``-i <key>`` is also whitelisted
-        when the key file lives inside the workspace."""
-        import tempfile  # noqa: PLC0415
-
-        with tempfile.TemporaryDirectory() as tmp:
-            key = os.path.join(tmp, "id_ed25519")
-            with open(key, "w") as f:
-                f.write("fake")
-            with patch.dict(os.environ, {"AGENT_WORKSPACE": tmp}):
-                client = self._make_upstream_mock()
-                with patch("openapi_proxy._client", new=lambda _req: client):
-                    body = self.client.post(
-                        "/bash",
-                        json={
-                            "command": f"ssh -p 2222 -i {key} lab.local",
-                            "session_id": "x",
-                        },
-                        headers=self.headers,
-                    ).json()
+        """``-p`` (port) is whitelisted. ``-i <key>`` is NOT: v2.11.0
+        refuses the identity flag outright, because an identity path
+        cannot be validated atomically with the call that uses it."""
+        client = self._make_upstream_mock()
+        with patch("openapi_proxy._client", new=lambda _req: client):
+            body = self.client.post(
+                "/bash",
+                json={"command": "ssh -p 2222 lab.local", "session_id": "x"},
+                headers=self.headers,
+            ).json()
         self.assertEqual(body.get("exit_code"), 0, body)
         sent = client.post.call_args.kwargs["json"]["command"]
         self.assertIn("-p", sent)
         self.assertIn("2222", sent)
+
+    def test_ssh_with_identity_flag_is_refused(self) -> None:
+        """``-i`` never reaches the sandbox. The shortcut answers with the
+        reason instead of forwarding a command whose identity file could
+        be swapped between the check and the call."""
+        client = self._make_upstream_mock()
+        with patch("openapi_proxy._client", new=lambda _req: client):
+            body = self.client.post(
+                "/bash",
+                json={
+                    "command": "ssh -i /workspace/id_ed25519 lab.local",
+                    "session_id": "x",
+                },
+                headers=self.headers,
+            ).json()
+        self.assertIn("error", body)
+        self.assertIn("identity", body["error"].lower())
+        client.post.assert_not_called()
 
 
 class TestHostnameCaseInsensitive(_ProxyBase):

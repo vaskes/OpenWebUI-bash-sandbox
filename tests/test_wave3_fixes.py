@@ -4,8 +4,10 @@ were left open in Wave 2:
 #C1: Open WebUI SQLite was inside /workspace — LLM could ``rm -rf``
      the database. Now lives in a named volume.
 #C2: SSH ``-i <path>`` was accepted for any path matching the
-     char whitelist — including ``/home/agent/.ssh/id_rsa``. Now
-     the identity must resolve to a file *inside the workspace*.
+     char whitelist — including ``/home/agent/.ssh/id_rsa``. First
+     fixed by scoping the identity to the workspace; since v2.11.0 the
+     flag is refused outright, because a path check in the proxy cannot
+     be made atomic with the call that opens the file in the sandbox.
 #C3: SSH ``-o`` was whitelisted by *name* (blocklist style) — a new
      option like ``LocalCommand`` would slip through. Now whitelisted
      by option *name* from a fixed safe set.
@@ -66,12 +68,26 @@ class TestOpenWebuiDataVolumeNotInWorkspace(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# #C2 — SSH -i <path> validation
+# #C2 — SSH -i <path> is refused outright
 # ---------------------------------------------------------------------------
-class TestSshIdentityMustBeInWorkspace(unittest.TestCase):
-    """#C2: ``ssh -i /home/agent/.ssh/id_rsa`` must be rejected because
-    /home/agent/.ssh is the persistent operator key mount, not a
-    workspace key the LLM just generated."""
+class TestSshIdentityFlagIsRefused(unittest.TestCase):
+    """#C2, revised in v2.11.0.
+
+    The wave-3 rule was "``-i`` must point inside the workspace", checked
+    by the proxy with ``realpath`` + ``commonpath``. That check is a
+    *path* check performed in the proxy, while the file is opened by
+    ``ssh`` later, in the sandbox — two processes, two filesystems, a
+    round-trip in between. A model with a second session could swap the
+    validated file for a symlink inside that window, and the old
+    implementation said so in its own docstring ("the TOCTOU window ...
+    is exploitable").
+
+    A path rule cannot be made race-free here: the only check that
+    cannot be raced is the permission check the shell itself performs
+    when it opens the file. So the flag is refused outright, and the
+    operator's key is protected by the permissions of its read-only
+    mount (docs/SECURITY.md, section 3).
+    """
 
     def setUp(self) -> None:
         # Import here so env vars are in place.
@@ -84,40 +100,63 @@ class TestSshIdentityMustBeInWorkspace(unittest.TestCase):
         host, err = self._validate("ssh -i /home/agent/.ssh/id_rsa lab.local")
         self.assertIsNone(host)
         self.assertIsNotNone(err)
-        self.assertIn("workspace", err.lower())
+        self.assertIn("identity", err.lower())
+        self.assertIn("not allowed", err.lower())
 
     def test_identity_in_etc_rejected(self) -> None:
         host, err = self._validate("ssh -i /etc/passwd lab.local")
         self.assertIsNone(host)
-        self.assertIn("workspace", err.lower())
+        self.assertIn("identity", err.lower())
 
     def test_identity_in_tmp_rejected(self) -> None:
         """Even /tmp is outside the workspace by default."""
         host, err = self._validate("ssh -i /tmp/key lab.local")
         self.assertIsNone(host)
-        self.assertIn("workspace", err.lower())
+        self.assertIn("identity", err.lower())
 
-    def test_identity_inside_workspace_accepted(self) -> None:
-        """A key the LLM just wrote into /workspace is fine."""
+    def test_identity_inside_workspace_rejected_too(self) -> None:
+        """A key the LLM just wrote into /workspace is refused as well.
+
+        The old rule accepted it. Accepting it is what made the check
+        racy: a path the model may rewrite at any moment cannot be
+        pinned by a check that happened earlier.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             key = os.path.join(tmp, "id_ed25519")
-            # Create a real file so isfile() returns True.
+            # Create a real file so a path check would have accepted it.
             with open(key, "w") as f:
                 f.write("fake key")
             with patch.dict(os.environ, {"AGENT_WORKSPACE": tmp}):
                 # ssh is a bare hostname so it has to be in the allowlist;
                 # we don't care about the allowlist outcome here, only
                 # the -i check.
-                self._validate(f"ssh -i {key} lab.local")
+                host, err = self._validate(f"ssh -i {key} lab.local")
+        self.assertIsNone(host)
+        self.assertIn("identity", err.lower())
 
     def test_nonexistent_identity_rejected(self) -> None:
-        """Defence against symlink races: non-existent files are rejected."""
+        """There is no path the shortcut accepts an identity from."""
         with tempfile.TemporaryDirectory() as tmp:
             fake = os.path.join(tmp, "does-not-exist")
             with patch.dict(os.environ, {"AGENT_WORKSPACE": tmp}):
                 host, err = self._validate(f"ssh -i {fake} lab.local")
-                self.assertIsNone(host)
-                self.assertIn("workspace", err.lower())
+        self.assertIsNone(host)
+        self.assertIn("identity", err.lower())
+
+    def test_the_flag_is_not_in_the_allowlist(self) -> None:
+        """The flag list and the behaviour must agree."""
+        from openapi_proxy import SSH_ALLOWED_FLAGS
+
+        self.assertNotIn("-i", SSH_ALLOWED_FLAGS)
+
+    def test_the_toctou_helper_is_gone(self) -> None:
+        """The racy path check must not stay in the tree as dead code."""
+        import openapi_proxy
+
+        self.assertFalse(
+            hasattr(openapi_proxy, "_ssh_identity_within_workspace"),
+            "the TOCTOU-racy identity check must be removed, not just unused",
+        )
 
 
 # ---------------------------------------------------------------------------

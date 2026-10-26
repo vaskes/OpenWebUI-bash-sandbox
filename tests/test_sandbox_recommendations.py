@@ -4,9 +4,9 @@ bash-sandbox combined deployment.
 
 #C1: command content logging — exec log must include a preview of
      the command, not just its length.
-#C7: SSH identity symlink bypass — reject os.path.islink() before
-     the realpath check so a TOCTOU swap cannot redirect to
-     /home/agent/.ssh/id_rsa.
+#C7: SSH identity symlink bypass — first closed by rejecting
+     os.path.islink() before the realpath check; since v2.11.0 the
+     whole ``-i`` flag is refused, so there is no file left to swap.
 #M3: WebSocket idle timeout — drop connections that sit idle for
      more than WEBSOCKET_IDLE_TIMEOUT_SECONDS so forgotten browser
      tabs do not pin a tmux session forever.
@@ -75,22 +75,27 @@ class TestCmdPreviewTruncation(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# #C7 — SSH identity symlink rejection
+# #C7 — SSH identity: the flag is refused, so there is no symlink to race
 # ---------------------------------------------------------------------------
-class TestSshIdentityRejectsSymlink(unittest.TestCase):
-    """#C7: ``-i`` pointing at a symlink (even one inside the workspace
-    pointing outside) must be rejected. This blocks the TOCTOU attack
-    where the LLM creates a regular file, gets it validated, then
-    replaces it with a symlink to a host-resident key."""
+class TestSshIdentityFlagIsRefused(unittest.TestCase):
+    """#C7, revised in v2.11.0.
+
+    The symlink check existed to close the TOCTOU window of the
+    workspace-scope check. Both are gone now: ``-i`` is refused before
+    any path is looked at, so there is no file to swap and no symlink to
+    follow. The test that matters is the one that says the flag does not
+    get through — not the one that says a particular symlink is
+    rejected.
+    """
 
     def setUp(self) -> None:
-        from openapi_proxy import _ssh_identity_within_workspace
+        from openapi_proxy import _validate_ssh_args
 
-        self._check = _ssh_identity_within_workspace
+        self._validate = _validate_ssh_args
 
     def test_symlink_to_outside_workspace_rejected(self) -> None:
         """The exact #C7 attack: a symlink inside /workspace pointing at
-        /home/agent/.ssh/id_rsa. The function must return False."""
+        /home/agent/.ssh/id_rsa. It is refused like every other -i."""
         with tempfile.TemporaryDirectory() as tmp:
             # Pretend the persistent key exists at this path.
             real_key = os.path.join(tmp, "real_key")
@@ -103,36 +108,22 @@ class TestSshIdentityRejectsSymlink(unittest.TestCase):
             os.symlink(real_key, link)
 
             with patch.dict(os.environ, {"AGENT_WORKSPACE": workspace}):
-                self.assertFalse(
-                    self._check(link),
-                    "symlink to outside-workspace file must be rejected (#C7)",
-                )
+                host, err = self._validate(f"ssh -i {link} lab.local")
+        self.assertIsNone(host)
+        self.assertIn("identity", err.lower())
 
-    def test_symlink_inside_workspace_rejected(self) -> None:
-        """Even a symlink that points to another file inside the same
-        workspace is rejected — the validator is not allowed to follow."""
-        with tempfile.TemporaryDirectory() as tmp:
-            target = os.path.join(tmp, "target")
-            with open(target, "w") as f:
-                f.write("data")
-            link = os.path.join(tmp, "link")
-            os.symlink(target, link)
-            with patch.dict(os.environ, {"AGENT_WORKSPACE": tmp}):
-                self.assertFalse(
-                    self._check(link),
-                    "any symlink as SSH -i must be rejected (#C7)",
-                )
-
-    def test_regular_file_in_workspace_accepted(self) -> None:
-        """A regular (non-symlink) file inside the workspace is still
-        accepted. The symlink check must not regress the happy path."""
+    def test_regular_file_in_workspace_rejected_as_well(self) -> None:
+        """A regular file is refused too — that is the point: there is no
+        path the shortcut accepts an identity from, so there is nothing
+        to swap."""
         with tempfile.TemporaryDirectory() as tmp:
             key = os.path.join(tmp, "id_ed25519")
             with open(key, "w") as f:
                 f.write("freshly generated key")
             with patch.dict(os.environ, {"AGENT_WORKSPACE": tmp}):
-                self.assertTrue(self._check(key))
-
+                host, err = self._validate(f"ssh -i {key} lab.local")
+        self.assertIsNone(host)
+        self.assertIn("identity", err.lower())
 
 # ---------------------------------------------------------------------------
 # #M3 — WebSocket idle timeout
