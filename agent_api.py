@@ -82,6 +82,7 @@ from agent_core import (
     SESSION_ID_MAX_LEN,
     __version__,
     build_exec_block,
+    new_marker_token,
     parse_capability_status,
     redact_secrets,
     rootfs_is_read_only,
@@ -669,7 +670,7 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         else body.command[:200] + f"... (+{len(body.command) - 200} bytes)"
     )
 
-    marker = f"__AGENT_DONE_{uuid.uuid4().hex[:8]}__"
+    marker = f"__AGENT_DONE_{new_marker_token()}__"
     # A second marker, printed BEFORE the command runs. It is the proof
     # that the capture still contains the beginning of the output. When the
     # pane overflows, tmux drops the OLDEST lines — the beginning — and
@@ -677,13 +678,13 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     # marker there is no way to tell that apart from a short command, so
     # the caller would read the tail of a file and believe it read the
     # file. With it, the loss is detected and reported.
-    begin_marker = f"__AGENT_BEGIN_{uuid.uuid4().hex[:8]}__"
+    begin_marker = f"__AGENT_BEGIN_{new_marker_token()}__"
     # The variable that carries the exit code from the command to the
     # completion marker. It is named after a random token so that the
     # shell's echo of the bookkeeping line can be recognised and cut away
     # from the output — otherwise the caller receives the internals of
     # the protocol along with the command's own output.
-    ec_var = f"__AGENT_EC_{uuid.uuid4().hex[:8]}__"
+    ec_var = f"__AGENT_EC_{new_marker_token()}__"
     # The command runs inside a brace group whose stdin is /dev/null, so
     # it cannot read the protocol lines that follow it in the terminal's
     # input buffer. Without that, a command that reads stdin — `read x`,

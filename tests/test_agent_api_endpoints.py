@@ -83,11 +83,11 @@ def _make_tmux_mock():
         for needle, rc, stdout, stderr in reversed(schedules):
             if cmd.startswith(needle):
                 if "{marker}" in stdout:
-                    m = re.search(r"__AGENT_DONE_([0-9a-f]{8})__", last_send_keys)
+                    m = re.search(r"__AGENT_DONE_([0-9a-f]+)__", last_send_keys)
                     if m:
                         stdout = stdout.replace("{marker}", m.group(0))
                 if "{begin}" in stdout:
-                    b = re.search(r"__AGENT_BEGIN_([0-9a-f]{8})__", last_send_keys)
+                    b = re.search(r"__AGENT_BEGIN_([0-9a-f]+)__", last_send_keys)
                     if b:
                         stdout = stdout.replace("{begin}", b.group(0))
                 return (rc, stdout, stderr)
