@@ -324,6 +324,34 @@ broken sandbox instead of a missing setting.
 the trust model section — a root shell in the sandbox is still a
 single-token, single-operator design.
 
+### 10. A command cannot read the terminal's input
+
+The agent types a command into an interactive shell and reads the result
+out of the pane. The bookkeeping lines that follow the command — the
+line that captures its exit code and the line that prints the completion
+marker — sit in the terminal's input buffer while the command runs.
+
+Before v2.10.2 a command could read that buffer. `read x` waited for
+input and consumed the marker; `apt-get` did the same, and the caller
+got a timeout instead of an answer. The command was not attacking
+anything: it was reading the only stdin it had.
+
+Now the command runs inside a brace group whose stdin is `/dev/null`. It
+reads EOF, the bookkeeping stays in the buffer where the command cannot
+reach it, and the answer comes back.
+
+Two consequences worth knowing:
+
+* A command that wants input gets EOF. `cat` with no argument returns
+  empty instead of hanging, and an interactive program (`top`, `vim`)
+  exits instead of taking over the pane. That is the right answer for
+  a one-shot tool, and it is a change: before, those commands ran until
+  the exec limit expired.
+* A command that contains a brace bash would read as a group delimiter
+  (`echo }`) is run unwrapped, exactly as before. Wrapping it would
+  change what it means, and a command that means something else is worse
+  than a command that waits.
+
 ## What's intentionally not implemented
 
 * **Streaming a file that is not finished.** The door serves files that
