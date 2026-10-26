@@ -164,13 +164,18 @@ jobs:
           # command runs in. The caller's stdout is the command's output,
           # and it stays that way.
           #
+          # The check is on the *stdout field*, not on the whole response:
+          # the response is a JSON object, so it has braces of its own.
+          #
           # NOTE: `if` and not `grep ... && { ...; }` — under `set -e` the
           # AND-list exits non-zero when the grep finds nothing, and the
           # step dies on a *passing* check.
-          if echo "$out" | grep -q 'dev/null'; then
+          stdout=$(printf '%s' "$out" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin).get('stdout',''))")
+          if printf '%s' "$stdout" | grep -q 'dev/null'; then
             echo "::error::the protocol leaked into the stdout"; exit 1
           fi
-          if echo "$out" | grep -qE '\{|\}'; then
+          if printf '%s' "$stdout" | grep -q '[{}]'; then
             echo "::error::the group leaked into the stdout"; exit 1
           fi
 
