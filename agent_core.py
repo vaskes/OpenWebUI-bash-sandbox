@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-__version__ = "2.10.1"
+__version__ = "2.10.2"
 
 TMUX_PREFIX = "agent_"
 SESSION_ID_MAX_LEN = 64
@@ -119,3 +119,109 @@ def rootfs_is_read_only(mountinfo: str) -> bool:
                 options = f"{options},{super_options[-1]}"
         return "ro" in options.split(",")
     return True
+
+
+def unquoted_standalone_braces(command: str) -> list[str]:
+    """The unquoted ``{`` / ``}`` of *command* that stand alone as a word.
+
+    A brace is only special to bash when it is a word of its own:
+    ``echo }`` closes a brace group, while ``echo a}b`` and
+    ``find -exec {} \\;`` do not. A brace inside quotes is text.
+
+    The scan is deliberately conservative: it reports only what it is
+    sure about, because a false negative here would change the meaning
+    of the command we wrap.
+    """
+    found: list[str] = []
+    quote: str | None = None
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if quote is None:
+            if ch == "\\":
+                i += 2  # the escaped character is text, whatever it is
+                continue
+            if ch in ("'", '"'):
+                quote = ch
+                i += 1
+                continue
+            if ch in "{}":
+                prev = command[i - 1] if i else ""
+                nxt = command[i + 1] if i + 1 < n else ""
+                alone = not (prev and not prev.isspace()) and not (nxt and not nxt.isspace())
+                if alone:
+                    found.append(ch)
+            i += 1
+            continue
+        if ch == "\\" and quote == '"':
+            i += 2  # inside double quotes a backslash escapes the next character
+            continue
+        if ch == quote:
+            quote = None
+        i += 1
+    return found
+
+
+def command_can_be_grouped(command: str) -> bool:
+    """Can *command* be run inside a brace group of our own?
+
+    A brace group lets us give the command a stdin of its own without
+    changing what the command means — but only when the command does not
+    contain a brace that bash would read as a group delimiter.
+    """
+    return not unquoted_standalone_braces(command)
+
+
+def build_exec_block(command: str, begin_marker: str, ec_var: str, marker: str) -> tuple[str, bool]:
+    """Build the shell code that runs one command and reports its exit code.
+
+    The block is a sequence of lines the shell reads one by one:
+
+    * ``printf`` prints the begin marker, so a caller can tell a whole
+      output from a fragment;
+    * the command itself;
+    * the exit code is stored in ``ec_var``;
+    * the last ``printf`` prints the completion marker with that code.
+
+    The command runs inside a brace group whose stdin is ``/dev/null``.
+    Without the group the command reads the *protocol*: the rest of the
+    block is still sitting in the terminal's input buffer, so ``read x``
+    waits forever, ``apt-get`` swallows the completion marker, and the
+    caller gets a timeout instead of an answer. With the group the
+    command reads EOF and the protocol stays intact.
+
+    The group changes two things about the order of the shell's work,
+    and both are accounted for in :func:`agent_api._extract_command_output`:
+
+    * The shell parses the whole group before it runs any of it, so the
+      command's output arrives *after* the line that closes the group.
+      The bookkeeping therefore sits on that closing line, and the
+      output follows it.
+    * A continuation line is redrawn with ``PS2`` instead of ``PS1``.
+      ``PS2="$PS1"`` makes the redraw look exactly like the one the
+      command had without the group, so the caller's stdout does not
+      change.
+
+    Returns ``(block, grouped)``. ``grouped`` is False when the command
+    contains a brace that bash would read as a group delimiter; such a
+    command runs unwrapped, exactly as it did before, because wrapping
+    it would change what it means.
+    """
+    if command_can_be_grouped(command):
+        block = (
+            f"printf '\\n{begin_marker}\\n'; PS2=\"$PS1\"\n"
+            "{\n"
+            + command
+            + "\n"
+            + f"}} < /dev/null; {ec_var}=$?; printf '\\n{marker}=%d\\n' \"${{{ec_var}}}\""
+        )
+        return block, True
+    block = (
+        f"printf '\\n{begin_marker}\\n'\n"
+        + command
+        + "\n"
+        + f"{ec_var}=$?\n"
+        + f"printf '\\n{marker}=%d\\n' \"${{{ec_var}}}\""
+    )
+    return block, False
