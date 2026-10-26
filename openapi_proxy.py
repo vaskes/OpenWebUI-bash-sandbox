@@ -130,7 +130,7 @@ WEBSOCKET_IDLE_TIMEOUT_SECONDS: int = int(
 # SSH shortcuts: which ``-o`` flags we allow (defence against command
 # injection via ``ProxyCommand`` and friends). Anything not in this set
 # is rejected.
-SSH_ALLOWED_FLAGS: set[str] = {"-p", "-l", "-i", "-o", "-q", "-v", "-vv", "-vvv"}
+SSH_ALLOWED_FLAGS: set[str] = {"-p", "-l", "-o", "-q", "-v", "-vv", "-vvv"}
 # Allowlist of ``-o key=value`` options the proxy will forward. We deny
 # everything else — including ``ProxyCommand`` (RCE), ``LocalCommand`` /
 # ``PermitLocalCommand`` (local execution), ``LocalForward`` /
@@ -284,59 +284,13 @@ def _ssh_host_allowed(host: str) -> bool:
     return host.lower() in {h.lower() for h in SSH_ALLOWLIST}
 
 
-def _ssh_identity_within_workspace(path: str) -> bool:
-    """Return True if ``path`` resolves to a file inside the workspace root.
-
-    The workspace root is whatever the sandbox-agent bind-mounts at
-    ``/workspace`` — and that's the only filesystem the LLM is supposed
-    to touch. If the LLM passes ``-i /home/agent/.ssh/id_rsa`` we'd hand
-    it the operator's persistent SSH key (mounted read-only from
-    ``/opt/agent-workspace/.ssh``). Rejecting identity files outside the
-    workspace means the LLM can only use keys it just generated into the
-    workspace, which it can already read through ``bash``.
-
-    Files that do not exist on the host are still rejected — the proxy
-    has no way to verify they won't materialise as a symlink to
-    ``/home/agent/.ssh/...`` later.
-
-    Symlinks are rejected explicitly. The TOCTOU window between this
-    validation and the actual ``ssh -i`` invocation is exploitable:
-    a file the LLM creates inside the workspace passes the
-    realpath check, then the LLM replaces it with a symlink to
-    ``/home/agent/.ssh/id_rsa`` (or anywhere outside) and the SSH
-    command uses the symlink target. Sandbox-recommendations #C7.
-    """
-    if not path:
-        return False
-    # Reject symlinks outright. The workspace-mounted keys the LLM is
-    # allowed to use are regular files; anything that points somewhere
-    # else is suspicious.
-    if os.path.islink(path):
-        return False
-    try:
-        real = os.path.realpath(path)
-    except (OSError, ValueError):
-        return False
-    if not os.path.isfile(real):
-        return False
-    workspace = os.environ.get("AGENT_WORKSPACE", "/workspace")
-    try:
-        workspace_real = os.path.realpath(workspace)
-    except (OSError, ValueError):
-        return False
-    try:
-        common = os.path.commonpath([real, workspace_real])
-    except ValueError:
-        return False
-    return common == workspace_real
-
-
 def _validate_ssh_args(rest: str) -> tuple[str | None, str | None]:
     """Parse the ``ssh …`` payload and return ``(host, safe_argv_string)``.
 
     Defence-in-depth: we accept only a small whitelist of ssh flags
-    (``-p``, ``-l``, ``-i``, ``-o``, ``-q``, ``-v…``) plus an optional
-    ``user@host`` or ``host`` token. Anything else — ``-J`` (jump host),
+    (``-p``, ``-l``, ``-o``, ``-q``, ``-v…``) plus an optional
+    ``user@host`` or ``host`` token. Anything else — ``-i`` (identity
+    file), ``-J`` (jump host),
     ``-W`` (netcat mode), ``-L``/``-R`` (port forwards), ``-F`` (config
     override), ``-o ProxyCommand=…`` injection, ``-o LocalCommand=…``
     local execution, ``-o LocalForward=…`` arbitrary tunnelling — is
@@ -366,8 +320,8 @@ def _validate_ssh_args(rest: str) -> tuple[str | None, str | None]:
 
     # Walk the whole token list. The only non-flag token is the host
     # (which may be ``user@host``). Flags must come from
-    # :data:`SSH_ALLOWED_FLAGS`, ``-i`` must point inside the workspace,
-    # and ``-o`` may only set options from :data:`SSH_SAFE_OPTIONS`.
+    # :data:`SSH_ALLOWED_FLAGS`, ``-i`` is refused outright, and ``-o``
+    # may only set options from :data:`SSH_SAFE_OPTIONS`.
     i = 0
     host: str | None = None
     while i < len(tokens):
@@ -378,16 +332,34 @@ def _validate_ssh_args(rest: str) -> tuple[str | None, str | None]:
             host = tok
             i += 1
             continue
+        if tok == "-i":
+            # ``-i <path>`` was whitelisted in v2.4.x with a workspace
+            # scope check. The check was a *path* check performed here,
+            # in the proxy, while the file is opened by ``ssh`` later,
+            # in the sandbox — two different processes, two different
+            # filesystems, a round-trip in between. A model with a
+            # second session could swap the validated file for a
+            # symlink inside that window, and the code even said so
+            # (the old ``_ssh_identity_within_workspace`` docstring
+            # called the window "exploitable").
+            #
+            # There is no honest way to keep a *path* rule here: the
+            # only check that cannot be raced is the one the shell
+            # itself performs when it opens the file — and that check
+            # is a permission check, not a location check. So the flag
+            # is refused outright, and what protects the operator's key
+            # is stated where it actually lives: the file permissions
+            # of the read-only key mount (docs/SECURITY.md, section 3).
+            return None, (
+                "ssh: -i is not allowed: an identity file cannot be validated "
+                "atomically with the ssh call that uses it, so the sandbox "
+                "could swap it in between. Use the default identity, or run "
+                "ssh outside this shortcut if you need a custom key."
+            )
         if tok not in SSH_ALLOWED_FLAGS:
             return None, f"ssh: flag not allowed: {tok}"
         # Flags that take a value consume the next token.
         if tok in {"-p", "-l"} and i + 1 < len(tokens):
-            i += 2
-            continue
-        if tok == "-i" and i + 1 < len(tokens):
-            identity = tokens[i + 1]
-            if not _ssh_identity_within_workspace(identity):
-                return None, (f"ssh: identity file must be inside the workspace: {identity!r}")
             i += 2
             continue
         if tok == "-o" and i + 1 < len(tokens):

@@ -26,8 +26,7 @@ release-prep patch — see the CHANGELOG.
 | Resource limits | ❌ none | ✅ `mem_limit`, `cpus`, `pids_limit` | kills fork-bombs at 256 PIDs |
 | SSH host allowlist | ❌ `accept-new` for any host | ✅ `OPENAPI_PROXY_SSH_ALLOWLIST` (CIDR/hostname) | empty = disabled |
 | SSH `-o` option whitelist | ❌ | ✅ `SSH_SAFE_OPTIONS` (10 safe keys) | LocalCommand / LocalForward / DynamicForward all rejected |
-| SSH `-i` workspace scope | ❌ | ✅ `realpath` + `commonpath` against `$AGENT_WORKSPACE` | persistent operator key mount not reachable |
-| SSH identity symlink rejection | ❌ | ✅ `os.path.islink` check (#C7) | closes obvious TOCTOU |
+| SSH `-i` identity file | ❌ | ✅ refused outright (v2.11.0) | a path check cannot be made atomic with the call that opens the file |
 | Per-WebSocket session | ❌ shared global | ✅ unique `ws-<hex>` per connection | closes cross-user leak |
 | WebSocket idle timeout | ❌ | ✅ `OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT` (default 300s) | forgotten tabs no longer pin a tmux session |
 | WebSocket token via subprotocol only | ❌ | ✅ `Sec-WebSocket-Protocol: bearer.<token>` | query-param token rejected, no reverse-proxy log leak |
@@ -136,6 +135,9 @@ inside a real shell). Mitigations:
 * Use dedicated, scoped keys in `/opt/agent-workspace/.ssh/`.
 * If you don't need outbound SSH, remove the mount entirely.
 * Treat the agent's SSH identity as semi-trusted.
+* The shortcut refuses `-i <identity>` (v2.11.0): an identity path
+  cannot be validated atomically with the ssh call that opens it, so
+  the flag is not offered rather than checked and raced.
 
 ### 4. LLM fills the disk
 
@@ -385,16 +387,18 @@ Two consequences worth knowing:
   bot's session_id scheme ever changes (per-user-id, per-message-id,
   stateless shells), the right place to add LRU eviction is the
   bot's `call_llama.py` (it knows the scheme), not here.
-* **Residual TOCTOU between `_validate_ssh_args` and `ssh -i`.**
-  The C7 symlink-rejection check is synchronous and happens at
-  `_validate_ssh_args` time; between validation and the actual
-  `ssh -i` execution in the sandbox (via tmux `send-keys`) there
-  are several round-trips. A determined LLM with a parallel tmux
-  session could theoretically swap a regular file for a symlink in
-  that window. Full mitigation (open fd with `O_NOFOLLOW` and pass
-  `/dev/fd/N` through to ssh, or re-validate in `agent_api.exec_cmd`)
-  is a design tradeoff for a future release. Defence-in-depth: keep
-  `/home/agent/.ssh` permissions tight and use scoped keys.
+* **The SSH shortcut is a guardrail, not a boundary.** Its host
+  allowlist and its flag whitelist apply to the `ssh <host>` shortcut
+  only. Inside the sandbox the model has a real shell, so `ssh` can be
+  invoked in any other form and the allowlist does not apply — that is
+  by design (section 3). What actually keeps the operator's key away
+  from the model is the permissions of the read-only key mount: a key
+  the agent's user cannot read is a key `ssh` cannot use either.
+  Until v2.11.0 the shortcut also accepted `-i <path>` after a
+  workspace-scope check. That check was a path check in the proxy,
+  while the file was opened later by `ssh` in the sandbox — a race the
+  old code itself documented as exploitable — so the flag is now
+  refused outright.
 * **Seccomp/AppArmor.** Not configured. Add a profile in production.
 
 ## Trust model (explicit — single operator)
