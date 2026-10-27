@@ -12,7 +12,9 @@
 #   * the published ports take the address from the operator;
 #   * the default bind address is the loopback;
 #   * the scan still looks at the compose file;
-#   * the coverage gate measures the sources and has a threshold of its own.
+#   * the coverage gate measures the sources and has a threshold of its own;
+#   * the MCP door is rate-limited like the exec door;
+#   * a timeout of the MCP relay names the cause and both horizons.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -151,6 +153,23 @@ mutate .github/workflows/ci.yml \
     'pytest --cov=. --cov-report=xml --cov-report=term --cov-fail-under=70 tests/' \
     "$GATE::TestTheCoverageGateMeasuresTheSources::test_the_ci_command_does_not_pass_a_threshold" \
     "the CI command passes no threshold of its own"
+
+DOOR="tests/test_mcp_proxy.py"
+
+echo "== the MCP door loses its limit =="
+mutate openapi_proxy.py \
+    '    dependencies=[Depends(_rate_limit)],
+)' \
+    ')' \
+    "$DOOR::TestTheMcpDoorIsGuarded::test_the_door_is_rate_limited" \
+    "the MCP door is rate-limited"
+
+echo "== the timeout of the relay goes back to an empty reason =="
+mutate openapi_proxy.py \
+    'raise HTTPException(status_code=502, detail=_mcp_relay_timeout_reason(exc)) from exc' \
+    'raise HTTPException(status_code=502, detail=f"sandbox-agent request failed: {exc}") from exc' \
+    "$DOOR::TestTheMcpDoorIsGuarded::test_a_timeout_of_the_relay_names_the_cause" \
+    "a timeout of the relay names the cause"
 
 echo
 echo "mutations: $PASS went red as expected, $FAIL did not"

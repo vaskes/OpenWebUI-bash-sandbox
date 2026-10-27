@@ -642,6 +642,35 @@ def _upstream_timeout_reason(exc: httpx.TimeoutException) -> str:
     )
 
 
+def _mcp_relay_timeout_reason(exc: httpx.TimeoutException) -> str:
+    """Describe a timeout of the MCP relay towards the agent in words.
+
+    The relay waits an hour — the agent's exec limit plus a little — so
+    a timeout here is a real path. The bare ``str()`` of an httpx timeout
+    is empty, and ``sandbox-agent request failed: `` with nothing after
+    it is indistinguishable from "the agent is broken". The two horizons
+    are in the message because the caller has to be able to tell "the
+    command ran out of time" from "the relay ran out of patience".
+    """
+    return (
+        f"sandbox-agent request timed out after {int(MCP_RELAY_TIMEOUT_SECONDS)}s "
+        f"(the relay's patience; the agent's exec limit is {AGENT_EXEC_TIMEOUT}s): {exc!r}"
+    )
+
+
+def _file_relay_timeout_reason(exc: httpx.TimeoutException) -> str:
+    """Describe a timeout of the file door towards the agent in words.
+
+    The same reasoning as the MCP relay: the bare ``str()`` of an httpx
+    timeout is empty, and an empty reason sends the operator to the
+    network instead of to the clock.
+    """
+    return (
+        f"sandbox-agent request timed out after {int(PROXY_REQUEST_TIMEOUT_SECONDS)}s "
+        f"(the proxy's patience): {exc!r}"
+    )
+
+
 def _upstream_headers() -> dict[str, str]:
     """Return the auth headers we forward to the upstream sandbox-agent.
 
@@ -724,6 +753,10 @@ _MCP_RESPONSE_HEADERS = ("content-type", "mcp-session-id", "cache-control")
     "/mcp",
     methods=["GET", "POST", "DELETE"],
     include_in_schema=False,
+    # The same limit the exec door has. The MCP door is the one a model
+    # talks through, and an unbounded tool-call loop is exactly what the
+    # limiter was written for.
+    dependencies=[Depends(_rate_limit)],
 )
 async def mcp_endpoint(
     request: Request,
@@ -766,8 +799,17 @@ async def mcp_endpoint(
             ),
             stream=True,
         )
+    except httpx.TimeoutException as exc:
+        # A timeout must say so. The relay waits an hour, so this is a
+        # real path and not a theory — and the bare ``str()`` of an httpx
+        # timeout is empty, which would send the operator to the network
+        # instead of to the clock.
+        METRICS.inc("exec_timeouts_total")
+        raise HTTPException(status_code=502, detail=_mcp_relay_timeout_reason(exc)) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"sandbox-agent request failed: {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"sandbox-agent request failed: {exc!r}"
+        ) from exc
 
     async def _relay():
         try:
@@ -897,8 +939,13 @@ async def download_file(
             ),
             stream=True,
         )
+    except httpx.TimeoutException as exc:
+        METRICS.inc("upstream_errors_total")
+        raise HTTPException(status_code=502, detail=_file_relay_timeout_reason(exc)) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"sandbox-agent request failed: {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"sandbox-agent request failed: {exc!r}"
+        ) from exc
 
     if upstream.status_code >= 400:
         body = await upstream.aread()

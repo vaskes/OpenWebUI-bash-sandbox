@@ -29,12 +29,12 @@ if str(ROOT) not in sys.path:
 TOKEN = "test-proxy-token-xyz"
 
 
-def _fresh_proxy():
+def _fresh_proxy(rate_limit_rpm: str = "0"):
     """Reload the proxy module with a known token. Returns the module."""
     tempfile.mkdtemp(prefix="proxy-mcp-test-")
     os.environ["OPENAPI_PROXY_TOKEN"] = TOKEN
     os.environ["SANDBOX_URL"] = "http://sandbox-agent:8082"
-    os.environ["OPENAPI_PROXY_RATE_LIMIT_RPM"] = "0"
+    os.environ["OPENAPI_PROXY_RATE_LIMIT_RPM"] = rate_limit_rpm
     if "openapi_proxy" in sys.modules:
         del sys.modules["openapi_proxy"]
     import openapi_proxy
@@ -180,6 +180,66 @@ class TestTheProxyRelaysMcp(unittest.TestCase):
         self.assertTrue(
             fake.requests[0]["stream"],
             "the proxy asked the upstream for a buffered response",
+        )
+
+
+class TestTheMcpDoorIsGuarded(unittest.TestCase):
+    """The MCP door is a door too.
+
+    It has the same rate limit the exec door has — an unbounded
+    tool-call loop is exactly what that limiter was written for — and a
+    timeout of the relay names the cause instead of leaving an empty
+    reason behind.
+    """
+
+    def setUp(self) -> None:
+        try:
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+        except ImportError:
+            self.skipTest("fastapi.testclient not available")
+        # One request per minute: the second one has to be refused.
+        self.proxy = _fresh_proxy(rate_limit_rpm="1")
+        self.client = TestClient(self.proxy.app)
+        self.auth = {"Authorization": f"Bearer {TOKEN}"}
+
+    def test_the_door_is_rate_limited(self) -> None:
+        fake = _FakeClient(_FakeUpstream(200, b"{}"))
+        self.proxy.app.state.client = fake
+        first = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1}, headers=self.auth)
+        second = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 2}, headers=self.auth)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(
+            second.status_code,
+            429,
+            "the MCP door answers without a limit — an unbounded tool-call loop is "
+            "what the limiter on the exec door exists for",
+        )
+
+    def test_a_timeout_of_the_relay_names_the_cause(self) -> None:
+        """An empty reason sends the operator to the network instead of to the clock."""
+        import httpx  # noqa: PLC0415
+
+        class _TimingOut:
+            def build_request(self, method: str, url: str, **kwargs) -> object:
+                return {"method": method, "url": url, **kwargs}
+
+            async def send(self, request, stream: bool = False):
+                raise httpx.ReadTimeout("the read timed out")
+
+        self.proxy.app.state.client = _TimingOut()
+        response = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1}, headers=self.auth)
+        self.assertEqual(response.status_code, 502)
+        detail = response.json()["detail"]
+        self.assertIn("timed out", detail)
+        self.assertIn(
+            str(int(self.proxy.MCP_RELAY_TIMEOUT_SECONDS)),
+            detail,
+            "the reason does not name the relay's horizon",
+        )
+        self.assertIn(
+            str(self.proxy.AGENT_EXEC_TIMEOUT),
+            detail,
+            "the reason does not name the agent's horizon",
         )
 
 
