@@ -62,6 +62,75 @@ containment check on the file door was invisible to the analyser.
   a suppression. The CI CodeQL job runs on every push, so a reappearance
   is a regression, not a false positive to argue about.
 
+## [2.12.0] - 2026-10-27
+
+The sandbox is now also a **Model Context Protocol server**. Same
+sandbox, same tools, another protocol — so a telegram harness, an
+Open WebUI instance or a llama.cpp-style caller can all drive it
+without any of them knowing that the sandbox was ever an OpenAPI
+service.
+
+### Added
+
+- **`POST /mcp`** on the agent, relayed by the proxy. The MCP
+  Streamable HTTP transport, stateless: the server keeps no session,
+  so there is nothing to hijack, nothing to lose on a restart, and no
+  session affinity to keep when the endpoint sits behind a proxy.
+
+- **Four tools**, one per capability, each calling the same functions
+  the HTTP API calls in the same process — so the two doors cannot
+  drift apart:
+
+  | Tool | What it does | HTTP equivalent |
+  |---|---|---|
+  | `bash` | run a command; stdout, exit code, timing | `POST /sessions/{id}/exec` |
+  | `read_file` | take a file out (text as text, binary as a base64 blob) | `GET /files?path=P` |
+  | `file_info` | name, size, mime, mtime — without reading | `GET /files/meta?path=P` |
+  | `delete_file` | remove a file from the workspace | `DELETE /files?path=P` |
+
+  There is no write tool: the shell is the write path, and a command
+  that writes a file is the way to write one.
+
+- **The protocol version is negotiated.** A client that offers
+  `2025-06-18` — what most of the world speaks today — gets that
+  version back; a client that offers the newest revision gets a
+  version it can actually use. The server is not a client for one
+  generation of callers only.
+
+- **`AGENT_MCP_ALLOWED_HOSTS`** on the agent: the `Host` header values
+  the endpoint answers for. Empty = the loopback names the stack
+  publishes on. A deployment behind a domain names its domain there.
+
+- **`docs/HANDOFF-mcp.md`** — the contract for whoever drives the
+  sandbox over MCP: the transport, the tool schemas, the shape of a
+  refusal, and the boundary.
+
+### Security
+
+- **One token, one comparison.** The MCP gate and the HTTP gate call
+  the same `_token_ok()`, so a token that opens one door opens the
+  other and nothing else does. The MCP SDK's OAuth machinery is not
+  used: the sandbox has one trust boundary and one secret in it.
+- **The DNS-rebinding protection is on.** A request whose `Host` is not
+  on the list is refused with a 421 before anything else happens.
+- **A refusal is not a protocol error.** The call succeeds and the
+  result carries `isError: true` with the reason in the text — the
+  text is what the model reads, so the reason has to be in it.
+- The privilege mode applies here too: over MCP exactly as over HTTP.
+
+### Notes
+
+- The MCP SDK is a runtime dependency of the **agent** only, so it
+  lives in `requirements-agent.txt`; the proxy image stays free of
+  packages nothing in it imports.
+- The endpoint is a route and not a mount on purpose: a mount answers
+  `/mcp` with a redirect to `/mcp/`, and some clients do not follow a
+  redirect for POST — the handshake would simply never happen.
+- 29 new tests, including one that drives the sandbox through the
+  **reference MCP client** — the claim "any MCP caller" is a claim
+  about the wire, and it is checked against the client the ecosystem
+  actually uses.
+
 ## [2.11.0] - 2026-10-26
 
 The Qwen review of the whole repository, worked through finding by
