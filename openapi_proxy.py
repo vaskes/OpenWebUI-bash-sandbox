@@ -709,6 +709,84 @@ async def shell_exec(
 
 
 # ---------------------------------------------------------------------------
+# The MCP door
+# ---------------------------------------------------------------------------
+# The sandbox speaks MCP as well as OpenAPI, and the proxy is the
+# published surface — so the MCP endpoint is relayed here too, and a
+# caller that holds the proxy's token can talk to the sandbox in
+# whichever protocol it speaks.
+#
+# The relay is a straight pass-through: the body, the method and the
+# headers that matter for the transport go upstream unchanged, and the
+# answer comes back as it arrives. The MCP transport is stateless (the
+# server keeps no session), so there is no session id to carry and no
+# affinity to keep — the endpoint can sit behind any reverse proxy.
+_MCP_REQUEST_HEADERS = ("accept", "content-type", "mcp-protocol-version", "mcp-session-id")
+_MCP_RESPONSE_HEADERS = ("content-type", "mcp-session-id", "cache-control")
+
+
+@app.api_route(
+    "/mcp",
+    methods=["GET", "POST", "DELETE"],
+    include_in_schema=False,
+)
+async def mcp_endpoint(
+    request: Request,
+    _: str = Depends(_require_token),
+) -> Response:
+    """Relay the MCP endpoint to the sandbox agent.
+
+    The bearer token of the *proxy* is the caller's ticket; the agent
+    is called with the upstream token. The two are the same value in the
+    usual single-trust-boundary deployment, and separate values when
+    the operator wants them separate.
+    """
+    client = _client(request)
+    # The header names are canonicalised: the request's own headers are
+    # lower-cased by the framework, and a reader of the log (or of a
+    # test) should not have to know that.
+    headers = {
+        key.title(): value
+        for key, value in request.headers.items()
+        if key.lower() in _MCP_REQUEST_HEADERS
+    }
+    headers.update(_upstream_headers())
+
+    body = await request.body()
+    try:
+        upstream = await client.send(
+            client.build_request(
+                request.method,
+                f"{SANDBOX_URL}/mcp",
+                content=body,
+                headers=headers,
+            ),
+            stream=True,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"sandbox-agent request failed: {exc}") from exc
+
+    async def _relay():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    response_headers = {
+        key: value
+        for key, value in upstream.headers.items()
+        if key.lower() in _MCP_RESPONSE_HEADERS
+    }
+    return StreamingResponse(
+        _relay(),
+        status_code=upstream.status_code,
+        headers=response_headers,
+        media_type=upstream.headers.get("content-type", "application/json"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Binary transfers
 # ---------------------------------------------------------------------------
 # The proxy is the only published surface, so a file has to come through

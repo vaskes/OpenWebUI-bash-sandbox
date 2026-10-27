@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 423](https://img.shields.io/badge/tests-423_passing-brightgreen)](tests/)
+[![Tests: 430](https://img.shields.io/badge/tests-430_passing-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -64,7 +64,7 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **423 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **430 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -215,6 +215,9 @@ the full development workflow.
 | DELETE | `/files?path=P`  | Remove a delivered file from the sandbox               |
 | GET    | `/metrics`       | Prometheus exposition (auth required)                   |
 | WS     | `/ws` (token via `Sec-WebSocket-Protocol: bearer.<token>` header) | Experimental terminal (per-connection session) |
+| POST   | `/mcp`     | Relay of the agent's MCP endpoint (same token)   |
+| GET    | `/mcp`     | Relay of the MCP event stream                    |
+| DELETE | `/mcp`     | Relay of the MCP session termination             |
 
 > **Never** pass the token via `?token=...` query param — reverse proxies
 > (nginx, Caddy, Cloudflare, ALB) log URLs by default and that is a token

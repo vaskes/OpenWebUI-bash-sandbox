@@ -179,6 +179,56 @@ jobs:
             echo "::error::the group leaked into the stdout"; exit 1
           fi
 
+      # The MCP door. The endpoint is a product, not a library: a caller
+      # that cannot complete a handshake cannot use the sandbox at all,
+      # and a handshake that works while the tools do not is worse than
+      # no endpoint at all. The check goes through the proxy, because
+      # the proxy is the published surface.
+      - name: The MCP endpoint must answer a real client
+        env:
+          TOKEN: ci-smoke-token-not-a-secret-0000
+        run: |
+          set -euo pipefail
+          call() {
+            curl -fsS --max-time 60 \
+              -H "Authorization: Bearer $TOKEN" \
+              -H 'Content-Type: application/json' \
+              -H 'Accept: application/json, text/event-stream' \
+              -d "$1" http://127.0.0.1:8099/mcp
+          }
+
+          # No token, no door.
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+            http://127.0.0.1:8099/mcp)
+          [ "$code" = "401" ] || { echo "::error::the MCP door answered $code without a token"; exit 1; }
+
+          init=$(call '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}')
+          echo "initialize: ${init:0:200}"
+          printf '%s' "$init" | python3 -c "
+          import json,sys
+          r = json.load(sys.stdin)['result']
+          assert r['protocolVersion'] == '2025-06-18', r['protocolVersion']
+          assert r['serverInfo']['name'] == 'openwebui-bash-sandbox', r['serverInfo']
+          " || { echo "::error::the handshake did not answer the version the client offered"; exit 1; }
+
+          tools=$(call '{"jsonrpc":"2.0","id":2,"method":"tools/list"}')
+          printf '%s' "$tools" | python3 -c "
+          import json,sys
+          names = sorted(t['name'] for t in json.load(sys.stdin)['result']['tools'])
+          assert names == ['bash','delete_file','file_info','read_file'], names
+          " || { echo "::error::the tool catalogue is not the documented one"; exit 1; }
+
+          out=$(call '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"bash","arguments":{"command":"echo ci-mcp-ok"}}}')
+          echo "call: ${out:0:300}"
+          printf '%s' "$out" | python3 -c "
+          import json,sys
+          r = json.load(sys.stdin)['result']
+          assert not r.get('isError'), r
+          assert 'ci-mcp-ok' in r['content'][0]['text'], r
+          " || { echo "::error::the MCP tool did not run the command"; exit 1; }
+
       - name: Agent healthz must not leak the workspace path
         run: |
           # docker exec on the container directly, NOT `docker compose exec`:
