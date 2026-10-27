@@ -40,11 +40,12 @@ Two things a client has to get right:
 
 * **`Accept`** must list both `application/json` and `text/event-stream`.
   The server answers JSON, but the client is required to accept both.
-* **`Host`**. The endpoint refuses a request whose `Host` header is not
-  one it knows — the loopback names by default. A deployment behind a
-  domain sets `AGENT_MCP_ALLOWED_HOSTS` on the agent. Without that, the
-  request is answered with a **421**, and the reason is not a token
-  problem.
+* **`Host`** — only if the operator turned the check on. Set
+  `AGENT_MCP_ALLOWED_HOSTS` on the agent, and a request whose `Host`
+  header is not on that list is answered with a **421**. By default the
+  check is off (a containerised service is reached by its service name,
+  and a list that does not contain that name would refuse every
+  legitimate caller), and the bearer token is the guard.
 
 With the reference SDK (`pip install mcp`):
 
@@ -155,10 +156,10 @@ The refusals that can come back:
   included) and checked against the workspace root before it is
   touched. A symlink pointing out of the workspace is refused, not
   followed.
-* **The DNS-rebinding protection is on.** A request whose `Host` is
-  not on the list is refused with a 421 before anything else happens.
-  The list is the loopback names by default; a public deployment names
-  its domain in `AGENT_MCP_ALLOWED_HOSTS`.
+* **The DNS-rebinding protection is available.** Set
+  `AGENT_MCP_ALLOWED_HOSTS` and a request whose `Host` is not on the
+  list is refused with a 421 before anything else happens. It is off by
+  default; the bearer token is the guard either way.
 * **The privilege mode applies here too.** With `AGENT_ALLOW_SUDO=1`,
   a command in the sandbox can become root inside the container — over
   MCP exactly as over HTTP. See `docs/SECURITY.md` §9.

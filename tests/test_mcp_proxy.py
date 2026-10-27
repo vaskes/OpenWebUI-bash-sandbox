@@ -149,6 +149,24 @@ class TestTheProxyRelaysMcp(unittest.TestCase):
         self.assertEqual(sent.get("Accept"), "application/json, text/event-stream")
         self.assertEqual(sent.get("Mcp-Protocol-Version"), "2025-06-18")
 
+    def test_the_callers_host_is_forwarded(self) -> None:
+        """The agent checks the host the *caller* used.
+
+        The agent's MCP endpoint refuses a request whose Host is not one
+        it knows — the protection against DNS rebinding. If the proxy
+        rewrote the Host to the agent's own address inside the network,
+        that check would pass for every caller and stop protecting
+        anything.
+        """
+        fake = self._install(_FakeUpstream(200, b"{}"))
+        self.client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1},
+            headers={**self.auth, "Host": "sandbox.example.com"},
+        )
+        sent = fake.requests[0]["request"]["headers"]
+        self.assertEqual(sent.get("Host"), "sandbox.example.com")
+
     def test_the_caller_token_is_not_forwarded(self) -> None:
         """One trust boundary's secret must not travel into another's."""
         fake = self._install(_FakeUpstream(200, b"{}"))

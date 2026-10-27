@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 430](https://img.shields.io/badge/tests-430_passing-brightgreen)](tests/)
+[![Tests: 434](https://img.shields.io/badge/tests-434_passing-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -64,7 +64,7 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **430 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **434 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -142,11 +142,14 @@ The most important knobs:
   idle for this many seconds (default 300). 0 = disabled. Prevents a
   forgotten browser tab from pinning a tmux session forever.
 - **`AGENT_MCP_ALLOWED_HOSTS`** — comma-separated `Host` header values
-  the MCP endpoint answers for. Empty = the loopback names the stack
-  publishes on (`127.0.0.1`, `localhost`, `[::1]`). A deployment behind
-  a domain has to name that domain here, or the MCP endpoint refuses
-  the request with a 421 — that is the protection against DNS
-  rebinding, and it is on by default.
+  the MCP endpoint answers for. **Empty = the check is off** (the
+  default, and the SDK's own default for a service that is not bound to
+  the loopback: a containerised service is reached by its service name,
+  and a list that does not contain that name refuses every legitimate
+  caller). Set it to turn the protection against DNS rebinding on and
+  to name the hosts the endpoint answers for — a request with any other
+  `Host` is refused with a 421. The bearer token is the guard either
+  way; this is one more layer.
 - **`/workspace` mount** — bind-mount `/opt/agent-workspace` to put files
   on the host that survive container restarts.
 - **`AGENT_ALLOW_SUDO`** — `0` by default. `1` builds the image with
