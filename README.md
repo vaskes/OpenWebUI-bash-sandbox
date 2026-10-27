@@ -235,8 +235,8 @@ Install them with `pip install -r requirements-dev.txt`. See
 | DELETE | `/files?path=P`                   | Remove a delivered file from the sandbox |
 | GET    | `/metrics`                        | Prometheus exposition (bearer token)   |
 | POST   | `/mcp`                            | **MCP endpoint** — the same tools in the MCP protocol |
-| GET    | `/mcp`                            | The MCP event stream (Streamable HTTP) |
-| DELETE | `/mcp`                            | Terminate an MCP session              |
+| GET    | `/mcp`                            | The MCP event stream (Streamable HTTP) — a long-lived SSE connection. This server has no server-initiated messages to carry over it, and the SDK's own client never opens it (measured on mcp 2.3.0) |
+| DELETE | `/mcp`                            | Not supported: the transport is stateless, so there is no session to terminate (405) |
 
 ### `openapi-proxy` (port 8090, **bearer auth required**)
 
@@ -253,8 +253,8 @@ Install them with `pip install -r requirements-dev.txt`. See
 | GET    | `/metrics`       | Prometheus exposition (auth required)                   |
 | WS     | `/ws` (token via `Sec-WebSocket-Protocol: bearer.<token>` header) | Experimental terminal (per-connection session) |
 | POST   | `/mcp`     | Relay of the agent's MCP endpoint (same token)   |
-| GET    | `/mcp`     | Relay of the MCP event stream                    |
-| DELETE | `/mcp`     | Relay of the MCP session termination             |
+| GET    | `/mcp`     | Refused (405): the proxy does not relay the event stream — a long-lived stream would hold a connection out of the pool for as long as the client keeps it, and there is nothing to carry over it |
+| DELETE | `/mcp`     | Refused (405): the transport is stateless, there is no session to terminate |
 
 > **Never** pass the token via `?token=...` query param — reverse proxies
 > (nginx, Caddy, Cloudflare, ALB) log URLs by default and that is a token
@@ -542,17 +542,22 @@ re-running the command in smaller pieces is the fix.
 1. `docker compose ps` — which container is unhealthy?
 2. `docker logs <container> --tail 50`
 3. For `openapi-proxy`: `docker exec openapi-proxy env | grep OPENAPI_PROXY_TOKEN` — must not be empty
-4. For `sandbox-agent`: `curl http://localhost:8082/healthz` — must return `{"status":"ok",...}`
-5. For `open-webui`: `curl http://localhost:3001/api/version` — must return a JSON version
+4. For `sandbox-agent`: `docker exec sandbox-agent curl -fsS http://127.0.0.1:8082/healthz` —
+   must return `{"status":"ok",...}`. The agent has **no host port**: it is reached over the
+   internal network, so a `curl` from the host cannot reach it.
+5. For `open-webui`: `curl http://127.0.0.1:3001/api/version` — must return a JSON version.
+   The published address is the bind address (`SANDBOX_BIND_HOST`), and the default is the
+   loopback.
 
 ### Fix common issues
 
 **`openapi-proxy` env is empty** → `docker compose up -d` (not `restart`).
 `docker compose restart` alone doesn't re-read env vars.
 
-**`curl` missing in `openapi-proxy`** → check `Dockerfile.openapi-proxy`
-has `apt-get install curl`, then
-`docker compose build openapi-proxy && docker compose up -d openapi-proxy`.
+**`openapi-proxy` unhealthy** → the image installs **nothing** from the
+distribution — there is no `apt-get` in it, and the healthcheck asks
+Python, not `curl`. Look at `docker logs openapi-proxy --tail 50`, and
+re-read the env with `docker compose up -d` (not `restart`).
 
 **`/workspace` empty** → check that `/opt/agent-workspace` exists on the
 host and is owned by UID 1000 (or `chown -R 1000:1000` it for testing).
@@ -574,7 +579,7 @@ issue above. Almost always means `SANDBOX_URL` is unset inside the proxy.
 |------------------------------------------------------|------------------------------------------------|----------------------------------------------------|
 | `bash` tool returns 401                              | Token mismatch                                 | Match `OPENAPI_PROXY_TOKEN` in proxy and webui     |
 | `bash` tool returns `connection refused`             | `SANDBOX_URL` env not set in openapi-proxy     | `docker compose up -d` (not `restart`)             |
-| `openapi-proxy` unhealthy                            | `curl` missing in image                        | Add `apt-get install curl` to Dockerfile, rebuild  |
+| `openapi-proxy` unhealthy                            | the healthcheck itself failed                  | `docker logs openapi-proxy --tail 50` — the image has no `apt-get`; the check asks Python |
 | `sandbox-agent` unhealthy                            | tmux not installed or port 8082 conflict       | Check `docker logs sandbox-agent --tail 30`        |
 | Tool not visible in chat                             | Connection not added or not enabled per-chat   | Settings → External Tool Servers + click 🔧       |
 | `sandbox-agent` keeps restarting                     | Healthcheck fails — usually port in use        | `docker ps` to find the conflict                  |
@@ -611,6 +616,12 @@ this stack would be the wrong abstraction.
   any host the host can. Use a firewall or run inside a network namespace.
 - **No resource isolation between users.** A user who runs `fork()` in
   a loop will exhaust the per-container `pids_limit` and stop everyone.
+- **A command may run for an hour.** The hard cap is 3600 seconds, and
+  the relay waits an hour and a minute for the answer. A restart of the
+  stack during a long command cuts it off: the container stops
+  gracefully for 25 seconds, and the caller sees a dropped connection
+  rather than a timeout. See
+  [docs/CONFIGURATION.md](docs/CONFIGURATION.md#an-hour-long-command-is-an-operational-event).
 
 ## Credits
 

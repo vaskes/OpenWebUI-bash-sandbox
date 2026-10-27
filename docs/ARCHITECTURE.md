@@ -83,7 +83,7 @@ Rules that keep the two doors honest:
   deployment runs that limit at 50 MiB. The MCP door puts the bytes into a
   model's context, where they cost attention and memory, so its limit is
   `AGENT_MCP_MAX_READ_BYTES` (1 MiB by default) and never above the file
-  policy or the 64 MiB ceiling. A model-facing budget that were the HTTP
+  policy or the 64 MiB ceiling. A model-facing budget that was the HTTP
   door's would make one tool call cost 50 MiB of prompt.
 
 The MCP door exposes four tools: `bash`, `read_file`, `file_info`, `delete_file`.

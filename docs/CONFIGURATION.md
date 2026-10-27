@@ -169,6 +169,29 @@ The limit is a property of the command, not of the transport: a longer
 command is not a faster answer, it is the same answer with more of it
 already produced when the limit hits.
 
+### An hour-long command is an operational event
+
+The hard cap on one command is 3600 seconds (`MAX_TIMEOUT` in
+`agent_api.py`): a command may hold a worker for an hour. That is the
+operator's ruling — a build that takes an hour is a build that takes an
+hour — and it has three consequences a deployment has to plan for:
+
+* **A restart during a long command cuts it off.** The containers stop
+  gracefully for 25 seconds (`timeout_graceful_shutdown`). A command
+  that is still running after that is killed, and the caller sees a
+  dropped connection rather than a timeout. Restart during quiet hours,
+  or ask for a shorter limit.
+* **The command holds its resources for the whole run.** `mem_limit`,
+  `cpus` and `pids_limit` apply for as long as the command lives: a
+  command that runs for an hour holds a core and its memory for an
+  hour.
+* **The caller has to wait longer than the command may run.** The proxy
+  waits `AGENT_EXEC_TIMEOUT + 15` seconds for the agent, and the MCP
+  relay waits 3660 seconds — an hour and a minute. The chain has to be
+  longer at every step, or the answer is lost on the way back: the
+  relay's horizon is the agent's cap plus its grace, and a client that
+  gives up earlier than the relay never sees the answer at all.
+
 ### Healthcheck
 
 ```
