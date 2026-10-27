@@ -4,15 +4,21 @@ This document describes what the sandbox is and isn't, the threat surface,
 and the controls that ship in the box. Read this before exposing the
 service on a public network.
 
-## Status — v2.4 (post-audit, released)
+## Status — v2.14 (post-audit, released)
 
 The v1.x release was a pet project. v2.x is production-shaped. v2.3 was
-the first wave-2 audit approval. v2.4.0 closed three
+the first wave-2 audit approval, v2.4.0 closed three
 sandbox-recommendations from the bot-side Qwen 3.8-Max review of the
-combined `llama.cpp_telegram` + `bash-sandbox` deployment. v2.4.1 is a
-release-prep patch — see the CHANGELOG.
+combined `llama.cpp_telegram` + `bash-sandbox` deployment, and every
+release since has been a wave of its own — each one a checklist, each
+finding measured against the code before it was believed. The controls
+below are the ones that ship **now**; the CHANGELOG has the history.
 
-| Control | v1 | v2.4 | Notes |
+Two of them are newer than the rest and matter most to a reader who has
+not seen this file before: the MCP door is a **second door to the same
+tools**, and the exec limit is an **hour**.
+
+| Control | v1 | v2.14 | Notes |
 |---------|----|------|-------|
 | `import re` in agent_api.py | ❌ missing | ✅ present | v1 would crash on every successful command |
 | Path-traversal protection in `cwd` | ❌ none | ✅ `os.path.realpath` + workspace whitelist | blocks `..` and symlinks |
@@ -39,7 +45,11 @@ release-prep patch — see the CHANGELOG.
 | Rate limiting | ❌ | ✅ token-bucket per token, LRU-evicted | `OPENAPI_PROXY_RATE_LIMIT_RPM`, `OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS` |
 | Open WebUI DB in named volume | ❌ bind-mount into `/workspace` | ✅ `open-webui-data` named volume | LLM can no longer `rm -rf` the chat DB |
 | Metrics endpoint | ❌ | ✅ `/metrics` on both services, bearer token required | no open endpoint on a published port |
-| Coverage threshold in CI | ❌ | ✅ `--cov-fail-under=70` | fails build if drops |
+| Coverage threshold in CI | ❌ measured the tests | ✅ `fail_under = 85` on the **sources** (`tests/*` omitted) | the old gate counted the test files and could not fall below 74 % |
+| Model-facing read budget (MCP) | ❌ none | ✅ `AGENT_MCP_MAX_READ_BYTES` (1 MiB default, 64 MiB ceiling) | these bytes land in a prompt, not in a file on disk |
+| Host-header check (MCP) | ❌ none | ✅ opt-in via `AGENT_MCP_ALLOWED_HOSTS` | off by default — the bearer token is the guard; with it on, a foreign Host is refused with 421 |
+| Exec limit | ❌ 600 s | ✅ 3600 s (`MAX_TIMEOUT`) | an hour is a long time to hold a worker — see docs/CONFIGURATION.md |
+| The file door opens inside the workspace | ❌ path check only | ✅ opened relative to the workspace descriptor, every component with `O_NOFOLLOW` | a symlinked directory is refused (409), not followed |
 | Ruff B-rules SAST in CI | ❌ | ✅ `ruff check . --select B` | replaces Bandit |
 | Gitleaks secret scan in CI | ❌ | ✅ | |
 | CodeQL (default setup) | ❌ | ✅ GitHub-managed, runs on every push | |

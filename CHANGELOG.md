@@ -107,6 +107,7 @@ A command may run for an hour now.
 The bot mirrors the deployment's number in its own contract, so the
 limit it asks for and the limit the side-car honours are one number
 rather than two that drift.
+
 ## [2.13.1] - 2026-10-28
 
 A command that never started answered with somebody else's output.
