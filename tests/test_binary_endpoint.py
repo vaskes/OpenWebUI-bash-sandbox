@@ -28,6 +28,29 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+class _UnreadableOs:
+    """A stand-in for the ``os`` module that refuses one file.
+
+    The agent opens a vetted path with ``os.open`` — the builtin
+    ``open`` cannot carry the ``O_NOFOLLOW`` flag that keeps a swapped
+    symlink from being followed. The shim keeps the refusal local to
+    one file name: patching the real ``os`` module would reach into
+    the test client as well.
+    """
+
+    def __init__(self, name: str):
+        self._name = name
+        self._real = os
+
+    def __getattr__(self, item):
+        return getattr(self._real, item)
+
+    def open(self, path, *args, **kwargs):
+        if str(path).endswith(self._name):
+            raise PermissionError(13, "Permission denied")
+        return self._real.open(path, *args, **kwargs)
+
+
 def _fresh_app():
     """Reload agent_api against a fresh temp workspace."""
     tmpdir = tempfile.mkdtemp(prefix="agent-binary-test-")
@@ -119,19 +142,13 @@ class TestDownloadFile(_Base):
         """
         self.write("root-only.bin", b"secret")
 
-        real_open = open
-
-        def fake_open(file, *args, **kwargs):
-            if str(file).endswith("root-only.bin"):
-                raise PermissionError(13, "Permission denied")
-            return real_open(file, *args, **kwargs)
-
         # Patched on the module, not on builtins: the agent opens the
-        # resolved path with the builtin ``open``, and a patch on
-        # ``builtins`` would reach into the test client as well.
+        # resolved path with ``os.open``, and a patch on the real
+        # ``os`` module would reach into the test client as well. The
+        # shim stands in for the module and refuses one file only.
         import agent_api  # noqa: PLC0415
 
-        with mock.patch.object(agent_api, "open", fake_open, create=True):
+        with mock.patch.object(agent_api, "os", _UnreadableOs("root-only.bin")):
             response = self.client.get(
                 "/files", params={"path": "root-only.bin"}, headers=self.auth
             )
@@ -146,16 +163,9 @@ class TestDownloadFile(_Base):
         """The range path opens the same file, so it must fail the same way."""
         self.write("root-only.bin", b"secret")
 
-        real_open = open
-
-        def fake_open(file, *args, **kwargs):
-            if str(file).endswith("root-only.bin"):
-                raise PermissionError(13, "Permission denied")
-            return real_open(file, *args, **kwargs)
-
         import agent_api  # noqa: PLC0415
 
-        with mock.patch.object(agent_api, "open", fake_open, create=True):
+        with mock.patch.object(agent_api, "os", _UnreadableOs("root-only.bin")):
             response = self.client.get(
                 "/files",
                 params={"path": "root-only.bin"},

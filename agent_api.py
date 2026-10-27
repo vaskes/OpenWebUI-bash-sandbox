@@ -61,6 +61,7 @@ DELETE /mcp
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import mimetypes
@@ -1194,7 +1195,17 @@ def _open_for_download(name: str):
     that was vetted.
     """
     try:
-        return open(name, "rb")
+        # O_NOFOLLOW: the name is the *resolved* path, so the file that
+        # gets opened is the file that was vetted — unless somebody
+        # replaced it with a symlink between the check and the open. In
+        # that case the open fails instead of following the link out of
+        # the workspace. The workspace is writable, so that race is real.
+        #
+        # The constant is named directly, not looked up with a default:
+        # a guard that silently disappears when a lookup comes up empty
+        # is not a guard. Every platform this container runs on has it.
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW)
+        return os.fdopen(fd, "rb")
     except PermissionError as exc:
         raise HTTPException(
             status_code=403,
@@ -1207,6 +1218,14 @@ def _open_for_download(name: str):
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"file not found: {name}") from exc
     except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"the file was replaced while it was being opened: {name}. "
+                    "It is a symlink now; the sandbox refuses to follow one."
+                ),
+            ) from exc
         raise HTTPException(status_code=400, detail=f"cannot read {name}: {exc}") from exc
 
 
