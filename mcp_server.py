@@ -327,10 +327,18 @@ async def delete_file(path: str) -> DeleteResult:
         logger.exception("mcp.delete_file refused %s", path)
         raise ToolError(f"cannot delete the file: {_reason(exc)}") from exc
 
-    size = os.path.getsize(target)
     try:
+        # The size is informational (the file is gone after this), but a
+        # target that turned into a symlink between the check and the
+        # removal is not removed at all: unlink would drop the link and
+        # leave whatever it points at alone.
+        stat = os.lstat(target)
+        if os.path.islink(target):
+            raise OSError("the path became a symlink while it was being deleted")
+        size = stat.st_size
         os.remove(target)
     except OSError as exc:
+        logger.exception("mcp.delete_file cannot remove %s", path)
         raise ToolError(f"cannot delete the file: {exc}") from exc
     return DeleteResult(deleted=True, path=target, size=size)
 
