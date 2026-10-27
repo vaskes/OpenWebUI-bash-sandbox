@@ -117,7 +117,6 @@ to this agent already caps tool results far lower than 512k.
 | `/var/cache/apt`    | named volume `sandbox-agent-apt`        | yes (the download cache only) |
 | `/home/agent/.cache/pip`  | named volume `sandbox-agent-pip` | yes       |
 | `/opt/sandbox/`     | baked into image                        | no        |
-| `/opt/search`       | bind-mount `/opt/search` (read-only)    | no        |
 | `/home/agent/.ssh`  | bind-mount `/opt/agent-workspace/.ssh` (read-only) | no |
 | `/tmp`              | container tmpfs                         | yes (ephemeral) |
 | `/usr`, `/etc`, `/var/lib/apt`, `/var/lib/dpkg` | the image itself | no — the read-only root filesystem is what makes `apt-get` fail in a privileged deployment (`AGENT_READ_ONLY=false` turns the root filesystem writable) |
@@ -145,7 +144,6 @@ Runs every 10 s; container is marked unhealthy after 3 consecutive failures.
 | `AGENT_EXEC_TIMEOUT`                   | `60`                             | Longest a single command may run, in seconds (5..600). The proxy asks the agent for exactly this limit and then waits longer. New in v2.10.2. |
 | `OPENAPI_PROXY_PORT`                   | `8090`                           | uvicorn listen port.                                                    |
 | `SANDBOX_URL`                          | `http://127.0.0.1:8082`          | Upstream sandbox-agent URL.                                             |
-| `SEARXNG_URL`                          | `http://127.0.0.1:8888`          | SearXNG instance used by `web_search`.                                  |
 
 `SANDBOX_URL` is **critical**: if it's empty or wrong, every `bash` call
 returns `{"error": "sandbox-agent request failed: ..."}`. After changing it
@@ -184,9 +182,6 @@ curl -fsS http://127.0.0.1:8090/openapi.json
 | `WEBUI_SECRET_KEY`            | (placeholder)        | **Change me** in production                       |
 | `ENABLE_SIGNUP`               | `false`              | Allow new accounts                                |
 | `DEFAULT_USER_ROLE`           | `user`               | Role for new signups                              |
-| `ENABLE_WEB_SEARCH`           | `true`               | Use SearXNG for built-in web search               |
-| `WEB_SEARCH_ENGINE`           | `searxng`            | Backend                                          |
-| `SEARXNG_URL`                 | `http://192.168.10.7:8888` | Open WebUI's own web-search instance          |
 | `ENABLE_AUDIO_STT`            | `true`               | Allow speech-to-text                              |
 | `AUDIO_STT_ENGINE`            | `openai`             | Use OpenAI-compatible API                         |
 | `AUDIO_STT_OPENAI_API_BASE_URL` | `http://192.168.10.7:8000/v1` | whisper-api URL                          |
@@ -204,7 +199,7 @@ curl -fsS http://127.0.0.1:8090/openapi.json
   "info": {
     "id": "sandbox-tools",
     "name": "SandboxTools",
-    "description": "Persistent shell + web search"
+    "description": "Persistent shell"
   },
   "config": { "enable": true },
   "auth_type": "bearer",
@@ -282,7 +277,6 @@ Delete these with `docker volume rm <name>` to start fresh.
 |----------------------------------------|-----------------------|-------|--------------------------------|
 | `/opt/agent-workspace`                 | `/workspace`          | rw    | Main working dir               |
 | `/opt/agent-workspace/.ssh`            | `/home/agent/.ssh`    | ro    | SSH keys for outbound ssh      |
-| `/opt/search`                          | `/opt/search`         | ro    | Existing toolchain             |
 
 ## Ports (host → container)
 

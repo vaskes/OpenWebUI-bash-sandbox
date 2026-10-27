@@ -92,7 +92,7 @@ It owns:
 * the workspace files,
 * the HTTP API and the MCP server that the proxy calls.
 
-It does **not** know anything about Open WebUI, OpenAPI, SearXNG or MCP
+It does **not** know anything about Open WebUI, OpenAPI or MCP
 clients. It can be used standalone by any client that needs a persistent
 sandbox.
 
@@ -119,8 +119,8 @@ A thin relay that turns the sandbox-agent API into the OpenAPI 3.0 tool
 surface Open WebUI discovers automatically, and that relays the MCP door to
 the same agent. It also:
 
-* recognises the `web_search <q>` and `ssh <rest>` pseudo-commands and
-  routes them to the right backend (SearXNG and the sandbox respectively),
+* recognises the `ssh <rest>` pseudo-command and routes it to the
+  sandbox, and forwards every other command verbatim,
 * serves `/openapi.json` so Open WebUI can introspect the tool surface,
 * relays `/mcp` with its own upstream token,
 * exposes an experimental `/ws` WebSocket terminal.
@@ -147,8 +147,7 @@ The standard Open WebUI Docker image, with two customisations:
 
 * `TOOL_SERVER_CONNECTIONS` env var pre-wires the connection to
   `openapi-proxy`,
-* `SANDBOX_URL` and `SEARXNG_URL` env vars tell Open WebUI where the local
-  services are.
+* `SANDBOX_URL` env var tells Open WebUI where the local proxy is.
 
 It appears in `docker-compose.yml` and in **no** other stack: the production
 compose runs the agent and the proxy only, and the CI stack runs the agent

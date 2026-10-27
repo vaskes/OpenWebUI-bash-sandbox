@@ -72,7 +72,6 @@ services:
       # The agent's home is read-only because we run as non-root.
       - /opt/agent-workspace:/workspace
       - /opt/agent-workspace/.ssh:/home/agent/.ssh:ro
-      - /opt/search:/opt/search:ro
       # NOTE: there is deliberately NO volume mounted at /home/agent. The
       # application code lives there (WORKDIR is /home/agent so the import
       # path resolves), and Docker seeds a named volume from the image on
@@ -121,7 +120,6 @@ services:
       - "192.168.10.7:8090:8090"
     environment:
       - SANDBOX_URL=http://sandbox-agent:8082
-      - SEARXNG_URL=http://192.168.10.7:8888
       - OPENAPI_PROXY_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
       - OPENAPI_PROXY_CORS_ORIGINS=${OPENAPI_PROXY_CORS_ORIGINS:-}
       - OPENAPI_PROXY_SSH_ALLOWLIST=${OPENAPI_PROXY_SSH_ALLOWLIST:-}
@@ -180,14 +178,11 @@ services:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:?WEBUI_SECRET_KEY must be set}
       - ENABLE_SIGNUP=${ENABLE_SIGNUP:-false}
       - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-user}
-      - ENABLE_WEB_SEARCH=true
-      - WEB_SEARCH_ENGINE=searxng
-      - SEARXNG_URL=http://192.168.10.7:8888
       - ENABLE_AUDIO_STT=true
       - AUDIO_STT_ENGINE=openai
       - AUDIO_STT_OPENAI_API_BASE_URL=http://192.168.10.7:8000/v1
       - AUDIO_STT_OPENAI_API_KEY=${WHISPER_API_KEY:-sk-not-needed}
-      - TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://openapi-proxy:8090","path":"openapi.json","info":{"id":"sandbox-tools","name":"SandboxTools","description":"Persistent shell + web search"},"config":{"enable":true},"auth_type":"bearer","key":"${OPENAPI_PROXY_TOKEN}","spec_type":"url"}]
+      - TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://openapi-proxy:8090","path":"openapi.json","info":{"id":"sandbox-tools","name":"SandboxTools","description":"Persistent shell"},"config":{"enable":true},"auth_type":"bearer","key":"${OPENAPI_PROXY_TOKEN}","spec_type":"url"}]
     mem_limit: 1g
     cpus: "1.0"
     pids_limit: 256
