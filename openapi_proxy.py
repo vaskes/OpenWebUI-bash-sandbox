@@ -721,7 +721,20 @@ async def shell_exec(
 # answer comes back as it arrives. The MCP transport is stateless (the
 # server keeps no session), so there is no session id to carry and no
 # affinity to keep — the endpoint can sit behind any reverse proxy.
-_MCP_REQUEST_HEADERS = ("accept", "content-type", "mcp-protocol-version", "mcp-session-id")
+#: The headers the relay forwards. ``host`` and ``origin`` are in the
+#: list on purpose: the agent's MCP endpoint refuses a request whose
+#: Host is not one it knows (the protection against DNS rebinding), and
+#: the host the *caller* used is the one that has to be checked. If the
+#: proxy rewrote the Host to its own idea of the agent's address, that
+#: check would pass for every caller and stop protecting anything.
+_MCP_REQUEST_HEADERS = (
+    "accept",
+    "content-type",
+    "host",
+    "origin",
+    "mcp-protocol-version",
+    "mcp-session-id",
+)
 _MCP_RESPONSE_HEADERS = ("content-type", "mcp-session-id", "cache-control")
 
 
@@ -751,6 +764,13 @@ async def mcp_endpoint(
         if key.lower() in _MCP_REQUEST_HEADERS
     }
     headers.update(_upstream_headers())
+    # httpx would set the Host from the target URL — the agent's own
+    # address inside the network. The caller's Host is the one the
+    # agent has to check, so it is put back.
+    if "Host" not in headers:
+        host = request.headers.get("host")
+        if host:
+            headers["Host"] = host
 
     body = await request.body()
     try:

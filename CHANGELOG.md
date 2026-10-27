@@ -98,8 +98,10 @@ service.
   generation of callers only.
 
 - **`AGENT_MCP_ALLOWED_HOSTS`** on the agent: the `Host` header values
-  the endpoint answers for. Empty = the loopback names the stack
-  publishes on. A deployment behind a domain names its domain there.
+  the endpoint answers for. Setting it turns the protection against
+  DNS rebinding on — a request with any other `Host` is refused with a
+  421. Empty = the check is off, which is the default and the SDK's
+  own default for a service that is not bound to the loopback.
 
 - **`docs/HANDOFF-mcp.md`** — the contract for whoever drives the
   sandbox over MCP: the transport, the tool schemas, the shape of a
@@ -111,8 +113,13 @@ service.
   the same `_token_ok()`, so a token that opens one door opens the
   other and nothing else does. The MCP SDK's OAuth machinery is not
   used: the sandbox has one trust boundary and one secret in it.
-- **The DNS-rebinding protection is on.** A request whose `Host` is not
-  on the list is refused with a 421 before anything else happens.
+- **The DNS-rebinding protection is available and off by default.** A
+  request whose `Host` is not on `AGENT_MCP_ALLOWED_HOSTS` is refused
+  with a 421 before anything else happens — when the operator sets the
+  list. The default is off, because a containerised service is reached
+  by its service name, and a list that does not contain that name
+  refuses every legitimate caller. The bearer token is the guard
+  either way, and the agent says so once at start-up.
 - **A refusal is not a protocol error.** The call succeeds and the
   result carries `isError: true` with the reason in the text — the
   text is what the model reads, so the reason has to be in it.

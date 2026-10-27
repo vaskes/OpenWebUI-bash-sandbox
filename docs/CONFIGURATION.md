@@ -19,7 +19,7 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_CAP_DROP`       | `ALL`                                     | Capabilities dropped from the container. `SYS_ADMIN` in the privilege mode. |
 | `AGENT_READ_ONLY`      | `true`                                    | The container's root filesystem is read-only. `false` gives the privilege mode's root a filesystem it can write. |
 | `AGENT_PIDS_LIMIT`     | `256`                                     | How many processes the agent's shell may spawn. Raise it for builds that fan out. |
-| `AGENT_MCP_ALLOWED_HOSTS` | (empty → loopback only)              | Comma-separated `Host` header values the MCP endpoint answers for. Empty = `127.0.0.1`, `localhost`, `[::1]` (any port). A deployment behind a domain names it here — otherwise the MCP endpoint answers 421. |
+| `AGENT_MCP_ALLOWED_HOSTS` | (empty → the check is off)          | Comma-separated `Host` header values the MCP endpoint answers for. **Empty = no Host check** — the default, and the SDK's own default for a service that is not bound to the loopback. Set it to turn the protection against DNS rebinding on: a request with any other `Host` is then refused with a 421. |
 
 If `AGENT_TOKEN` is empty, the agent refuses to serve any request
 except `/healthz` (returns 503). This is fail-closed by design.
