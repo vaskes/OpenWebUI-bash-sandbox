@@ -252,6 +252,37 @@ class TestTheProtocol(_Base):
         self.assertEqual(body["result"]["protocolVersion"], "2025-06-18")
         self.assertEqual(body["result"]["serverInfo"]["name"], "openwebui-bash-sandbox")
 
+    def test_the_handshake_names_the_version_of_the_release(self) -> None:
+        """The client is told which sandbox it is talking to.
+
+        The version used to be a placeholder — "0.0.0", replaced later
+        if anybody remembered. A caller that pins a client to a server
+        version has nothing to pin to, and an operator comparing a
+        handshake with a changelog has nothing to compare. The number
+        is the release number, read from the same place the release
+        reads it.
+        """
+        from agent_core import __version__  # noqa: PLC0415
+
+        response = self.client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1"},
+                },
+            },
+            headers={**self.auth, "Accept": "application/json, text/event-stream"},
+        )
+        self.assertEqual(response.status_code, 200)
+        version = response.json()["result"]["serverInfo"]["version"]
+        self.assertEqual(version, __version__)
+        self.assertNotEqual(version, "0.0.0")
+
     def test_a_client_that_asks_for_the_future_gets_a_usable_version(self) -> None:
         """The answer is always a version the client can speak.
 
