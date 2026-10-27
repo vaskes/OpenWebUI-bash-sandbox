@@ -123,6 +123,25 @@ AGENT_EXEC_TIMEOUT: int = parse_exec_timeout(
 #: listening, and the caller sees a transport error instead of the
 #: timeout.
 PROXY_REQUEST_TIMEOUT_SECONDS: float = AGENT_EXEC_TIMEOUT + PROXY_WAIT_GRACE_SECONDS
+#: How long the MCP relay waits for the agent.
+#:
+#: The exec door and the MCP door carry different horizons. The exec
+#: door's horizon is this proxy's own ``AGENT_EXEC_TIMEOUT`` — the proxy
+#: decides it, asks the agent for that much, and waits a little longer.
+#: The MCP door's horizon is the *model's*: the tool takes a ``timeout``
+#: argument, and the agent honours it up to its own hard cap (600 s).
+#: With the shared client timeout the relay would drop the connection
+#: at 75 s and the caller would get a transport error instead of the
+#: answer the agent was still computing.
+#:
+#: So the MCP relay waits longer than the agent can possibly work: the
+#: agent always answers within its own cap, and the relay's job is to
+#: be there when it does. The number is a ceiling, not a policy — a
+#: command that ends early ends the call early.
+#:
+#: The agent's hard cap lives in ``agent_api.MAX_TIMEOUT``; a tripwire
+#: checks that this number is still above it.
+MCP_RELAY_TIMEOUT_SECONDS: float = 900.0
 # Idle timeout for WebSocket terminal connections (sandbox-recommendations #M3).
 # Connections with no inbound traffic for this long are closed by the server
 # so a forgotten browser tab does not pin a file descriptor and a tmux
@@ -771,6 +790,7 @@ async def mcp_endpoint(
                 f"{SANDBOX_URL}/mcp",
                 content=body,
                 headers=headers,
+                timeout=MCP_RELAY_TIMEOUT_SECONDS,
             ),
             stream=True,
         )
