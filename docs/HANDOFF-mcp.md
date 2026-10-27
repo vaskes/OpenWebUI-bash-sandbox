@@ -94,6 +94,13 @@ which one that was (`cwd` in the result).
 pane dies with it, and the call waits out its timeout. Use
 `sh -c 'exit 3'` to fail a command without killing the shell.
 
+**A timeout does not stop the command.** When the command outruns its
+budget the answer comes back with `timed_out: true` and the command
+keeps running in the session — that is what a persistent session
+means, and the only way to stop it is through the session. A caller
+that wants the command gone has to say so (`pkill`, or a `^C` written
+into the pane) in a second call.
+
 **There is no write tool.** The shell is the write path: a command that
 writes a file is the way to write one.
 
@@ -109,6 +116,14 @@ A text file comes back as text. Anything else comes back as an
 embedded resource: base64 in the `blob` field, with the mime type. The
 size limit is the same one the HTTP door applies (`AGENT_BINARY_LIMIT`,
 2 MB by default); a bigger file is an error that names its real size.
+
+**The read holds the file in memory** and base64-encodes it on the way
+out, so a binary file costs about a third more than its own size in
+the answer. One read is capped at **64 MiB** whatever
+`AGENT_BINARY_LIMIT` says: the configured limit is the policy, and the
+ceiling is the guard that stays when the policy is `0` ("no limit").
+A file that grows while it is being read is refused with the reason
+rather than read whole.
 
 ### `file_info`
 
@@ -145,6 +160,8 @@ The refusals that can come back:
 | `file not found: …` | nothing there |
 | `permission denied: …` | the agent's own process cannot read it (a root-owned 0600 file) |
 | `the file is N bytes, which is over the limit of M bytes` | the binary limit |
+| `the file grew past the limit of M bytes while it was being read` | the file grew between the size check and the read |
+| `the file was replaced while it was being opened: …` | the path became a symlink after the containment check |
 
 ---
 
@@ -155,7 +172,8 @@ The refusals that can come back:
 * **The workspace is the perimeter.** Every path is resolved (symlinks
   included) and checked against the workspace root before it is
   touched. A symlink pointing out of the workspace is refused, not
-  followed.
+  followed — and the file is opened with `O_NOFOLLOW`, so a file that
+  turns into a symlink *after* the check is refused too, with a 409.
 * **The DNS-rebinding protection is available.** Set
   `AGENT_MCP_ALLOWED_HOSTS` and a request whose `Host` is not on the
   list is refused with a 421 before anything else happens. It is off by
@@ -163,6 +181,21 @@ The refusals that can come back:
 * **The privilege mode applies here too.** With `AGENT_ALLOW_SUDO=1`,
   a command in the sandbox can become root inside the container — over
   MCP exactly as over HTTP. See `docs/SECURITY.md` §9.
+
+---
+
+## Known debt
+
+* **The tools import the agent's functions from inside the function
+  body.** The agent and the MCP server need each other, and the import
+  is local to the call to keep the two modules from importing each
+  other at the same time. It works and it is tested, but the seam is
+  wider than it should be. The right fix is a shared module both sides
+  import — a refactor, not a patch.
+* **`read_file` does not stream.** The HTTP door streams a file out in
+  chunks; the MCP tool holds it in memory and base64-encodes it. The
+  ceiling keeps the cost bounded, but a caller that wants a hundred
+  megabytes has to use the HTTP door.
 
 ---
 
