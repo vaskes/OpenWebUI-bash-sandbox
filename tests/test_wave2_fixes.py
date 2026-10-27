@@ -140,15 +140,26 @@ class TestOutputTruncation(_AgentBase):
         self.addCleanup(lambda: setattr(agent_api, "MAX_OUTPUT_BYTES", original))
 
         huge = "x" * 5000
+        state: dict[str, str] = {}
 
         async def fake_tmux(*args):
             cmd = args[0]
             if cmd == "has-session":
                 return (0, "", "")
             if cmd == "send-keys":
+                # The command block carries the begin marker; the pane
+                # prints it before the output, the way a real shell does.
+                # Without it the pane would look like a command that
+                # never started — a different case, with its own answer.
+                if "-l" in args:
+                    payload = args[args.index("-l") + 1]
+                    found = re.search(r"__AGENT_BEGIN_([0-9a-f]+)__", payload)
+                    if found:
+                        state["begin"] = f"__AGENT_BEGIN_{found.group(1)}__"
                 return (0, "", "")
             if cmd == "capture-pane":
-                return (0, huge + "\n__AGENT_DONE_abc12345__=0\n", "")
+                begin = state.get("begin", "")
+                return (0, f"{begin}\n" + huge + "\n__AGENT_DONE_abc12345__=0\n", "")
             return (0, "", "")
 
         with patch("agent_api._tmux", new=fake_tmux):
