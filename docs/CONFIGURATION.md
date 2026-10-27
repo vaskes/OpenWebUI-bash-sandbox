@@ -142,7 +142,7 @@ Runs every 10 s; container is marked unhealthy after 3 consecutive failures.
 | `OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS`     | `10000`                          | LRU cap on the in-memory rate-limit dict. Past this, oldest key evicted. |
 | `OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT` | `300`                            | Close `/ws` connections idle this long (sec). `0` = disabled. New in v2.4.0. |
 | `OPENAPI_PROXY_LOG_LEVEL`              | `INFO`                           | uvicorn log level.                                                      |
-| `AGENT_EXEC_TIMEOUT`                   | `60`                             | Longest a single command may run, in seconds (5..600). The proxy asks the agent for exactly this limit and then waits longer. New in v2.10.2. |
+| `AGENT_EXEC_TIMEOUT`                   | `60`                             | Longest a single command may run, in seconds (5..3600). The proxy asks the agent for exactly this limit and then waits longer. New in v2.10.2; the range's ceiling raised to an hour in v2.14.0. |
 | `OPENAPI_PROXY_PORT`                   | `8090`                           | uvicorn listen port.                                                    |
 | `SANDBOX_URL`                          | `http://127.0.0.1:8082`          | Upstream sandbox-agent URL.                                             |
 
@@ -155,7 +155,7 @@ in `docker-compose.yml` you must run `docker compose up -d` (not
 
 How long a single command may run before the agent gives up on it and
 answers `timed_out: true` with the output it managed to produce. The
-default is 60 seconds; the accepted range is 5..600. A value outside the
+default is 60 seconds; the accepted range is 5..3600. A value outside the
 range is a **startup failure**, not a clamp — a limit nobody can trust is
 worse than a container that refuses to boot.
 
