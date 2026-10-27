@@ -395,6 +395,40 @@ Bearer …"`, `mysql --password …`, `sshpass -p …`, a pasted private key
 * The command's *output* is not logged — only its text — so a secret
   the model prints does not reach the log through this path.
 
+### 12. A second protocol on the same sandbox (MCP)
+
+The sandbox also answers the Model Context Protocol, on `POST /mcp`.
+The door is not a new capability: the tools are the same ones the HTTP
+API exposes, they call the same functions in the same process, and the
+containment check is the same check. A caller that can talk MCP can do
+what a caller that can talk HTTP can do — no more.
+
+**Mitigations:**
+
+* **One token, one comparison.** The MCP gate and the HTTP gate both
+  call the same `_token_ok()`, so a token that opens one door opens the
+  other and nothing else does. There is no second, weaker credential
+  for MCP, and the MCP SDK's own OAuth machinery is not used — the
+  sandbox has one trust boundary and one secret in it.
+* **The DNS-rebinding protection is on.** A request whose `Host` header
+  is not on `AGENT_MCP_ALLOWED_HOSTS` is refused with a 421 before
+  anything else happens. The default is the loopback names the stack
+  publishes on; a deployment behind a domain names its domain there.
+  The bearer token is the real guard — this is one less thing a page in
+  the operator's browser can reach for.
+* **The transport is stateless.** The server keeps no session, so
+  there is nothing to hijack, nothing to lose on a restart, and no
+  session affinity to keep when the endpoint sits behind a proxy.
+* **The privilege mode applies here too.** With `AGENT_ALLOW_SUDO=1`,
+  a command that arrives over MCP can become root inside the container
+  exactly as one that arrives over HTTP. The MCP door is not a way
+  around section 9.
+
+**What a caller should know:** a refusal is not a protocol error. The
+call succeeds and the result carries `isError: true` with the reason
+in the text, because that text is what the model reads. A caller that
+wants to react to a refusal has to read it.
+
 ## What's intentionally not implemented
 
 * **Streaming a file that is not finished.** The door serves files that
