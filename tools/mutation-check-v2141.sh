@@ -13,7 +13,8 @@
 #   * the token is compared in constant time;
 #   * a timeout outside the range is refused in words the model can use;
 #   * the MCP tool resolves the agent at call time;
-#   * a test workspace does not outlive the test process.
+#   * a test workspace does not outlive the test process;
+#   * every mutation pattern in every mutation script still applies.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -128,7 +129,7 @@ PY
     fi
 }
 
-DOOR="tests/test_file_door_containment_v2132.py"
+DOOR="tests/test_file_door_containment_v2141.py"
 
 echo "== the file is opened by path again =="
 mutate agent_api.py \
@@ -205,15 +206,22 @@ echo "== the test workspace survives the process =="
 mutate tests/test_agent_api_endpoints.py \
     '    atexit.register(lambda: shutil.rmtree(tmpdir, ignore_errors=True))' \
     '    pass' \
-    "tests/test_review_kwen_v2132.py::TestTheTestsDoNotLeaveTempDirs::test_the_workspace_does_not_survive_the_process" \
+    "tests/test_review_kwen_v2141.py::TestTheTestsDoNotLeaveTempDirs::test_the_workspace_does_not_survive_the_process" \
     "the test workspace does not survive the process"
 
 echo "== the MCP harness leaves its workspace behind =="
 mutate tests/test_mcp_server.py \
     '    atexit.register(lambda: shutil.rmtree(tmpdir, ignore_errors=True))' \
     '    pass' \
-    "tests/test_review_kwen_v2132.py::TestTheTestsDoNotLeaveTempDirs::test_the_mcp_harness_cleans_up_too" \
+    "tests/test_review_kwen_v2141.py::TestTheTestsDoNotLeaveTempDirs::test_the_mcp_harness_cleans_up_too" \
     "the MCP harness cleans up too"
+
+echo "== a mutation pattern goes stale =="
+mutate tools/mutation-check-v2121.sh \
+    '        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)' \
+    '        return os.open(parts[-1], os.O_RDONLY, dir_fd=dir_fd)' \
+    "tests/test_mutation_scripts_v2141.py::TestTheMutationScriptsStillApply::test_every_mutation_pattern_is_in_the_code" \
+    "a stale mutation pattern is caught"
 
 echo
 echo "mutations: $PASS went red as expected, $FAIL did not"

@@ -303,6 +303,12 @@ is a limit nobody can use.
 * **token missing or wrong** → `401`, on either door.
 * **a file the agent may not read** → `403`, with the reason in the body —
   never a `200` with an empty body.
+* **the path was replaced while it was being opened** → `409`, with the
+  reason in the body. The file door opens the vetted path *relative to a
+  descriptor of the workspace*, one component at a time, and every
+  component with `O_NOFOLLOW`: a directory (or the file itself) that
+  turned into a symlink after the containment check fails the open
+  instead of being followed out of the workspace.
 * **MCP tool refused** → a successful JSON-RPC response with `isError = true`
   and the reason in the tool text, so the model can read it and the operator
   gets a traceback in the log.

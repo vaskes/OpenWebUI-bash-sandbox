@@ -4,6 +4,86 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.1] - 2026-10-28
+
+The review of the whole repository was checked against the code, one
+finding at a time. Four findings were real, four were wrong, and the
+real ones are fixed here.
+
+### Fixed
+
+- **The file door serves a file inside the workspace — by construction,
+  not by timing.** The containment check resolves a path and compares it
+  with the workspace root; the file was then opened by that name with
+  `O_NOFOLLOW`. The flag guards the **last** component only, so a
+  directory of the path that turned into a symlink after the check was
+  followed, and the door served a file from outside the workspace while
+  promising it was inside. The file is now opened *relative to a
+  descriptor of the workspace*, one component at a time, every component
+  with `O_NOFOLLOW` — a component that is a symlink fails the open
+  instead of being followed. The refusal answers 409 and names the
+  reason.
+
+  The severity is bounded and was measured: the bash door reads the same
+  bytes with the same uid, so the race grants no new capability to
+  whoever runs in the sandbox. What it broke was the promise the door
+  makes, and the promise is now true.
+
+- **The size in the MCP answer describes the bytes that were read.** The
+  size came from a stat of the path, and a stat of the path and an open
+  of the path can disagree. It comes from the descriptor now
+  (`fstat`).
+
+- **A timeout outside the range is refused in words the model can use.**
+  The MCP `bash` tool built its request outside the `try` that catches
+  failures, so a timeout the request model refused escaped to the SDK
+  and the model read the internals of a framework instead of the range
+  it could act on. The tool knows the range (1..3600 seconds) and says
+  it.
+
+- **The test workspaces do not outlive the test process.** Both test
+  harnesses created a temporary workspace and never removed it; every
+  test run left a directory behind. They are removed when the process
+  ends now, and the check is end-to-end: a subprocess creates a
+  workspace, and the directory must be gone afterwards.
+
+- **The mutation scripts of the older waves still apply.** Two of them
+  had gone stale: a file door that moved in this very release, and a
+  limits table that was reworded in v2.13.0. A stale pattern is a
+  mutation that does not apply, and a script nobody runs rots quietly —
+  the properties they guard were unpinned, and the scripts themselves
+  said so in a line nobody read. The patterns are fixed, and a test now
+  checks that every pattern in every script is still in the code it
+  breaks.
+
+### Documentation
+
+- The mime type of a file is **guessed from the name**, not sniffed
+  from the bytes — there is no `libmagic` in the agent image. It is
+  metadata for the caller; the text-or-binary decision is made on the
+  content, so a wrong mime never changes the bytes.
+- "Stateless" now says what it means: the *transport* is stateless
+  (Streamable HTTP, no server-side session, no session affinity behind
+  the proxy); the *sandbox* is not — the shell lives in a tmux session
+  inside the agent, and a restart of the agent takes those sessions
+  with it.
+- `docs/SECURITY.md` describes how the file is opened, and
+  `docs/ARCHITECTURE.md` lists the 409 among the failure modes.
+
+### Verified, not changed
+
+- The token is compared with `hmac.compare_digest` and never with
+  `==`; the claim is now pinned by a test that reads the function's
+  syntax tree, so it cannot rot into "it did".
+- The MCP tools resolve `agent_api` at call time, so the tests' habit
+  of reloading the module is a reload and not a trap. The property is
+  pinned by a test.
+- The polling latency of a command is milliseconds, not the 300 ms the
+  review assumed (measured: 4 ms inside the agent, 11 ms wall).
+- The image runs Ubuntu 26.04.1 LTS with Python 3.14.4, and
+  `docs/SECURITY.md` has explained the `Defaults !use_pty` relaxation
+  since v2.4.
+
 ## [2.14.0] - 2026-10-28
 
 A command may run for an hour now.
