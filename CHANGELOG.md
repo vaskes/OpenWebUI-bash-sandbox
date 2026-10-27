@@ -4,6 +4,160 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.2] - 2026-10-28
+
+A second review of the whole repository, checked against the code one
+finding at a time. Twenty findings were real, three were wrong, and
+the real ones are fixed here — together with one defect the review did
+not find and the suite did.
+
+### Fixed
+
+- **The shipped configuration named a machine by its address.** The
+  default compose file published the ports on `192.168.10.7` — the
+  operator's own address, on a host that was decommissioned a week
+  earlier. The quick start in the README therefore worked on nobody's
+  machine but the author's. The ports take the address from the
+  operator now (`SANDBOX_BIND_HOST`, the loopback by default), and the
+  whisper URL names `host.docker.internal` instead of a private address.
+  A test scans the shipped configuration and fails on any address of
+  its own — a CIDR is a pattern and stays allowed; a machine is not.
+
+- **The coverage gate could not fail.** It measured `--cov=.`, and
+  the test files are the majority of the tree: the number could not
+  fall below 74 %, and the gate's 70 % was decoration. It measures the
+  sources now (`tests/*` omitted) with a threshold of its own (85 %,
+  and the sources are at 89 %).
+
+- **The MCP door was not rate-limited,** while the exec door next to
+  it was: the one a model talks through was the one anybody could
+  call in a loop.
+
+- **A timeout of the MCP relay said "502" and nothing else.** The
+  reason is now in the answer, and it names both horizons — the relay's
+  patience and the agent's own limit.
+
+- **The test of "the caller's token does not travel upstream" could
+  not see the difference.** The caller's token and the upstream's token
+  were the same value in the test, so the mutation that forwards the
+  caller's token stayed green. They are two different values now, and
+  the test says so.
+
+- **A directory a running session cannot honour was ignored.** Asking a
+  live session to run somewhere else is now refused with 409, and the
+  answer names the directory the session is in and the session id to
+  use instead. A session that is alive but unknown is adopted — with
+  its shell state and its real directory — instead of being replaced.
+
+- **The unit that starts the stack at boot did not build it.**
+  `ExecStart` was `docker compose up -d`, so a container that was
+  already there kept serving the previous code. The unit is a template
+  now (`agent-stack.service.example`) and it builds what it starts.
+
+- **The suite was wrecking the tmux server of its neighbours.** The
+  cold-start test killed the tmux server five times, and the server is
+  shared with every other test: every other test's live session died
+  with it, at a moment that had nothing to do with what it was
+  testing. That test has a tmux server of its own now. The busy
+  session tests patch the tmux call *in the module that serves the
+  request* — the harness reloads the module per test, and the patch
+  could land on a different object than the one that answered — and the
+  double records the calls it answered, so a test that did not use it
+  says so instead of passing. And a test that leaves a session behind
+  is told so.
+
+- **A full scrollback cost the caller the whole answer.** The capture
+  of a command's output is sized by the *growth* of the scrollback
+  while the command runs, and that growth is a bad measure when the
+  scrollback was already nearly full: the command's output took the
+  place of the old lines instead of adding to them, the capture stopped
+  short of the beginning, and the caller was handed a fragment with a
+  "the beginning was lost" notice in front of it. Nothing was lost —
+  the whole output was in the scrollback. The success path takes the
+  same fallback the timeout path has taken since v2.13.1. Measured: a
+  session with a full scrollback and a command that prints 2000 lines
+  answered with 49 lines and a notice; now it answers with 2001 lines.
+
+- **The proxy relayed two MCP methods it should not have.** `DELETE`
+  ends an MCP session, and the transport is stateless: there is no
+  session to end. `GET` opens the event stream, and relaying it would
+  hold a connection out of the pool for as long as the client keeps it,
+  while this server has no server-initiated messages to deliver over
+  it. Both are refused with 405, before the upstream is called.
+
+- **The image scan did not look at the MCP module,** and it matched
+  only the imports at the top of a file — so a module imported inside
+  a function, the way `mcp_server` reaches for `agent_api`, was
+  invisible to it. Such a module, left out of the image, does not fail
+  the build: the container starts, and it dies on the first request to
+  `/mcp`.
+
+- **The Host knob went around `agent_config`** — the only knob in the
+  project that did not come through the module that reads the
+  environment once and validates once. It mattered because of the
+  timing, not the reading: the check is decided when the MCP
+  application is built, which happens at import, so a value read later
+  could disagree with the decision that was already made.
+
+### Changed
+
+- **The dead constant is gone.** `DEFAULT_ALLOWED_HOSTS` named a list
+  of hosts the MCP endpoint does *not* answer for by default: the
+  check is off unless `AGENT_MCP_ALLOWED_HOSTS` names something. The
+  constant was never read, and it contradicted the code.
+
+- **The ssh command is re-assembled whole.** The slice ended at the
+  loop's stop position, which happens to be the end of the token list
+  only because the loop walks every token; it reads as "up to the
+  host".
+
+- **The MCP handshake names the version of the release.** It already
+  did; nothing held it there. A test reads the version out of the
+  handshake now, so a refactor that dropped the one call would leave
+  the handshake saying "0.0.0" and the suite green.
+
+### Documentation
+
+- **The advice that breaks the image.** The README told the reader to
+  check that the proxy's Dockerfile has `apt-get install curl` — there
+  is no `apt-get` in that image, and the healthcheck asks Python. The
+  same section told the reader to `curl` the agent on a port the
+  agent does not publish. Both are fixed, and the troubleshooting table
+  says the same thing.
+
+- **An hour-long command is an operational event,** and nothing said
+  so: a restart cuts it off, it holds its resources for the whole run,
+  and the caller has to wait longer than the command may run.
+
+- **`docs/SECURITY.md` was a picture of ten releases ago** ("v2.4").
+  The controls table carries the ones that are newer than the rest:
+  the model-facing read budget, the Host check, the exec limit, the
+  file door, and the coverage gate that measures the sources.
+
+- **`CONTRIBUTING.md` listed five modules; there are nine.**
+
+- **`.env.example` promised what nobody checks** — a token of 32+
+  characters, and an agent that refuses to start when the token is
+  unchanged. What actually happens is written down now.
+
+- The badge counts the collected tests and says so ("total"), the
+  changelog has its blank line back, and the typo in
+  `docs/ARCHITECTURE.md` is gone.
+
+### Verified, not changed
+
+- **`except (asyncio.CancelledError, Exception)` is not redundant.**
+  The review called it so: `CancelledError` is not an `Exception` (it
+  is a `BaseException` since 3.8), and the clause guards the `await` of
+  a task the handler has just cancelled. The change was made to see,
+  and the test that opens a websocket went red: the terminal died
+  instead of closing. Reverted, and the reason is now written where the
+  clause is.
+
+- **`os.path.realpath(strict=True)` raises `OSError` (ELOOP) on a
+  symlink loop,** measured — so the `except RuntimeError` beside it was
+  indeed dead code, and is gone.
+
 ## [2.14.1] - 2026-10-28
 
 The review of the whole repository was checked against the code, one
