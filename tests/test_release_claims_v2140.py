@@ -42,8 +42,7 @@ def _int_constant(path: Path, name: str) -> int:
     from a constant in this file: a test that quotes the number it is
     checking cannot notice the number changing.
     """
-    match = re.search(rf"^{name}\s*(?::\s*\w+\s*)?=\s*(\d+)", _source(path.name),
-                      re.MULTILINE)
+    match = re.search(rf"^{name}\s*(?::\s*\w+\s*)?=\s*(\d+)", _source(path.name), re.MULTILINE)
     assert match is not None, f"{path.name} has no {name}"
     return int(match.group(1))
 
@@ -60,8 +59,7 @@ class TestTheVersionIsTheRelease(unittest.TestCase):
         self.assertIn("## [2.14.0]", _source("CHANGELOG.md"))
 
     def test_the_changelog_is_newest_first(self) -> None:
-        headings = re.findall(r"^## \[(\d+)\.(\d+)\.(\d+)\]", _source("CHANGELOG.md"),
-                              re.MULTILINE)
+        headings = re.findall(r"^## \[(\d+)\.(\d+)\.(\d+)\]", _source("CHANGELOG.md"), re.MULTILINE)
         self.assertTrue(headings, "the changelog has no version sections")
         versions = [(int(a), int(b), int(c)) for a, b, c in headings]
         self.assertEqual(versions, sorted(versions, reverse=True))
@@ -81,12 +79,16 @@ class TestTheCeilingIsOneNumber(unittest.TestCase):
         self.assertEqual(_int_constant(ROOT / "agent_api.py", "MAX_TIMEOUT"), 3600)
 
     def test_the_relay_waits_longer_than_the_agent_can_work(self) -> None:
-        relay = re.search(r"^MCP_RELAY_TIMEOUT_SECONDS:\s*float\s*=\s*([\d.]+)",
-                           _source("openapi_proxy.py"), re.MULTILINE)
+        relay = re.search(
+            r"^MCP_RELAY_TIMEOUT_SECONDS:\s*float\s*=\s*([\d.]+)",
+            _source("openapi_proxy.py"),
+            re.MULTILINE,
+        )
         self.assertIsNotNone(relay, "the relay timeout constant is gone")
         cap = _int_constant(ROOT / "agent_api.py", "MAX_TIMEOUT")
-        self.assertGreater(float(relay.group(1)), cap,
-                           "the MCP relay would give up before the agent stops working")
+        self.assertGreater(
+            float(relay.group(1)), cap, "the MCP relay would give up before the agent stops working"
+        )
 
 
 class TestTheDefaultDidNotMove(unittest.TestCase):
@@ -117,8 +119,12 @@ class TestTheDocumentsCarryTheSameNumbers(unittest.TestCase):
         # A stale range in a document is a limit nobody can trust: the
         # operator reads 5..600 and believes the deployment cannot do
         # more.
-        for name in ("docs/ARCHITECTURE.md", "docs/CONFIGURATION.md",
-                     "docs/HANDOFF-mcp.md", ".env.example"):
+        for name in (
+            "docs/ARCHITECTURE.md",
+            "docs/CONFIGURATION.md",
+            "docs/HANDOFF-mcp.md",
+            ".env.example",
+        ):
             with self.subTest(document=name):
                 text = _source(name)
                 self.assertNotIn("5..600", text)
