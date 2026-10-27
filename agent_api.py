@@ -396,12 +396,20 @@ def _log_reaped_sessions(reaped: list[str]) -> None:
     TypeError inside the logging machinery, which swallowed the message
     and printed a formatting error instead of the line that says which
     sessions were dropped.
+
+    The list is truncated: a machine that lost a thousand sessions
+    would otherwise print a line a thousand ids long, and the log line
+    that nobody can read is the same as no line at all. The count in
+    the same line stays the true count.
     """
     if reaped:
+        shown = ", ".join(reaped[:10])
+        if len(reaped) > 10:
+            shown += f", ... (+{len(reaped) - 10} more)"
         logger.info(
             "startup reaper dropped %d stale session(s): %s",
             len(reaped),
-            ",".join(reaped),
+            shown,
         )
 
 

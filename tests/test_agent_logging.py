@@ -45,7 +45,36 @@ class TestTheReaperLog(unittest.TestCase):
             self.fail(f"the log line raised: {exc}")
         self.assertTrue(records, "nothing was logged")
         self.assertIn("dropped 2 stale session(s)", records[0].getMessage())
-        self.assertIn("alpha,beta", records[0].getMessage())
+        self.assertIn("alpha", records[0].getMessage())
+        self.assertIn("beta", records[0].getMessage())
+
+    def test_a_long_list_is_truncated(self) -> None:
+        """A machine that lost a thousand sessions must still log a line.
+
+        The count stays the truth; the list is cut. A line a thousand
+        ids long is a line nobody reads, which is the same as no line.
+        """
+        from agent_api import _log_reaped_sessions  # noqa: PLC0415
+
+        records: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        logger = logging.getLogger("sandbox-agent")
+        old_level = logger.level
+        logger.setLevel(logging.INFO)
+        handler = _Capture()
+        logger.addHandler(handler)
+        self.addCleanup(logger.removeHandler, handler)
+        self.addCleanup(logger.setLevel, old_level)
+
+        _log_reaped_sessions([f"session-{index}" for index in range(1000)])
+        message = records[0].getMessage()
+        self.assertIn("dropped 1000 stale session(s)", message)
+        self.assertIn("+990 more", message)
+        self.assertLess(len(message), 500, "the line is still too long to read")
 
     def test_nothing_is_logged_when_nothing_was_reaped(self) -> None:
         from agent_api import _log_reaped_sessions  # noqa: PLC0415
