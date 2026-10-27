@@ -51,6 +51,11 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import BlobResourceContents, CallToolResult, EmbeddedResource, TextContent
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from agent_config import (
+    MCP_READ_CEILING_BYTES,
+    MCP_READ_LIMIT_BYTES,
+)
+
 logger = logging.getLogger("sandbox-mcp")
 
 #: The name the server announces in the handshake. It is the name of
@@ -61,23 +66,11 @@ SERVER_NAME = "openwebui-bash-sandbox"
 #: it is obvious in the log which session a command ran in.
 DEFAULT_SESSION_ID = "mcp"
 
-#: How much of a file a single ``read_file`` call may return. The same
-#: policy as the HTTP door: 0 means no limit. The value comes from the
-#: agent's own configuration, so the two doors cannot disagree.
-BINARY_LIMIT_BYTES = 0
-
-#: The hard ceiling for one MCP read, independent of the configured limit.
-#:
-#: The HTTP door streams a file out in chunks and never holds it whole, so
-#: its limit is a policy about what may be *served*. The MCP door cannot
-#: stream: a tool result is one JSON-RPC message, so the file is held in
-#: memory and then base64-encoded (a third more). With the configured
-#: limit set to "no limit" — a legal setting — one call could therefore
-#: ask the machine for everything it has. This ceiling is the answer to
-#: that: the configured limit still decides the policy, and this decides
-#: how much one call may cost the machine. It is above the limit the
-#: HTTP door is normally run with, so it does not silently narrow it.
-MCP_MAX_READ_BYTES = 64 * 1024 * 1024
+#: How much of a file a single ``read_file`` call may return is decided by
+#: :func:`_read_limit`: the smallest of the model-facing budget
+#: (``AGENT_MCP_MAX_READ_BYTES``), the file policy the HTTP door applies
+#: (``AGENT_BINARY_LIMIT``) and the hard ceiling. All three live in
+#: ``agent_config``, which is where a knob is read and validated once.
 
 #: Hosts the MCP endpoint answers for **when the check is on**. The MCP
 #: SDK refuses a request whose ``Host`` header is not on this list — the
@@ -215,7 +208,9 @@ async def bash(
     description=(
         "Read a file from the sandbox workspace. A text file comes back as "
         "text; anything else comes back as a base64 blob with its mime type. "
-        "The size limit is the same one the HTTP door applies."
+        "A file over the read limit is refused, and the refusal names the "
+        "file's size and the limit — use bash (head, tail, sed) to read a "
+        "piece of a big file instead."
     )
 )
 async def read_file(path: str) -> CallToolResult:
@@ -238,9 +233,15 @@ async def read_file(path: str) -> CallToolResult:
         logger.exception("mcp.read_file cannot stat %s", path)
         raise ToolError(f"cannot read the file: {_reason(exc)}") from exc
     if limit and size > limit:
+        logger.warning(
+            "mcp.read_file refused %s: %d bytes is over the read limit of %d bytes",
+            path,
+            size,
+            limit,
+        )
         raise ToolError(
             f"the file is {size} bytes, which is over the limit of {limit} bytes; "
-            "read it in pieces or compress it first"
+            "read it in pieces with bash (head, tail, sed) or compress it first"
         )
 
     try:
@@ -258,7 +259,7 @@ async def read_file(path: str) -> CallToolResult:
     if len(payload) > limit:
         raise ToolError(
             f"the file grew past the limit of {limit} bytes while it was being read; "
-            "read it in pieces or compress it first"
+            "read it in pieces with bash (head, tail, sed) or compress it first"
         )
 
     mime = mimetypes.guess_type(target)[0] or "application/octet-stream"
@@ -290,7 +291,7 @@ async def read_file(path: str) -> CallToolResult:
 @mcp.tool(
     description=(
         "Look at a file in the sandbox workspace without reading it: its name, "
-        "size, mime type and modification time."
+        "size, mime type, modification time and the read limit that applies."
     )
 )
 async def file_info(path: str) -> FileInfo:
@@ -311,7 +312,7 @@ async def file_info(path: str) -> FileInfo:
         size=stat.st_size,
         mtime=int(stat.st_mtime),
         mime=guessed or "application/octet-stream",
-        limit=_binary_limit(),
+        limit=_read_limit(),
     )
 
 
@@ -375,14 +376,30 @@ def _binary_limit() -> int:
 def _read_limit() -> int:
     """How many bytes one MCP read may return.
 
-    The configured limit is the policy; the ceiling is the guard. With
-    the limit set to 0 ("no limit"), the ceiling is what applies — see
-    :data:`MCP_MAX_READ_BYTES` for why a read needs one.
+    Three limits, and the smallest one wins:
+
+    * the model-facing budget (``AGENT_MCP_MAX_READ_BYTES``) — how much
+      one call may put into a model's context;
+    * the file policy the HTTP door applies (``AGENT_BINARY_LIMIT``) — a
+      limit of 0 means "no limit" and does not apply here;
+    * the hard ceiling (:data:`agent_config.MCP_READ_CEILING_BYTES`) —
+      the guard that stays when the policy is 0.
+
+    The budget is the reason this function exists. The binary limit is
+    about a file that travels to a client, where the bytes land in a
+    file; the deployment runs it at 50 MiB on purpose. Here the bytes
+    land in a prompt: the file is held in memory and base64-encoded on
+    the way out, and a megabyte of text is already more than a text
+    model can use. The HTTP door keeps its own limit — untouched.
     """
-    limit = _binary_limit()
-    if limit and limit <= MCP_MAX_READ_BYTES:
-        return limit
-    return MCP_MAX_READ_BYTES
+    limit = MCP_READ_CEILING_BYTES
+    policy = _binary_limit()
+    if policy:
+        limit = min(limit, policy)
+    budget = MCP_READ_LIMIT_BYTES
+    if budget:
+        limit = min(limit, budget)
+    return limit
 
 
 def _default_timeout() -> int:

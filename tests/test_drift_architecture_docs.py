@@ -167,33 +167,38 @@ def _documented_mcp_tools(text: str) -> set[str]:
 
 
 def _int_constant(source: Path, name: str) -> int:
-    """The value of a module-level integer constant, evaluated from the AST."""
+    """The value of a module-level integer constant, evaluated from the AST.
+
+    A constant may be written in terms of another constant of the same
+    module (``64 * _MIB``), so the evaluator resolves names against the
+    module's own assignments. Anything that is not a plain integer
+    expression fails the check loudly instead of being skipped.
+    """
     tree = ast.parse(source.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        value = None
+    values: dict[str, ast.AST] = {}
+    for node in tree.body:
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == name:
-                    value = node.value
-                    break
-        elif isinstance(node, ast.AnnAssign):
-            target = node.target
-            if isinstance(target, ast.Name) and target.id == name:
-                value = node.value
-        if value is None:
-            continue
-        if isinstance(value, ast.Constant) and isinstance(value.value, (int, float)):
-            return int(value.value)
-        if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Mult):
-            return _int_constant_from(value.left) * _int_constant_from(value.right)
-    raise AssertionError(f"{name} is not defined in {source.name}")
+                if isinstance(target, ast.Name):
+                    values[target.id] = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            values[node.target.id] = node.value
+    if name not in values:
+        raise AssertionError(f"{name} is not defined in {source.name}")
+    return _int_constant_from(values[name], values, frozenset())
 
 
-def _int_constant_from(node: ast.AST) -> int:
+def _int_constant_from(node: ast.AST, values: dict[str, ast.AST], seen: frozenset[str]) -> int:
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
         return int(node.value)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
-        return _int_constant_from(node.left) * _int_constant_from(node.right)
+        return _int_constant_from(node.left, values, seen) * _int_constant_from(
+            node.right, values, seen
+        )
+    if isinstance(node, ast.Name) and node.id in values:
+        if node.id in seen:
+            raise AssertionError(f"the constants are cyclic: {node.id}")
+        return _int_constant_from(values[node.id], values, seen | {node.id})
     raise AssertionError(f"not an integer constant: {ast.dump(node)}")
 
 
@@ -333,8 +338,16 @@ class TestTheLimitsAreTheCodeLimits(unittest.TestCase):
         self.assertEqual(agent, proxy)
 
     def test_the_read_ceiling_is_the_code_ceiling(self) -> None:
-        limit = _int_constant(REPO_ROOT / "mcp_server.py", "MCP_MAX_READ_BYTES")
+        limit = _int_constant(REPO_ROOT / "agent_config.py", "MCP_READ_CEILING_BYTES")
         self.assertIn(f"{limit // (1024 * 1024)} MiB", self._row("read_file"))
+
+    def test_the_model_read_budget_is_the_code_budget(self) -> None:
+        # The budget is the number the model actually lives with, so the
+        # documentation has to carry the same one the code defaults to.
+        budget = _int_constant(REPO_ROOT / "agent_config.py", "MCP_READ_LIMIT_DEFAULT_BYTES")
+        row = self._row("read_file")
+        self.assertIn(f"{budget // (1024 * 1024)} MiB", row)
+        self.assertIn("AGENT_MCP_MAX_READ_BYTES", row)
 
     def test_the_relay_timeout_is_the_code_timeout(self) -> None:
         seconds = _int_constant(REPO_ROOT / "openapi_proxy.py", "MCP_RELAY_TIMEOUT_SECONDS")
