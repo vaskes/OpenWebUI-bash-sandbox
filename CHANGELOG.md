@@ -4,63 +4,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.11.1] - 2026-10-26
+## [2.13.0] - 2026-10-27
 
-The code-scanning alerts that survived v2.11.0, closed by changing the
-code rather than by silencing the analyser. Ten alerts, two causes: the
-redaction patterns could be made to run in quadratic time, and the
-containment check on the file door was invisible to the analyser.
-
-### Fixed
-
-- **The redaction patterns could be made slow on purpose.** The
-  patterns that find a secret in a command — `NAME=value`, `--flag
-  value`, `name: value` — used greedy stars. A greedy star gives
-  characters back when the rest of the pattern does not match, so a
-  command made of 100 000 "A"s is retried at every position of the run
-  and the cost of the match becomes quadratic in the length of the
-  command. The command text comes from the model, so the model could
-  choose the size of the input.
-
-  The quantifiers are possessive now (`*+`, Python 3.11+): they never
-  give anything back, so there is nothing to retry. A possessive
-  quantifier has to *mean* the same thing as the greedy one, and the
-  two are compared over a corpus in the tests — a redaction that
-  quietly stops matching is worse than a slow one.
-
-- **The containment check on the file door was written in a form nobody
-  could check.** The check itself was correct: the path is resolved
-  with `realpath` and compared with `commonpath`. But it was invisible
-  to the static analyser, which reported every filesystem call behind
-  it as unguarded — six alerts that all pointed at the same place and
-  all said, in effect, "we cannot see that this is safe".
-
-  The check is now a `startswith` comparison against the workspace root
-  *with* the separator, which the analyser follows and a reviewer reads
-  in one line. The separator matters: `startswith("/workspace")` cannot
-  tell the workspace from a sibling directory called
-  `/workspace-evil`, and a sibling directory is a real place on the
-  disk where a file can sit. With the separator, after the resolution,
-  the check is equivalent to the `commonpath` one it replaces — not
-  weaker — and the sibling is refused.
-
-  The filesystem calls in the file door are now made with the resolved
-  path as a string, and the open happens on exactly that string, so
-  the file that is served is the file that was vetted.
+The MCP door got the read budget it was missing, and the search that
+never worked is gone from the project.
 
 ### Added
 
-- The sibling-directory case, the logical-path case and the shape of the
-  guard are pinned by `tests/test_path_containment.py`; the possessive
-  quantifiers are pinned by the tests in `tests/test_review_v2110.py`.
-  Every one of them was checked against a mutation: a tripwire that
-  cannot be made red is a decoration.
+- **`AGENT_MCP_MAX_READ_BYTES` — the model-facing read budget.** The MCP
+  `read_file` tool used to be bounded by the file policy the HTTP door
+  applies, and the production deployment runs that policy at 50 MiB. One
+  call could therefore ask the machine for 50 MiB of file, hold it in
+  memory and base64-encode it into a prompt — for an answer a text model
+  cannot use. The budget is 1 MiB by default, the effective limit is the
+  smallest of the budget, the file policy and the 64 MiB ceiling, and a
+  file over it is refused with a message that names the file's size and
+  the limit. The HTTP file door keeps its own limit, untouched: there the
+  bytes land in a file, not in a prompt. See `docs/HANDOFF-mcp.md` and
+  `docs/CONFIGURATION.md`.
 
-### Notes
+### Removed
 
-- The alerts that GitHub reports are closed by the code change, not by
-  a suppression. The CI CodeQL job runs on every push, so a reappearance
-  is a regression, not a false positive to argue about.
+- **The `web_search <q>` shortcut.** The proxy answered it by querying a
+  SearXNG instance that no longer answers on any host. Search belongs to
+  another MCP server — the bot's own `donsetch_web_*` tools — and the
+  operator's scope for this repository is explicit: the sandbox and the
+  sandbox's surroundings, nothing else. The prefix, the proxy's search
+  helper, the `SEARXNG_URL` setting, Open WebUI's own search variables and
+  the read-only mount of the deprecated search stack are all gone, with
+  every mention of them in the documentation. A command that starts with
+  `web_search ` is now an ordinary shell command, forwarded to the
+  sandbox verbatim.
+
+### Fixed
+
+- **A tripwire that could not be made red.** The check that every
+  environment variable the runtime reads is documented has been scanning
+  for `os.environ.get"VAR"` since v2.4.1, while the code writes
+  `os.environ.get("VAR")`. The scan returned an empty set on every
+  release, and "nothing is missing" held, because nothing had been looked
+  for. The pattern is fixed, the two modules that were missing from it are
+  in it, and a sentinel now fails the suite when the scan comes back
+  empty.
 
 ## [2.12.1] - 2026-10-27
 
@@ -225,6 +210,64 @@ service.
   **reference MCP client** — the claim "any MCP caller" is a claim
   about the wire, and it is checked against the client the ecosystem
   actually uses.
+
+## [2.11.1] - 2026-10-26
+
+The code-scanning alerts that survived v2.11.0, closed by changing the
+code rather than by silencing the analyser. Ten alerts, two causes: the
+redaction patterns could be made to run in quadratic time, and the
+containment check on the file door was invisible to the analyser.
+
+### Fixed
+
+- **The redaction patterns could be made slow on purpose.** The
+  patterns that find a secret in a command — `NAME=value`, `--flag
+  value`, `name: value` — used greedy stars. A greedy star gives
+  characters back when the rest of the pattern does not match, so a
+  command made of 100 000 "A"s is retried at every position of the run
+  and the cost of the match becomes quadratic in the length of the
+  command. The command text comes from the model, so the model could
+  choose the size of the input.
+
+  The quantifiers are possessive now (`*+`, Python 3.11+): they never
+  give anything back, so there is nothing to retry. A possessive
+  quantifier has to *mean* the same thing as the greedy one, and the
+  two are compared over a corpus in the tests — a redaction that
+  quietly stops matching is worse than a slow one.
+
+- **The containment check on the file door was written in a form nobody
+  could check.** The check itself was correct: the path is resolved
+  with `realpath` and compared with `commonpath`. But it was invisible
+  to the static analyser, which reported every filesystem call behind
+  it as unguarded — six alerts that all pointed at the same place and
+  all said, in effect, "we cannot see that this is safe".
+
+  The check is now a `startswith` comparison against the workspace root
+  *with* the separator, which the analyser follows and a reviewer reads
+  in one line. The separator matters: `startswith("/workspace")` cannot
+  tell the workspace from a sibling directory called
+  `/workspace-evil`, and a sibling directory is a real place on the
+  disk where a file can sit. With the separator, after the resolution,
+  the check is equivalent to the `commonpath` one it replaces — not
+  weaker — and the sibling is refused.
+
+  The filesystem calls in the file door are now made with the resolved
+  path as a string, and the open happens on exactly that string, so
+  the file that is served is the file that was vetted.
+
+### Added
+
+- The sibling-directory case, the logical-path case and the shape of the
+  guard are pinned by `tests/test_path_containment.py`; the possessive
+  quantifiers are pinned by the tests in `tests/test_review_v2110.py`.
+  Every one of them was checked against a mutation: a tripwire that
+  cannot be made red is a decoration.
+
+### Notes
+
+- The alerts that GitHub reports are closed by the code change, not by
+  a suppression. The CI CodeQL job runs on every push, so a reappearance
+  is a regression, not a false positive to argue about.
 
 ## [2.11.0] - 2026-10-26
 
