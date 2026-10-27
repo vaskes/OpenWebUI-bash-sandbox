@@ -56,7 +56,10 @@ def _fresh_app(allowed_hosts: str | None = None):
         os.environ.pop("AGENT_MCP_ALLOWED_HOSTS", None)
     else:
         os.environ["AGENT_MCP_ALLOWED_HOSTS"] = allowed_hosts
-    for name in ("agent_api", "mcp_server"):
+    # The config is reloaded as well: every knob is read from the
+    # environment once, at import time — so a module that is reloaded
+    # against a new environment needs the config reloaded with it.
+    for name in ("agent_api", "mcp_server", "agent_config"):
         if name in sys.modules:
             del sys.modules[name]
     from agent_api import SESSIONS, app  # noqa: E402
@@ -216,9 +219,13 @@ class TestTheHostCheckWhenItIsOn(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_the_check_is_off_when_the_list_is_empty(self) -> None:
+        # The knob is read once, when the module is loaded — like every
+        # other knob in the project. So the question "is the check off?"
+        # is asked of a module that was loaded without the variable, not
+        # of a module whose variable was unset afterwards.
+        self.app, self.mcp, self.tmpdir = _fresh_app(None)
         import mcp_server  # noqa: PLC0415
 
-        os.environ.pop("AGENT_MCP_ALLOWED_HOSTS", None)
         self.assertEqual(mcp_server.allowed_hosts(), [])
         self.assertFalse(mcp_server.rebinding_protection_is_on())
 

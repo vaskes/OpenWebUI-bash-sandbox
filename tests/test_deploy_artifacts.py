@@ -91,6 +91,18 @@ class TestSandboxDockerfile(unittest.TestCase):
         )
 
 
+#: The modules of the agent itself. Every one of them is read by the
+#: scan that looks for local imports, because a module the scan does
+#: not read is a module whose imports nobody can complain about — and an
+#: import that is missing from the image does not fail the build, it
+#: fails the container, on the first request.
+AGENT_MODULES = ("agent_api.py", "agent_core.py", "agent_config.py", "mcp_server.py")
+
+#: The modules both services share. The agent's own modules import
+#: them, so their imports are covered by the scan of those.
+SHARED_MODULES = ("body_limit.py", "json_logging.py", "metrics.py")
+
+
 class TestAgentModulesAreInTheImage(unittest.TestCase):
     """Every module the agent imports has to be IN the image.
 
@@ -105,11 +117,19 @@ class TestAgentModulesAreInTheImage(unittest.TestCase):
     """
 
     def _imported_modules(self, sources: tuple[str, ...]) -> set[str]:
-        """The local modules that these sources import."""
+        """The local modules that these sources import.
+
+        The imports are matched at any indentation, not only at the
+        top of the file. A module that is imported *inside* a function
+        is just as much a part of the image: ``mcp_server.py`` reaches
+        for ``agent_api`` that way, on purpose — the two modules must
+        not import each other at the same time — and an import the scan
+        cannot see is an import the scan cannot complain about.
+        """
         found: set[str] = set()
         for source in sources:
             text = (ROOT / source).read_text(encoding="utf-8")
-            for match in re.finditer(r"^from (\w+) import|^import (\w+)$", text, re.M):
+            for match in re.finditer(r"^\s*from (\w+) import|^\s*import (\w+)\s*$", text, re.M):
                 module = match.group(1) or match.group(2)
                 if (ROOT / f"{module}.py").exists():
                     found.add(f"{module}.py")
@@ -118,13 +138,30 @@ class TestAgentModulesAreInTheImage(unittest.TestCase):
     def test_every_local_module_the_agent_imports_is_copied(self) -> None:
         body = SANDBOX_DOCKERFILE.read_text(encoding="utf-8")
         copied = set(re.findall(r"COPY[^\n]*?\b(\w+\.py)\b", body))
-        imported = self._imported_modules(("agent_api.py", "agent_core.py", "agent_config.py"))
+        imported = self._imported_modules(AGENT_MODULES)
         self.assertTrue(imported, "no local module was found to check")
         missing = sorted(imported - copied)
         self.assertEqual(
             missing,
             [],
             f"these modules are imported by the agent but not copied into the image: {missing}",
+        )
+
+    def test_the_scan_looks_at_every_module_the_agent_ships(self) -> None:
+        """The scan and the image must agree on what the agent is.
+
+        A module that the image ships and the scan does not read is a
+        module nobody checks: the next local module it imports goes out
+        of the image without a word, and the container dies on the first
+        request instead of failing the build.
+        """
+        shipped = set(
+            re.findall(r"COPY[^\n]*?\b(\w+\.py)\b", SANDBOX_DOCKERFILE.read_text(encoding="utf-8"))
+        )
+        self.assertEqual(
+            set(AGENT_MODULES),
+            shipped - set(SHARED_MODULES),
+            "the agent ships a module the scan does not read",
         )
 
     def test_every_local_module_the_proxy_imports_is_copied(self) -> None:

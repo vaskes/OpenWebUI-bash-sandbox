@@ -39,6 +39,7 @@ __all__ = [
     "BINARY_LIMIT_BYTES",
     "CAPTURE_DEPTH_LINES",
     "HISTORY_LIMIT_LINES",
+    "MCP_ALLOWED_HOSTS",
     "MCP_READ_CEILING_BYTES",
     "MCP_READ_LIMIT_BYTES",
     "MCP_READ_LIMIT_DEFAULT_BYTES",
@@ -184,6 +185,24 @@ MCP_READ_LIMIT_BYTES = parse_size(
     name="AGENT_MCP_MAX_READ_BYTES",
     minimum=0,
     maximum=MCP_READ_CEILING_BYTES,
+)
+
+#: The hosts the MCP endpoint answers for.
+#:
+#: An empty list means "no check": the protection against DNS rebinding
+#: is opt-in (see ``mcp_server.transport_security``). A pattern may end
+#: in ``:*`` to allow any port.
+#:
+#: This knob used to be read from the environment by the MCP module
+#: itself, on every call. It is the one knob in the project that did
+#: not come through here — and the reason it mattered was not the
+#: reading but the *timing*: the check is decided when the MCP
+#: application is built, which happens at import, so a value read later
+#: could disagree with the decision that was already made.
+MCP_ALLOWED_HOSTS: tuple[str, ...] = tuple(
+    item.strip()
+    for item in os.environ.get("AGENT_MCP_ALLOWED_HOSTS", "").split(",")
+    if item.strip()
 )
 
 #: Scrollback the pane must hold for the stdout budget to be deliverable.

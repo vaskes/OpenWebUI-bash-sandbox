@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -156,12 +157,18 @@ class TestLiveExecIsComplete(unittest.TestCase):
 
         self.agent_api = agent_api
         self._counter = 0
+        self._last_sid = ""
 
     def _run(self, command: str, session: str | None = None) -> dict:
         import asyncio
 
         self._counter += 1
-        sid = session or f"live{self._counter}"
+        # A unique name per run. A session that is left over from an
+        # earlier run is *adopted*, scrollback and all — and a session
+        # with a full scrollback is a different environment, so the
+        # test would be measuring the leftovers instead of the code.
+        sid = session or f"live{self._counter}-{uuid.uuid4().hex[:8]}"
+        self._last_sid = sid
         return asyncio.run(
             self.agent_api.exec_cmd(
                 sid,
@@ -224,15 +231,16 @@ class TestLiveExecIsComplete(unittest.TestCase):
     def test_an_overflowing_output_is_reported_as_lost(self) -> None:
         """When the output does not fit, the caller must be told.
 
-        The session's scrollback is finite. A command that prints more
-        than the scrollback holds loses its beginning — and the result
-        says so instead of handing back a plausible fragment.
+        The session's scrollback is finite — 8448 lines. A command that
+        prints more than that loses its beginning, and the result says
+        so instead of handing back a plausible fragment.
+
+        (The scrollback being *full before* the command is a different
+        case, and the answer there is the whole output: see
+        :class:`TestAScrollbackThatIsAlreadyFull`.)
         """
-        # Fill the scrollback, then print more than fits.
-        filler = "awk 'BEGIN{for(i=0;i<2000;i++) printf \"%0200d\\n\", i}'"
-        for _ in range(4):
-            self._run(filler, session="overflow")
-        result = self._run(filler, session="overflow")
+        # More lines than the scrollback holds.
+        result = self._run("seq 1 9000")
         self.assertIn(
             "no longer fits in the session scrollback",
             result["stdout"],
@@ -250,7 +258,7 @@ class TestLiveExecIsComplete(unittest.TestCase):
                 "display-message",
                 "-p",
                 "-t",
-                f"agent_{agent_api.safe_id('live1')}",
+                f"agent_{agent_api.safe_id(self._last_sid)}",
                 "#{history_limit}",
             ],
             capture_output=True,
@@ -258,6 +266,58 @@ class TestLiveExecIsComplete(unittest.TestCase):
             check=False,
         ).stdout.strip()
         self.assertEqual(int(out), agent_api.HISTORY_LIMIT_LINES)
+
+
+@unittest.skipUnless(shutil.which("tmux"), "tmux is required")
+class TestAScrollbackThatIsAlreadyFull(unittest.TestCase):
+    """The answer stays whole when the scrollback was already full.
+
+    The capture is sized by the *growth* of the scrollback during the
+    command. When the scrollback is already nearly full, the command's
+    output takes the place of the old lines instead of adding to them,
+    so the growth is a fraction of what the command printed — and the
+    bounded capture stops short of the beginning.
+
+    The whole output is in the scrollback, so the answer has to be the
+    whole output. Handing back a fragment with a "the beginning was
+    lost" notice in front of it is a lie: nothing was lost.
+    """
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.mkdtemp(prefix="agent-full-")
+        os.environ["AGENT_SESSIONS_FILE"] = os.path.join(self.tmpdir, "sessions.json")
+        os.environ["AGENT_WORKSPACE"] = self.tmpdir
+        os.environ["AGENT_TOKEN"] = "test-agent-token-xyz"
+        if "agent_api" in sys.modules:
+            del sys.modules["agent_api"]
+        import agent_api
+
+        self.agent_api = agent_api
+        self.sid = f"full-{uuid.uuid4().hex[:8]}"
+
+    def _run(self, command: str) -> dict:
+        import asyncio
+
+        return asyncio.run(
+            self.agent_api.exec_cmd(
+                self.sid,
+                self.agent_api.ExecRequest(session_id=self.sid, command=command, timeout=30),
+            )
+        )
+
+    def test_the_output_is_whole_even_when_the_scrollback_was_full(self) -> None:
+        # Fill the scrollback: the limit is 8448 lines, this is 8000.
+        self._run("seq 1 8000")
+        # Now a command whose output does not fit in what is left.
+        result = self._run("seq 1 2000")
+        stdout = result["stdout"]
+        self.assertNotIn(
+            "no longer fits in the session scrollback",
+            stdout,
+            "the answer was declared a fragment — but the scrollback held it",
+        )
+        self.assertIn("2000", stdout, "the last line of the output is missing")
+        self.assertIn("1\n", stdout, "the first line of the output is missing")
 
 
 @unittest.skipUnless(shutil.which("tmux"), "tmux is required")

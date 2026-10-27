@@ -773,7 +773,34 @@ async def mcp_endpoint(
     is called with the upstream token. The two are the same value in the
     usual single-trust-boundary deployment, and separate values when
     the operator wants them separate.
+
+    Only POST is relayed. The other two methods of the Streamable HTTP
+    transport have nothing to carry here, and one of them is expensive:
+
+    * ``DELETE`` ends an MCP session. The transport is stateless, so
+      there is no session to end — the agent answers 405 itself.
+    * ``GET`` opens the event stream. Relaying it would hold a
+      connection out of the pool for as long as the client keeps it
+      (the relay waits an hour), and this server has no
+      server-initiated messages to deliver over it: the four tools are
+      request and response. The SDK's own client (mcp 2.3.0) never
+      opens the stream — measured — so the refusal costs nothing.
+
+    Both refusals happen here, before the upstream is called: a
+    refused method must not take a connection out of the pool.
     """
+    if request.method != "POST":
+        raise HTTPException(
+            status_code=405,
+            detail=(
+                f"{request.method} /mcp is not relayed: the MCP door is "
+                "request and response (POST). The transport is stateless, so "
+                "there is no session to terminate, and the event stream has "
+                "no server-initiated messages to carry."
+            ),
+            headers={"Allow": "POST"},
+        )
+
     client = _client(request)
     # The header names are canonicalised: the request's own headers are
     # lower-cased by the framework, and a reader of the log (or of a
