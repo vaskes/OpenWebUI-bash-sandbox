@@ -89,14 +89,14 @@ mutate docs/ARCHITECTURE.md \
 
 echo "== the read ceiling in the docs is wrong =="
 mutate docs/ARCHITECTURE.md \
-  'the smaller of `AGENT_BINARY_LIMIT` and 64 MiB' \
-  'the smaller of `AGENT_BINARY_LIMIT` and 32 MiB' \
+  'the smallest of `AGENT_MCP_MAX_READ_BYTES` (1 MiB), `AGENT_BINARY_LIMIT` and 64 MiB' \
+  'the smallest of `AGENT_MCP_MAX_READ_BYTES` (1 MiB), `AGENT_BINARY_LIMIT` and 32 MiB' \
   "$TESTS::TestTheLimitsAreTheCodeLimits::test_the_read_ceiling_is_the_code_ceiling" \
   "the read ceiling is the code ceiling"
 
 echo "== the relay timeout in the docs is wrong =="
 mutate docs/ARCHITECTURE.md \
-  '| the MCP relay'"'"'s patience | 900 s' \
+  '| the MCP relay'"'"'s patience | 3660 s' \
   '| the MCP relay'"'"'s patience | 75 s' \
   "$TESTS::TestTheLimitsAreTheCodeLimits::test_the_relay_timeout_is_the_code_timeout" \
   "the relay timeout is the code timeout"

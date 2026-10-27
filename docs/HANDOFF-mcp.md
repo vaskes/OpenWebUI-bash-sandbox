@@ -18,7 +18,7 @@ gate. Nothing is reachable over MCP that is not reachable over HTTP.
 | Transport | MCP Streamable HTTP (the current spec revision) |
 | Endpoint | `POST /mcp` on the **proxy** (published surface) or on the agent (internal network) |
 | Auth | `Authorization: Bearer <token>` — the same token as the HTTP API |
-| Sessions | stateless: the server keeps no session, every request stands on its own |
+| Sessions | the **transport** is stateless: the server keeps no session, every request stands on its own. The **sandbox** is not: the shell lives in a tmux session inside the agent, and a restart of the agent takes those sessions with it |
 | Versions | the client gets the protocol version it offered, when the handshake knows it |
 
 A handshake in plain JSON-RPC:
@@ -129,6 +129,12 @@ embedded resource: base64 in the `blob` field, with the mime type. A
 file over the read limit is an error that names its real size and the
 limit.
 
+**The mime type is guessed from the name**, not sniffed from the bytes —
+there is no `libmagic` in the agent image. It is metadata for the
+caller; the text-or-binary decision is made on the content (the bytes
+are decoded as UTF-8, and a file that does not decode is served as a
+blob), so a wrong mime never changes the bytes.
+
 **The read has a budget of its own** (`AGENT_MCP_MAX_READ_BYTES`, 1 MiB
 by default). The effective limit is the smallest of three: that
 budget, the file policy the HTTP door applies (`AGENT_BINARY_LIMIT`) and
@@ -195,8 +201,11 @@ The refusals that can come back:
 * **The workspace is the perimeter.** Every path is resolved (symlinks
   included) and checked against the workspace root before it is
   touched. A symlink pointing out of the workspace is refused, not
-  followed — and the file is opened with `O_NOFOLLOW`, so a file that
-  turns into a symlink *after* the check is refused too, with a 409.
+  followed — and the file is opened *relative to a descriptor of the
+  workspace*, one component at a time, every component with
+  `O_NOFOLLOW`, so a file — or a **directory** of its path — that turns
+  into a symlink *after* the check is refused too, with a 409. The
+  file that is served is the file that was vetted.
 * **The DNS-rebinding protection is available.** Set
   `AGENT_MCP_ALLOWED_HOSTS` and a request whose `Host` is not on the
   list is refused with a 421 before anything else happens. It is off by
