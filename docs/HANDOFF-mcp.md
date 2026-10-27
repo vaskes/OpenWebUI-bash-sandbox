@@ -101,6 +101,18 @@ means, and the only way to stop it is through the session. A caller
 that wants the command gone has to say so (`pkill`, or a `^C` written
 into the pane) in a second call.
 
+**A busy session answers with a reason, not with the pane.** The session
+is one shell, so while a command is still running the next call's input
+waits in the terminal and the call runs out its timeout. The answer is
+`stdout: ""` and a `stderr` that says the command did not start because
+the session is busy — the command is queued and runs when the session is
+free. Before v2.13.1 the answer carried the pane, and the pane held the
+*previous* command's output: a model that read it quoted another
+command's output as its own, and the notice about a lost beginning made
+it look like a truncated result of the new command. The output of a
+command that *did* run is cut at the command's own begin marker, so a
+foreign session's output never reaches it.
+
 **There is no write tool.** The shell is the write path: a command that
 writes a file is the way to write one.
 

@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.1] - 2026-10-28
+
+A command that never started answered with somebody else's output.
+
+### Fixed
+
+- **A busy session no longer answers with the previous command's
+  output.** The session is one shell: while a command is still running,
+  the next call's input waits in the terminal and the call runs out its
+  timeout. The timeout branch handed the pane back as the new command's
+  `stdout` — and the pane held the *previous* command's output,
+  together with the notice that the beginning of the output no longer
+  fits in the scrollback. A model that read that answer quoted another
+  command's output as its own, and the notice made it look like a
+  truncated result of the new command.
+
+  The begin marker is the proof that a command ran. When it is missing
+  and the scrollback did not overflow — only a command's own output can
+  overflow it — the command never started: the `stdout` is empty, the
+  reason goes to `stderr`, and the pane is left alone. The output of a
+  command that *did* run is cut at that command's own begin marker, so a
+  foreign session's output never reaches it.
+
+  A caller that watched `stderr` for a reason now gets one; `stderr` was
+  empty before.
+
 ## [2.13.0] - 2026-10-27
 
 The MCP door got the read budget it was missing, and the search that
