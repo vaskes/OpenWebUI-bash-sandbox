@@ -10,7 +10,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 519](https://img.shields.io/badge/tests-519_passing-brightgreen)](tests/)
+[![Tests: 534](https://img.shields.io/badge/tests-534_passing-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -71,7 +71,7 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 - ✅ **Singleton HTTP client** — no per-request TCP handshake
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **519 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **534 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -314,6 +314,12 @@ are worth knowing before a caller is written:
   command keeps running in the session — that is what a persistent
   session means. The command can be found and stopped through the
   session afterwards.
+- **A busy session answers with a reason, not with the pane.** While an
+  earlier command is still running, the next call's input waits in the
+  terminal and the call runs out its timeout. The answer is an empty
+  `stdout` and a `stderr` that says the command did not start because
+  the session is busy. The pane still holds the command that is running
+  and is never handed over as if it were the new command's output.
 
 ## Monitoring
 
