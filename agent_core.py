@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import uuid
 
-__version__ = "2.12.0"
+__version__ = "2.12.1"
 
 TMUX_PREFIX = "agent_"
 

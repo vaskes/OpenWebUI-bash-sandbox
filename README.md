@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 463](https://img.shields.io/badge/tests-463_passing-brightgreen)](tests/)
+[![Tests: 470](https://img.shields.io/badge/tests-470_passing-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -64,7 +64,7 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **463 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **470 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -263,6 +263,26 @@ session handling means — is in
 [docs/HANDOFF-mcp.md](docs/HANDOFF-mcp.md). The short version: the
 MCP door grants exactly what the HTTP door grants, and the token is
 the same gate.
+
+Three things about the MCP door differ from the HTTP door, and all three
+are worth knowing before a caller is written:
+
+- **The shell is persistent and shared.** A `bash` call runs in a tmux
+  session that survives the call, so `cd` and `export` carry over. Two
+  callers that use the same `session_id` share a working directory, an
+  environment and a history. Give every conversation its own
+  `session_id`.
+- **`read_file` holds the file in memory** and base64-encodes it on the
+  way out. A text file comes back as text; anything else comes back as a
+  blob a third larger than the file was. One read is capped at 64 MiB
+  whatever the configured binary limit says — the limit is a policy for
+  the HTTP door, and the MCP door adds a ceiling of its own on top of
+  it.
+- **A timeout does not stop the command.** The agent answers
+  `timed_out: true` when the command outran its budget, and the
+  command keeps running in the session — that is what a persistent
+  session means. The command can be found and stopped through the
+  session afterwards.
 
 ## Monitoring
 
