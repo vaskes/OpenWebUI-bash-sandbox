@@ -22,8 +22,10 @@ What is pinned here:
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -44,6 +46,9 @@ def _fresh_app(allowed_hosts: str | None = None):
     unless the operator asks for it).
     """
     tmpdir = tempfile.mkdtemp(prefix="agent-mcp-test-")
+    # The workspace is removed when the test process ends — see the same
+    # note in test_agent_api_endpoints.py.
+    atexit.register(lambda: shutil.rmtree(tmpdir, ignore_errors=True))
     os.environ["AGENT_SESSIONS_FILE"] = os.path.join(tmpdir, "sessions.json")
     os.environ["AGENT_WORKSPACE"] = tmpdir
     os.environ["AGENT_TOKEN"] = TOKEN
