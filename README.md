@@ -10,7 +10,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 484](https://img.shields.io/badge/tests-484_passing-brightgreen)](tests/)
+[![Tests: 502](https://img.shields.io/badge/tests-502_passing-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -71,7 +71,7 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 - ✅ **Singleton HTTP client** — no per-request TCP handshake
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **484 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **502 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -292,7 +292,7 @@ session handling means — is in
 MCP door grants exactly what the HTTP door grants, and the token is
 the same gate.
 
-Three things about the MCP door differ from the HTTP door, and all three
+Four things about the MCP door differ from the HTTP door, and all four
 are worth knowing before a caller is written:
 
 - **The shell is persistent and shared.** A `bash` call runs in a tmux
@@ -302,10 +302,13 @@ are worth knowing before a caller is written:
   `session_id`.
 - **`read_file` holds the file in memory** and base64-encodes it on the
   way out. A text file comes back as text; anything else comes back as a
-  blob a third larger than the file was. One read is capped at 64 MiB
-  whatever the configured binary limit says — the limit is a policy for
-  the HTTP door, and the MCP door adds a ceiling of its own on top of
-  it.
+  blob a third larger than the file was. One read is capped at
+  **`AGENT_MCP_MAX_READ_BYTES`** — 1 MiB by default — and the effective
+  limit is the smallest of that budget, the file policy the HTTP door
+  applies (`AGENT_BINARY_LIMIT`) and a 64 MiB ceiling. A file over the
+  limit is refused, and the refusal names the file's size and the limit.
+  The HTTP door keeps its own limit untouched: there the bytes land in a
+  file, not in a prompt.
 - **A timeout does not stop the command.** The agent answers
   `timed_out: true` when the command outran its budget, and the
   command keeps running in the session — that is what a persistent

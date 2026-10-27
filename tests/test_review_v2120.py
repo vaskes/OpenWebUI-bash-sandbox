@@ -65,12 +65,19 @@ class TestTheFileDoorOpensTheFileItChecked(unittest.TestCase):
 
 
 class TestAReadCannotCostTheMachineTooMuch(unittest.TestCase):
-    """One MCP read has a ceiling, whatever the configured limit says."""
+    """One MCP read has a ceiling, whatever the configured limits say.
+
+    The chain has three links since v2.13.0 — the model-facing budget,
+    the file policy and the hard ceiling — and the smallest one wins.
+    These tests pin the two ends of it: the policy still decides when it
+    is the smaller one, and the ceiling still decides when everything
+    else is switched off.
+    """
 
     def test_the_ceiling_exists(self) -> None:
         import mcp_server  # noqa: PLC0415
 
-        self.assertGreater(mcp_server.MCP_MAX_READ_BYTES, 0)
+        self.assertGreater(mcp_server.MCP_READ_CEILING_BYTES, 0)
 
     def test_the_configured_limit_wins_when_it_is_smaller(self) -> None:
         import mcp_server  # noqa: PLC0415
@@ -88,22 +95,28 @@ class TestAReadCannotCostTheMachineTooMuch(unittest.TestCase):
         # everything it has, so the ceiling decides instead.
         import mcp_server  # noqa: PLC0415
 
-        original = mcp_server._binary_limit
+        original_policy = mcp_server._binary_limit
+        original_budget = mcp_server.MCP_READ_LIMIT_BYTES
         mcp_server._binary_limit = lambda: 0
+        mcp_server.MCP_READ_LIMIT_BYTES = 0
         try:
-            self.assertEqual(mcp_server._read_limit(), mcp_server.MCP_MAX_READ_BYTES)
+            self.assertEqual(mcp_server._read_limit(), mcp_server.MCP_READ_CEILING_BYTES)
         finally:
-            mcp_server._binary_limit = original
+            mcp_server._binary_limit = original_policy
+            mcp_server.MCP_READ_LIMIT_BYTES = original_budget
 
     def test_the_ceiling_wins_when_the_limit_is_huge(self) -> None:
         import mcp_server  # noqa: PLC0415
 
-        original = mcp_server._binary_limit
-        mcp_server._binary_limit = lambda: mcp_server.MCP_MAX_READ_BYTES * 100
+        original_policy = mcp_server._binary_limit
+        original_budget = mcp_server.MCP_READ_LIMIT_BYTES
+        mcp_server._binary_limit = lambda: mcp_server.MCP_READ_CEILING_BYTES * 100
+        mcp_server.MCP_READ_LIMIT_BYTES = 0
         try:
-            self.assertEqual(mcp_server._read_limit(), mcp_server.MCP_MAX_READ_BYTES)
+            self.assertEqual(mcp_server._read_limit(), mcp_server.MCP_READ_CEILING_BYTES)
         finally:
-            mcp_server._binary_limit = original
+            mcp_server._binary_limit = original_policy
+            mcp_server.MCP_READ_LIMIT_BYTES = original_budget
 
     def test_the_read_is_bounded_by_the_limit(self) -> None:
         # The read must ask for one byte more than the limit allows:

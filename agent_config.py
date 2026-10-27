@@ -13,6 +13,17 @@ Two budgets live here, and they are independent axes:
   serve. Binary never travels through stdout, so this limit is about policy,
   not about transport.
 
+A third budget arrived with the MCP door, and it is on a third axis
+again:
+
+* ``AGENT_MCP_MAX_READ_BYTES`` — how many bytes one MCP ``read_file`` may
+  put into a **model's context**. The binary limit is about a file that
+  travels to a client, where the bytes land in a file on disk; this one is
+  about bytes that land in a prompt, where they cost the model's attention
+  and the memory of the process that holds them. The deployment runs the
+  binary limit at 50 MiB on purpose, and that limit must not become the
+  price of one tool call.
+
 The stdout budget is only meaningful if the tmux pane can actually hold it.
 A pane that is smaller than the budget loses the *beginning* of the output
 silently — no truncation marker, no error — so the scrollback depth is
@@ -28,6 +39,9 @@ __all__ = [
     "BINARY_LIMIT_BYTES",
     "CAPTURE_DEPTH_LINES",
     "HISTORY_LIMIT_LINES",
+    "MCP_READ_CEILING_BYTES",
+    "MCP_READ_LIMIT_BYTES",
+    "MCP_READ_LIMIT_DEFAULT_BYTES",
     "PANE_HEIGHT",
     "PANE_WIDTH",
     "STDOUT_LIMIT_BYTES",
@@ -140,6 +154,36 @@ BINARY_LIMIT_BYTES = parse_size(
     os.environ.get("AGENT_BINARY_LIMIT", "2048k"),
     name="AGENT_BINARY_LIMIT",
     minimum=0,
+)
+
+#: The hard ceiling for one MCP read, independent of any configured limit.
+#:
+#: The HTTP door streams a file out in chunks and never holds it whole, so
+#: its limit is a policy about what may be *served*. The MCP door cannot
+#: stream: a tool result is one JSON-RPC message, so the file is held in
+#: memory and then base64-encoded (a third more). With the configured
+#: limit set to "no limit" - a legal setting - one call could therefore
+#: ask the machine for everything it has. This ceiling is the answer to
+#: that: the configured limit still decides the policy, and this decides
+#: how much one call may cost the machine.
+MCP_READ_CEILING_BYTES = 64 * _MIB
+
+#: The default model-facing read budget: one mebibyte. A text model asked
+#: to reason about a megabyte of text has lost the thread, and the bytes
+#: are held in memory and base64-encoded on the way out. The operator can
+#: raise the budget, but the default is the one that fits in a prompt.
+MCP_READ_LIMIT_DEFAULT_BYTES = 1 * _MIB
+
+#: The model-facing read budget. A limit of 0 means "no budget of its own",
+#: the same convention as ``AGENT_BINARY_LIMIT=0`` ("unlimited"): the file
+#: policy and the ceiling decide then. The range ends at the ceiling,
+#: because a value above it would be silently clamped - and a limit that
+#: is silently clamped is a limit nobody can trust.
+MCP_READ_LIMIT_BYTES = parse_size(
+    os.environ.get("AGENT_MCP_MAX_READ_BYTES", str(MCP_READ_LIMIT_DEFAULT_BYTES)),
+    name="AGENT_MCP_MAX_READ_BYTES",
+    minimum=0,
+    maximum=MCP_READ_CEILING_BYTES,
 )
 
 #: Scrollback the pane must hold for the stdout budget to be deliverable.

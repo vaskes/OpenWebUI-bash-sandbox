@@ -77,6 +77,14 @@ Rules that keep the two doors honest:
   either way.
 * **The protocol version offered is `2025-06-18`.** The server answers with
   the version the client offered.
+* **The budgets differ on purpose.** The two doors grant the same
+  *capabilities*, but they are not the same question. The HTTP door serves
+  a file — the bytes land in a file on the caller's disk, and the
+  deployment runs that limit at 50 MiB. The MCP door puts the bytes into a
+  model's context, where they cost attention and memory, so its limit is
+  `AGENT_MCP_MAX_READ_BYTES` (1 MiB by default) and never above the file
+  policy or the 64 MiB ceiling. A model-facing budget that were the HTTP
+  door's would make one tool call cost 50 MiB of prompt.
 
 The MCP door exposes four tools: `bash`, `read_file`, `file_info`, `delete_file`.
 
@@ -270,7 +278,7 @@ under a path (`/home/agent/.cache/pip`), never over the code.
 | request body | 2 MiB, counted as the bytes arrive (chunked bodies included) | both services |
 | text returned by one command | `AGENT_STDOUT_LIMIT`, 512 KB | agent |
 | size of a file served by `/files` | `AGENT_BINARY_LIMIT`, 2 MiB (`0` = unlimited) | agent |
-| size of a file read by the MCP `read_file` tool | the smaller of `AGENT_BINARY_LIMIT` and 64 MiB | agent |
+| size of a file read by the MCP `read_file` tool | the smallest of `AGENT_MCP_MAX_READ_BYTES` (1 MiB), `AGENT_BINARY_LIMIT` and 64 MiB | agent |
 | one command's runtime | `AGENT_EXEC_TIMEOUT`, 60 s default (5..600); the agent's own request default is 30 s and its hard cap 600 s | the proxy asks, the agent runs |
 | the MCP relay's patience | 900 s — longer than the agent's own 600 s cap | proxy |
 
