@@ -83,6 +83,11 @@ def _make_tmux_mock():
             except ValueError:
                 pass
         if cmd == "display-message":
+            if any("pane_current_path" in str(arg) for arg in args):
+                # The pane's directory. The mock does not model panes,
+                # so it answers "I do not know" — which is the honest
+                # answer, and the code has to treat it as unknown.
+                return (0, "", "")
             # The scrollback depth query. The mock keeps no history, so
             # every session looks empty; the capture depth falls back to
             # its minimum, which is what the templates below assume.

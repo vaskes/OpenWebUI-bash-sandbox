@@ -624,9 +624,45 @@ async def create_session(body: CreateSession) -> dict[str, Any]:
     """
     sid = safe_id(body.session_id)
     name = tmux_name(sid)
-    if sid in SESSIONS and await tmux_session_exists(name):
-        return {"session_id": sid, "tmux_name": name, "existed": True}
-    cwd = _safe_cwd(body.cwd or WORKSPACE_REAL)
+    requested = _safe_cwd(body.cwd) if body.cwd else None
+    if await tmux_session_exists(name):
+        # The pane is alive. Two cases, and they used to be one:
+        #
+        # * the registry knows the session — nothing to do;
+        # * the registry does not know it (the sessions file is rebuilt
+        #   after a restart and it can be stale) — the session is
+        #   **adopted**, not replaced. The old code created a new window
+        #   in the requested directory and killed the old one, so the
+        #   shell state the user had built up (a ``cd``, an ``export``, a
+        #   running build) was silently destroyed, and the registry then
+        #   recorded the requested directory instead of the pane's real
+        #   one.
+        live = await _pane_cwd(name)
+        if requested and live and requested != live:
+            # The directory of a running session is not a parameter the
+            # caller can set from the outside. Saying so is the only
+            # honest answer: the alternative is running the command
+            # somewhere the caller did not ask for, without a word.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"the session {sid} is running in {live}; its directory is not a parameter "
+                    f"that can be changed from the outside. Use a new session_id to run "
+                    f"in {requested}."
+                ),
+            )
+        if sid not in SESSIONS:
+            adopted = live or requested or WORKSPACE_REAL
+            SESSIONS[sid] = {"tmux_name": name, "created": time.time(), "cwd": adopted}
+            await _save_sessions()
+            logger.info("session.adopt sid=%s cwd=%s", sid, adopted)
+        return {
+            "session_id": sid,
+            "tmux_name": name,
+            "existed": True,
+            "cwd": SESSIONS.get(sid, {}).get("cwd"),
+        }
+    cwd = requested or WORKSPACE_REAL
     rc, _, err = 0, "", ""
     for _attempt in range(3):
         rc, _, err = await _tmux(
@@ -968,6 +1004,33 @@ async def _pane_history_limit(name: str) -> int:
         return int(out.strip())
     except ValueError:
         return 0
+
+
+async def _pane_cwd(name: str) -> str | None:
+    """The directory the pane is in right now. None when it cannot be read.
+
+    The registry remembers the directory a session was *created* in; the
+    shell moves (``cd``) and the registry does not follow. The live path
+    is the only honest answer to "where will this command run" — and the
+    only one that lets a caller be told the truth instead of being
+    quietly given a different directory.
+    """
+    rc, out, _ = await _tmux("display-message", "-p", "-t", name, "#{pane_current_path}")
+    if rc != 0:
+        return None
+    path = out.strip()
+    if path.endswith(" (deleted)"):
+        # tmux marks a pane whose directory is gone. The mark is about
+        # the directory, not about the path: the path is still the path
+        # the shell is in, and comparing it with a requested directory
+        # has to work.
+        path = path[: -len(" (deleted)")]
+    if not path.startswith("/"):
+        # tmux answers with a path or with nothing. Anything else is
+        # not a directory, and treating it as one would make the
+        # comparison below meaningless.
+        return None
+    return path or None
 
 
 async def _capture_command_output(name: str, history_before: int) -> str:

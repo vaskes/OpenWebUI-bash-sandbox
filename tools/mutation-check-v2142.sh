@@ -15,7 +15,9 @@
 #   * the coverage gate measures the sources and has a threshold of its own;
 #   * the MCP door is rate-limited like the exec door;
 #   * a timeout of the MCP relay names the cause and both horizons;
-#   * the caller's token does not travel upstream.
+#   * the caller's token does not travel upstream;
+#   * a directory a running session cannot honour is refused, not ignored;
+#   * a live session is adopted, not replaced.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -178,6 +180,28 @@ mutate openapi_proxy.py \
     '    headers["Authorization"] = request.headers.get("authorization", "")' \
     "$DOOR::TestTheProxyRelaysMcp::test_the_caller_token_is_not_forwarded" \
     "the caller's token does not travel upstream"
+
+CWD="tests/test_cwd_contract_v2142.py"
+
+echo "== the directory of a running session is not checked =="
+mutate agent_api.py \
+    '        if requested and live and requested != live:' \
+    '        if False and requested and live and requested != live:' \
+    "$CWD::TestTheDirectoryOfASession::test_a_cwd_the_session_cannot_honour_is_refused" \
+    "a cwd the session cannot honour is refused"
+
+echo "== the live directory of the pane is ignored =="
+mutate agent_api.py \
+    '            adopted = live or requested or WORKSPACE_REAL' \
+    '            adopted = requested or WORKSPACE_REAL' \
+    "$CWD::TestTheDirectoryOfASession::test_a_live_session_is_adopted_not_replaced" \
+    "a live session is adopted, not replaced"
+
+echo "== the MCP tool does not open the session any more =="
+mutate mcp_server.py \
+    '        await create_session(CreateSession(session_id=sid, cwd=cwd))' \
+    '        pass  # the session is not opened' \
+    "$CWD::TestTheDirectoryOfASession::test_a_cwd_the_session_cannot_honour_is_refused"     "the MCP tool opens the session on every call"
 
 echo
 echo "mutations: $PASS went red as expected, $FAIL did not"
