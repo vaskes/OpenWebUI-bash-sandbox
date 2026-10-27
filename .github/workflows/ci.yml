@@ -49,9 +49,12 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
       - name: Run unit tests with coverage
         run: |
-          pytest --cov=. --cov-report=xml --cov-report=term --cov-fail-under=70 tests/ || \
+          # No threshold on the command line: the coverage configuration in
+          # pyproject.toml owns it (and omits the test files, so the number
+          # describes the sources and not the act of running the tests).
+          pytest --cov=. --cov-report=xml --cov-report=term tests/ || \
             coverage run --source=. -m unittest discover -s tests && \
-            coverage report --fail-under=70
+            coverage report
       - name: Upload coverage
         if: matrix.python-version == '3.11'
         uses: codecov/codecov-action@v7

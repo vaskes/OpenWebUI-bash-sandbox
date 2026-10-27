@@ -11,7 +11,8 @@
 #   * the deployable configuration names no host by its IPv4 address;
 #   * the published ports take the address from the operator;
 #   * the default bind address is the loopback;
-#   * the scan still looks at the compose file.
+#   * the scan still looks at the compose file;
+#   * the coverage gate measures the sources and has a threshold of its own.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -60,6 +61,16 @@ PY
         return
     fi
     find . -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+    if grep -q "no tests ran\|ERROR: not found" /tmp/mut.out; then
+        # A selector that matches no test is not a caught mutation: the
+        # suite "went red" because it never ran. That is coverage of
+        # nothing, and it must not be counted as a catch.
+        echo "INVALID $label — the selector matched no test"
+        cp "$backup" "$file"
+        rm -f "$backup"
+        FAIL=$((FAIL+1))
+        return
+    fi
     if $PY -m pytest "$selector" -q >/tmp/mut.out 2>&1; then
         echo "FAIL  $label — the test stayed GREEN under the mutation"
         cp "$backup" "$file"
@@ -109,6 +120,37 @@ mutate tests/test_no_foreign_addresses_v2142.py \
     '    "docker-compose*.yaml",' \
     "$RULE::TestTheConfigurationNamesNoHost::test_the_scan_covers_something" \
     "the scan still looks at the compose file"
+
+GATE="tests/test_coverage_gate_v2142.py"
+
+echo "== the tests are measured again =="
+mutate pyproject.toml \
+    '[tool.coverage.run]
+omit = ["tests/*"]' \
+    '[tool.coverage.run]' \
+    "$GATE::TestTheCoverageGateMeasuresTheSources::test_the_tests_are_not_part_of_the_measurement" \
+    "the tests are not part of the measurement"
+
+echo "== a source module is measured out =="
+mutate pyproject.toml \
+    'omit = ["tests/*"]' \
+    'omit = ["tests/*", "agent_api.py"]' \
+    "$GATE::TestTheCoverageGateMeasuresTheSources::test_only_the_tests_are_omitted" \
+    "only the tests are omitted"
+
+echo "== the threshold falls back to the meaningless number =="
+mutate pyproject.toml \
+    'fail_under = 85' \
+    'fail_under = 70' \
+    "$GATE::TestTheCoverageGateMeasuresTheSources::test_the_threshold_is_a_real_gate" \
+    "the threshold is a real gate"
+
+echo "== the CI command takes the threshold back =="
+mutate .github/workflows/ci.yml \
+    'pytest --cov=. --cov-report=xml --cov-report=term tests/' \
+    'pytest --cov=. --cov-report=xml --cov-report=term --cov-fail-under=70 tests/' \
+    "$GATE::TestTheCoverageGateMeasuresTheSources::test_the_ci_command_does_not_pass_a_threshold" \
+    "the CI command passes no threshold of its own"
 
 echo
 echo "mutations: $PASS went red as expected, $FAIL did not"
