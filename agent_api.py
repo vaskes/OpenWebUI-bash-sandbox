@@ -102,6 +102,7 @@ from agent_core import (
     sudo_posture,
     tmux_name,
 )
+from body_limit import BodySizeLimit
 from json_logging import configure_logging
 from metrics import Metrics
 
@@ -443,23 +444,14 @@ app = FastAPI(
 # Without this guard the body lands in memory before Pydantic sees
 # it. 2 MB is a generous ceiling (command is capped at 1 MB; the rest
 # is JSON overhead).
+#
+# The guard counts the bytes as they arrive, not just the ones the
+# client declared: a chunked body has no length to read, and reading
+# only the header leaves exactly the case the limit exists for open.
+# See :mod:`body_limit` for why it is an ASGI middleware.
 MAX_BODY_BYTES = 2 * 1024 * 1024
 
-
-@app.middleware("http")
-async def _body_size_limit(request, call_next):
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            if int(content_length) > MAX_BODY_BYTES:
-                return Response(
-                    status_code=413,
-                    content=b'{"detail":"request body too large"}',
-                    media_type="application/json",
-                )
-        except ValueError:
-            pass
-    return await call_next(request)
+app.add_middleware(BodySizeLimit, limit=MAX_BODY_BYTES)
 
 
 # ---------------------------------------------------------------------------

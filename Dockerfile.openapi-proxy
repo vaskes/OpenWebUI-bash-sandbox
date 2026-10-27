@@ -44,6 +44,7 @@ WORKDIR /app
 
 # Both the FastAPI app and the pure-function core module must be present
 # in the same directory so ``from proxy_core import …`` resolves.
+COPY --chown=1000:1000 body_limit.py    /app/body_limit.py
 COPY --chown=1000:1000 proxy_core.py    /app/proxy_core.py
 COPY --chown=1000:1000 openapi_proxy.py /app/openapi_proxy.py
 COPY --chown=1000:1000 json_logging.py   /app/json_logging.py
