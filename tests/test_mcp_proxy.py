@@ -98,6 +98,62 @@ class _FakeClient:
         return self.upstream
 
 
+class TestTheMcpDoorIsPostOnly(unittest.TestCase):
+    """Only POST is relayed, and the refusal costs the pool nothing.
+
+    The Streamable HTTP transport has three methods. Two of them have
+    nothing to carry here, and one of them is expensive: ``GET`` opens
+    the event stream, and relaying it would hold a connection out of
+    the pool for as long as the client keeps it.
+
+    The refusal happens **before** the upstream is called: a method
+    that is not relayed must not take a connection out of the pool.
+    """
+
+    def setUp(self) -> None:
+        try:
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+        except ImportError:
+            self.skipTest("fastapi.testclient not available")
+        self.proxy = _fresh_proxy()
+        self.client = TestClient(self.proxy.app)
+        self.auth = {"Authorization": f"Bearer {TOKEN}"}
+
+    def _install(self, upstream: _FakeUpstream) -> _FakeClient:
+        fake = _FakeClient(upstream)
+        self.proxy.app.state.client = fake
+        return fake
+
+    def test_get_is_refused_without_asking_the_agent(self) -> None:
+        fake = self._install(_FakeUpstream(200, b""))
+        response = self.client.get("/mcp", headers=self.auth)
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.headers.get("allow"), "POST")
+        self.assertEqual(
+            fake.requests,
+            [],
+            "the agent was asked — the refusal has to happen before the call",
+        )
+
+    def test_delete_is_refused_without_asking_the_agent(self) -> None:
+        fake = self._install(_FakeUpstream(200, b""))
+        response = self.client.delete("/mcp", headers=self.auth)
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(
+            fake.requests,
+            [],
+            "the agent was asked — the refusal has to happen before the call",
+        )
+
+    def test_post_is_still_relayed(self) -> None:
+        """The door itself is untouched: POST goes upstream."""
+        fake = self._install(_FakeUpstream(200, b'{"jsonrpc":"2.0","id":1,"result":{}}'))
+        response = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1}, headers=self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(fake.requests), 1)
+        self.assertEqual(fake.requests[0]["request"]["method"], "POST")
+
+
 class TestTheProxyRelaysMcp(unittest.TestCase):
     def setUp(self) -> None:
         try:

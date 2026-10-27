@@ -55,6 +55,7 @@ from mcp.types import BlobResourceContents, CallToolResult, EmbeddedResource, Te
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from agent_config import (
+    MCP_ALLOWED_HOSTS,
     MCP_READ_CEILING_BYTES,
     MCP_READ_LIMIT_BYTES,
 )
@@ -428,15 +429,12 @@ def _default_timeout() -> int:
 def allowed_hosts() -> list[str]:
     """The hosts the MCP endpoint answers for, or an empty list.
 
-    ``AGENT_MCP_ALLOWED_HOSTS`` is a comma-separated list of ``Host``
-    header values. A pattern may end in ``:*`` to allow any port. An
-    empty value means "no check": the check is off by default, and
+    The value comes from :mod:`agent_config` — read from the
+    environment once, at start-up, like every other knob here. An empty
+    list means "no check": the check is off by default, and
     :func:`transport_security` says why.
     """
-    raw = os.environ.get("AGENT_MCP_ALLOWED_HOSTS", "").strip()
-    if not raw:
-        return []
-    return [item.strip() for item in raw.split(",") if item.strip()]
+    return list(MCP_ALLOWED_HOSTS)
 
 
 def transport_security() -> TransportSecuritySettings:
