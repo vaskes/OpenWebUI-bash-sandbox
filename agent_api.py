@@ -812,7 +812,54 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         output, _, head_survived = _extract_command_output(
             capture, begin_marker, marker, ec_var, grouped
         )
+        if not head_survived:
+            # The begin marker is not in the capture. Two very different
+            # situations produce that, and they must not be confused:
+            #
+            #   * the command never started — the shell was busy running
+            #     something else, so the input is still queued. The pane
+            #     holds the PREVIOUS command's output, and handing it
+            #     back as this command's stdout is a lie: the caller
+            #     reads another command's output as its own.
+            #   * the command's own output was so long that it pushed
+            #     the marker out of the scrollback.
+            #
+            # The full scrollback tells them apart: the marker is still
+            # in there — together with this command's complete output —
+            # unless the output overflowed the history.
+            full = await _capture_full_pane(name)
+            full_output, _, full_head_survived = _extract_command_output(
+                full, begin_marker, marker, ec_var, grouped
+            )
+            if full_head_survived:
+                # The command did run — the bounded capture was simply
+                # too small to hold its beginning.
+                output = full_output
+                head_survived = True
+            elif not await _scrollback_is_full(name):
+                # The marker was never printed and the history did not
+                # overflow: the shell never got to the command. The pane
+                # belongs to whoever ran before — do not hand it over.
+                duration_ms = int((time.time() - start) * 1000)
+                METRICS.inc("exec_timeouts_total")
+                logger.warning(
+                    "exec.not_started sid=%s duration_ms=%d cmd_len=%d cmd=%r",
+                    sid,
+                    duration_ms,
+                    len(body.command),
+                    cmd_preview,
+                )
+                return {
+                    "stdout": "",
+                    "stderr": _BUSY_NOTICE,
+                    "exit_code": None,
+                    "timed_out": True,
+                    "duration_ms": duration_ms,
+                }
         if not head_survived and output.strip():
+            # The pane overflowed and the beginning of the output is
+            # gone. Say so, loudly and first, instead of handing back a
+            # fragment that reads like a complete result.
             output = _HEAD_LOST_NOTICE + output
         output = _truncate_output(output)
         duration_ms = int((time.time() - start) * 1000)
@@ -877,6 +924,16 @@ _HEAD_LOST_NOTICE = (
     "scrollback — what follows is only its tail]\n"
 )
 
+#: Returned in ``stderr`` when the command never ran because the session
+#: was busy with another one. The stdout stays empty on purpose: the pane
+#: still holds the *previous* command's output, and handing that back as
+#: this command's stdout is a lie the caller cannot detect. A model that
+#: reads it quotes the other command's output as if it were its own.
+_BUSY_NOTICE = (
+    "the command did not start: the session is busy running another "
+    "command, so this one is queued and will run once the session is free"
+)
+
 
 async def _history_size(name: str) -> int:
     """How many lines the session's scrollback holds right now.
@@ -922,6 +979,34 @@ async def _capture_command_output(name: str, history_before: int) -> str:
     depth = max(1, min(history_after - history_before, CAPTURE_DEPTH_LINES))
     _, out, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", f"-{depth}")
     return out
+
+
+async def _capture_full_pane(name: str) -> str:
+    """Capture the whole scrollback plus the visible pane.
+
+    ``-S -`` means "start at the beginning of the history". The capture
+    is bounded by the pane's history limit, so it cannot grow without
+    end — but it is bigger than the bounded capture, and it is read only
+    on the slow path (a command that did not finish), never on the hot
+    path.
+    """
+    _, out, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", "-")
+    return out
+
+
+async def _scrollback_is_full(name: str) -> bool:
+    """Is the scrollback at its limit, so that old lines are being dropped?
+
+    This is the tiebreaker between two failures that look the same from
+    the outside: a command that never started (the shell was busy) and a
+    command whose output was so long that it pushed the begin marker out
+    of the history. Only the second one can overflow the history, so
+    "the history is full" tells the two apart.
+    """
+    limit = await _pane_history_limit(name)
+    if limit <= 0:
+        return False
+    return await _history_size(name) >= limit
 
 
 def _extract_command_output(
