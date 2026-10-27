@@ -157,8 +157,10 @@ mcp = MCPServer(
         "Run a shell command in the sandbox workspace and return its output. "
         "The command runs in a persistent session, so `cd` and `export` survive "
         "from one call to the next. Use `session_id` to keep two conversations "
-        "apart; use `cwd` to choose the working directory (it must be inside "
-        "the workspace)."
+        "apart; use `cwd` to choose the working directory of a session (it must "
+        "be inside the workspace). A session that already exists keeps the "
+        "directory it is in — asking for another one is refused, and the answer "
+        "names the directory the session is really in."
     )
 )
 async def bash(
@@ -171,7 +173,6 @@ async def bash(
     from agent_api import (  # noqa: PLC0415 - the module is mounted, not imported
         MAX_TIMEOUT,
         SESSIONS,
-        WORKSPACE_REAL,
         CreateSession,
         ExecRequest,
         create_session,
@@ -196,12 +197,17 @@ async def bash(
             )
 
     sid = safe_id(session_id or DEFAULT_SESSION_ID)
-    if sid not in SESSIONS:
-        try:
-            await create_session(CreateSession(session_id=sid, cwd=cwd or WORKSPACE_REAL))
-        except Exception as exc:  # noqa: BLE001 - the detail must reach the model
-            logger.exception("mcp.bash cannot start the session %s", sid)
-            raise ToolError(f"cannot start the session: {_reason(exc)}") from exc
+    # The session is opened (or adopted) on every call, and not only when
+    # it is missing: this is the only place where the directory of a
+    # running session can be compared with the one the caller asked for.
+    # A `cwd` the session cannot honour is refused here, in words, with
+    # the directory the session is really in — instead of being ignored
+    # and the command running somewhere the caller did not ask for.
+    try:
+        await create_session(CreateSession(session_id=sid, cwd=cwd))
+    except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.bash cannot use the session %s", sid)
+        raise ToolError(f"cannot use the session: {_reason(exc)}") from exc
 
     request = ExecRequest(
         command=command,
