@@ -249,7 +249,7 @@ docker-compose.production.yml   # production stack: agent + proxy
 docker-compose.ci.yml           # CI stack: agent + proxy
 docker-compose.monitoring.yml   # Prometheus, Grafana, cAdvisor
 Dockerfile.*          # Per-service image
-agent-stack.service   # systemd unit for autostart
+agent-stack.service.example  # systemd unit template for autostart
 ```
 
 Pure functions live in `*_core.py` so they can be unit-tested without

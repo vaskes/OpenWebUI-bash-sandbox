@@ -301,8 +301,23 @@ token is still required for defence in depth.
 The internal container ports (3001, 8082, 8090) stay the same — they
 are referenced by inter-service URLs.
 
-## systemd unit (`/etc/systemd/system/agent-stack.service`)
+## systemd unit
 
-`User=git` and `Group=docker` — adjust if your Docker socket is owned by
-a different group. The `WorkingDirectory` must point at the directory
-containing `docker-compose.yml`.
+The repository ships `agent-stack.service.example` — a **template**: it
+names one machine (a user, a group, a directory), and those three lines
+are the only ones a copy has to change.
+
+```bash
+cp agent-stack.service.example /etc/systemd/system/agent-stack.service
+$EDITOR /etc/systemd/system/agent-stack.service   # User, Group, WorkingDirectory
+systemctl daemon-reload && systemctl enable --now agent-stack
+```
+
+`User=git` and `Group=docker` in the template — adjust if your Docker
+socket is owned by a different group. The `WorkingDirectory` must point
+at the directory containing `docker-compose.yml`.
+
+Both `ExecStart` and `ExecReload` pass `--build`: neither service pins
+an image, so `up -d` reuses whatever tag is present and serves the
+previous code. A unit that starts at boot would then serve yesterday's
+build forever.
