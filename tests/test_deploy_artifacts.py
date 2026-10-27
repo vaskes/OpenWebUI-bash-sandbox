@@ -511,3 +511,50 @@ class TestMakefileAlwaysBuilds(unittest.TestCase):
             "--build", recipe, "make restart must rebuild, not recreate from the old image"
         )
         self.assertIn("--force-recreate", recipe)
+
+
+class TestTheSystemdUnitAlwaysBuilds(unittest.TestCase):
+    """The unit that starts the stack at boot must build it.
+
+    The same story as the Makefile, with one extra edge: the unit runs
+    when the machine boots, nobody is watching, and neither compose
+    service pins an image. `up -d` reuses whatever tag is present, so
+    the unit would serve yesterday's build after every reboot — and the
+    symptom shows up as "my change did not take effect", hours later.
+
+    The unit is shipped as a template (`*.service.example`), because it
+    names one machine. The glob keeps the tripwire attached to the file
+    whatever it is called.
+    """
+
+    @staticmethod
+    def _unit() -> tuple[Path, str]:
+        units = sorted(ROOT.glob("agent-stack.service*"))
+        assert units, "no systemd unit in the repository root"
+        unit = units[0]
+        return unit, unit.read_text(encoding="utf-8")
+
+    def test_the_unit_is_a_template(self) -> None:
+        """It names one machine, so it must not pretend to be the unit."""
+        unit, text = self._unit()
+        self.assertTrue(
+            unit.name.endswith(".example"),
+            f"{unit.name} is a template — it names one machine's user, group and directory",
+        )
+        self.assertIn("WorkingDirectory=", text)
+
+    def test_the_unit_builds_on_start(self) -> None:
+        _, text = self._unit()
+        start = text.split("ExecStart=", 1)[1].splitlines()[0]
+        self.assertIn(
+            "--build",
+            start,
+            "the unit starts the stack at boot — without --build it serves the "
+            "previous build, and nobody is there to notice",
+        )
+
+    def test_the_unit_builds_on_reload(self) -> None:
+        _, text = self._unit()
+        reload_ = text.split("ExecReload=", 1)[1].splitlines()[0]
+        self.assertIn("--build", reload_, "a reload that does not rebuild reloads the old code")
+        self.assertIn("--force-recreate", reload_)

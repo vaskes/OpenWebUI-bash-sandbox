@@ -38,7 +38,7 @@ proxy_core.py       # Pure constants: command prefixes, timeouts, WebSocket tuna
 tests/              # stdlib-unittest suite
 docker-compose.yml  # Production-shaped stack
 Dockerfile.*        # Per-service image
-agent-stack.service # systemd unit
+agent-stack.service.example # systemd unit template
 docs/               # ARCHITECTURE, CONFIGURATION, SECURITY
 ```
 

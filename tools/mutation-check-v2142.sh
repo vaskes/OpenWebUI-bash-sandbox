@@ -17,7 +17,8 @@
 #   * a timeout of the MCP relay names the cause and both horizons;
 #   * the caller's token does not travel upstream;
 #   * a directory a running session cannot honour is refused, not ignored;
-#   * a live session is adopted, not replaced.
+#   * a live session is adopted, not replaced;
+#   * the systemd unit builds the image it starts.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -202,6 +203,13 @@ mutate mcp_server.py \
     '        await create_session(CreateSession(session_id=sid, cwd=cwd))' \
     '        pass  # the session is not opened' \
     "$CWD::TestTheDirectoryOfASession::test_a_cwd_the_session_cannot_honour_is_refused"     "the MCP tool opens the session on every call"
+
+echo "== the systemd unit stops building what it starts =="
+mutate agent-stack.service.example \
+    'ExecStart=/usr/bin/docker compose up -d --build' \
+    'ExecStart=/usr/bin/docker compose up -d' \
+    "tests/test_deploy_artifacts.py::TestTheSystemdUnitAlwaysBuilds::test_the_unit_builds_on_start" \
+    "the systemd unit builds what it starts"
 
 echo
 echo "mutations: $PASS went red as expected, $FAIL did not"

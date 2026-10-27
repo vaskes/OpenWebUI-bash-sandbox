@@ -1,0 +1,27 @@
+# A TEMPLATE. The unit below names one machine: the user, the group and
+# the directory are that machine's. Copy it to
+# /etc/systemd/system/agent-stack.service and edit those three lines —
+# `User=`, `Group=` and `WorkingDirectory=`.
+[Unit]
+Description=Agent Stack (Open WebUI + sandbox-agent + openapi-proxy)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/git/agent-stack
+# --build is not optional here either. Neither service pins an image, so
+# `up -d` reuses whatever tag is already present and serves the previous
+# code — and a unit that starts at boot would then serve yesterday's
+# build forever, without a word.
+ExecStart=/usr/bin/docker compose up -d --build
+ExecStop=/usr/bin/docker compose down
+ExecReload=/usr/bin/docker compose up -d --build --force-recreate
+User=git
+Group=docker
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
