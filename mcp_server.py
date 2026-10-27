@@ -30,8 +30,8 @@ same constant-time comparison. The check lives in this module only as a
 The transport is MCP's Streamable HTTP, in its stateless flavour: every
 request is independent, the server keeps no session, and a restart in
 the middle of a conversation costs the client nothing but a reconnect.
-That also means the endpoint can sit behind the proxy (or any other
-reverse proxy) without session affinity.
+That also means the endpoint can sit behind the proxy (or any other reverse
+proxy) without session affinity.
 """
 
 from __future__ import annotations
@@ -250,6 +250,12 @@ async def read_file(path: str) -> CallToolResult:
         logger.exception("mcp.read_file cannot open %s", path)
         raise ToolError(f"cannot read the file: {_reason(exc)}") from exc
     with handle:
+        # The size that goes into the answer is the size of the file the
+        # descriptor points at, not the size of the path: between the
+        # stat above and the open below, the name can have been pointed
+        # at another file, and an answer whose size disagrees with its
+        # own bytes is a claim nobody can check.
+        size = os.fstat(handle.fileno()).st_size
         # Read one byte more than the limit allows: a file that grew
         # between the stat and the read is caught here instead of being
         # read whole, and the call is refused with the reason. The

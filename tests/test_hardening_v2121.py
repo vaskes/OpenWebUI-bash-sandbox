@@ -278,6 +278,13 @@ class TestTheReadHasACeiling(unittest.TestCase):
                 asked.append(size)
                 return self._real.read(size)
 
+            def fileno(self):
+                # The real handle is a file object, and the read asks it
+                # for the size of the file it points at. A double that
+                # does not model that is a double that fails for the
+                # wrong reason.
+                return self._real.fileno()
+
             def __enter__(self):
                 return self
 

@@ -1273,6 +1273,53 @@ def _parse_byte_range(header: str, size: int) -> tuple[int, int]:
     return start, min(end, size - 1) - start + 1
 
 
+def _open_inside_workspace(resolved: str) -> int:
+    """Open a vetted path without following a symlink in any of its parts.
+
+    :func:`_safe_file` vets a path by resolving it: the answer is a
+    string inside the workspace, and the check happens at one moment in
+    time. Between that moment and the open, a process inside the
+    sandbox can replace a **directory** of the path with a symlink that
+    points out. ``O_NOFOLLOW`` does not help there — it guards the last
+    component only, and the kernel follows the substituted directory on
+    the way to it. The file that comes out is then a file outside the
+    workspace, served under a promise that it is inside.
+
+    So the file is opened **relative to a directory descriptor** of the
+    workspace, one component at a time, and every component is opened
+    with ``O_NOFOLLOW``: a component that is a symlink fails the open
+    instead of being followed. The file that comes out is the file the
+    check vetted — by construction, not by timing.
+
+    The workspace is writable by the agent, so the race is real: a model
+    can start a background process that swaps a directory while a read
+    is in flight.
+
+    The constants are named directly, not looked up with a default: a
+    guard that silently disappears when a lookup comes up empty is not a
+    guard. Every platform this container runs on has them.
+    """
+    if not resolved.startswith(WORKSPACE_PREFIX):
+        raise HTTPException(status_code=400, detail=f"path outside the workspace: {resolved}")
+    relative = resolved[len(WORKSPACE_PREFIX) :]
+    parts = [part for part in relative.split(os.sep) if part]
+    if not parts:
+        raise HTTPException(status_code=400, detail=f"path is a directory, not a file: {resolved}")
+
+    # The root is opened first and pinned: from here on the walk cannot
+    # be moved out from under the file, whatever happens to the names
+    # along the way.
+    dir_fd = os.open(WORKSPACE_REAL, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+            os.close(dir_fd)
+            dir_fd = next_fd
+        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
 def _open_for_download(name: str):
     """Open the file for reading, turning a refusal into a status code.
 
@@ -1289,20 +1336,12 @@ def _open_for_download(name: str):
     becomes a status code with a message that says what to do about it.
 
     The name is the string that :func:`_safe_file` resolved and checked;
-    it is opened as it is, so that the file that is served is the file
-    that was vetted.
+    it is opened through :func:`_open_inside_workspace`, so that the file
+    that is served is the file that was vetted — even if a directory of
+    the path was swapped for a symlink in between.
     """
     try:
-        # O_NOFOLLOW: the name is the *resolved* path, so the file that
-        # gets opened is the file that was vetted — unless somebody
-        # replaced it with a symlink between the check and the open. In
-        # that case the open fails instead of following the link out of
-        # the workspace. The workspace is writable, so that race is real.
-        #
-        # The constant is named directly, not looked up with a default:
-        # a guard that silently disappears when a lookup comes up empty
-        # is not a guard. Every platform this container runs on has it.
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = _open_inside_workspace(name)
         return os.fdopen(fd, "rb")
     except PermissionError as exc:
         raise HTTPException(
@@ -1316,12 +1355,19 @@ def _open_for_download(name: str):
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"file not found: {name}") from exc
     except OSError as exc:
-        if exc.errno == errno.ELOOP:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            # ELOOP: a component is a symlink and O_NOFOLLOW refused it.
+            # ENOTDIR: a component that was a directory at the check is
+            # not one any more (a symlink to a directory looks exactly
+            # like that to the kernel when O_DIRECTORY is asked for).
+            # Both mean the same thing to the caller: the path was
+            # replaced between the check and the open.
             raise HTTPException(
                 status_code=409,
                 detail=(
                     f"the file was replaced while it was being opened: {name}. "
-                    "It is a symlink now; the sandbox refuses to follow one."
+                    "It — or one of its directories — is a symlink now; the "
+                    "sandbox refuses to follow one."
                 ),
             ) from exc
         raise HTTPException(status_code=400, detail=f"cannot read {name}: {exc}") from exc
