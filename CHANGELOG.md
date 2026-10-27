@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.0] - 2026-10-28
+
+A command may run for an hour now.
+
+### Changed
+
+- **The exec limit's ceiling is 3600 s, and the agent's hard cap with
+  it.** The operator measured the limit from the inside: a command that
+  ran for a minute was cut off, and the output it had already produced
+  went with it. `AGENT_EXEC_TIMEOUT` accepted 5..600, and the agent
+  refused anything above its own 600 s cap — so the ceiling was the
+  ceiling whichever door the call came through, and no deployment could
+  raise it. Both numbers are now 3600: an hour. The knob's *default* is
+  unchanged (60 s); a deployment raises it, and the range is what says
+  how far.
+- **The MCP relay waits longer than the agent can work.** The relay's
+  patience was 900 s — longer than the old cap, shorter than the new
+  one. It is now 3660 s, so a command that runs all the way to the
+  agent's cap still gets its answer home instead of a transport error.
+
+The bot mirrors the deployment's number in its own contract, so the
+limit it asks for and the limit the side-car honours are one number
+rather than two that drift.
 ## [2.13.1] - 2026-10-28
 
 A command that never started answered with somebody else's output.

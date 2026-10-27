@@ -111,7 +111,12 @@ from metrics import Metrics
 # Configuration
 # ---------------------------------------------------------------------------
 DEFAULT_TIMEOUT = 30  # seconds
-MAX_TIMEOUT = 600  # 10 min hard cap
+#: The hard cap on one command, in seconds. 2026-10-27: 600 (10 min).
+#: The operator's ruling raised it to an hour, because the limit he
+#: measured was the proxy's, and the proxy could not ask for more than
+#: this. The two numbers are now equal on purpose: a caller may ask for
+#: anything the machine accepts, and the machine accepts an hour.
+MAX_TIMEOUT = 3600  # 60 min hard cap
 MAX_COMMAND_LEN = 1_000_000  # 1 MB hard cap on a single command
 #: How much text one command may return. Configurable via
 #: ``AGENT_STDOUT_LIMIT`` (32k..1024k, default 512k) — see agent_config.

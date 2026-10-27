@@ -78,7 +78,7 @@ Runs a command in the sandbox workspace.
 | `command` | string, **required** | the shell command |
 | `session_id` | string | which shell to run it in; default `mcp` |
 | `cwd` | string | the working directory, for a session that does not exist yet |
-| `timeout` | integer | seconds to wait; the same 1..600 range the HTTP API allows |
+| `timeout` | integer | seconds to wait; the same 1..3600 range the HTTP API allows |
 
 Returns `stdout`, `stderr`, `exit_code`, `timed_out`, `duration_ms`,
 `session_id` and `cwd`.

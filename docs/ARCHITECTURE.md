@@ -279,8 +279,8 @@ under a path (`/home/agent/.cache/pip`), never over the code.
 | text returned by one command | `AGENT_STDOUT_LIMIT`, 512 KB | agent |
 | size of a file served by `/files` | `AGENT_BINARY_LIMIT`, 2 MiB (`0` = unlimited) | agent |
 | size of a file read by the MCP `read_file` tool | the smallest of `AGENT_MCP_MAX_READ_BYTES` (1 MiB), `AGENT_BINARY_LIMIT` and 64 MiB | agent |
-| one command's runtime | `AGENT_EXEC_TIMEOUT`, 60 s default (5..600); the agent's own request default is 30 s and its hard cap 600 s | the proxy asks, the agent runs |
-| the MCP relay's patience | 900 s — longer than the agent's own 600 s cap | proxy |
+| one command's runtime | `AGENT_EXEC_TIMEOUT`, 60 s default (5..3600); the agent's own request default is 30 s and its hard cap 3600 s | the proxy asks, the agent runs |
+| the MCP relay's patience | 3660 s — longer than the agent's own 3600 s cap | proxy |
 
 The limits chain: the smallest link wins. A limit the channel cannot carry
 is a limit nobody can use.
