@@ -1,5 +1,10 @@
 # Development/test dependencies (additive to requirements.txt).
--r requirements.txt
+#
+# The agent's own requirements come in through requirements-agent.txt:
+# the suite imports agent_api, which mounts the MCP endpoint, and the
+# SDK that endpoint is built on has to be importable for the tests to
+# mean anything.
+-r requirements-agent.txt
 # Floors are the versions the suite actually runs against (pytest 9.x
 # changed the collector output and the plugin API; the old floor let CI
 # drift across three major versions unnoticed).

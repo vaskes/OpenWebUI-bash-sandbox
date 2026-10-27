@@ -1,0 +1,11 @@
+# Runtime dependencies of the sandbox agent, on top of the shared set.
+#
+# The proxy does not need the MCP SDK — it only relays the endpoint over
+# HTTP — so the SDK is installed in the agent's image only. The proxy
+# image stays free of a package manager and of packages nothing imports.
+#
+# The MCP SDK is the reference implementation of the Model Context
+# Protocol. It is a runtime dependency of the agent, not a test-only
+# convenience: the endpoint it serves is the product.
+-r requirements.txt
+mcp>=2.3.0,<3.0
