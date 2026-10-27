@@ -1,3 +1,20 @@
+# The coverage measurement and its threshold live here, and nowhere else.
+#
+# `--cov=.` measures the test files too, and the test files are ~95%
+# covered by the act of running them — so a gate on that TOTAL cannot
+# fail whatever happens to the sources. Omitting the test directory
+# leaves the sources, which are covered at 89%.
+#
+# The threshold is 85: four points below the measured number, so an
+# ordinary change does not trip it and a real regression does. CI passes
+# no threshold of its own, so this number is the one that counts.
+[tool.coverage.run]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+omit = ["tests/*"]
+fail_under = 85
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
