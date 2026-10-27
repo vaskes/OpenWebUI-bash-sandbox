@@ -14,7 +14,8 @@
 #   * the scan still looks at the compose file;
 #   * the coverage gate measures the sources and has a threshold of its own;
 #   * the MCP door is rate-limited like the exec door;
-#   * a timeout of the MCP relay names the cause and both horizons.
+#   * a timeout of the MCP relay names the cause and both horizons;
+#   * the caller's token does not travel upstream.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -170,6 +171,13 @@ mutate openapi_proxy.py \
     'raise HTTPException(status_code=502, detail=f"sandbox-agent request failed: {exc}") from exc' \
     "$DOOR::TestTheMcpDoorIsGuarded::test_a_timeout_of_the_relay_names_the_cause" \
     "a timeout of the relay names the cause"
+
+echo "== the caller's token travels upstream =="
+mutate openapi_proxy.py \
+    '    headers.update(_upstream_headers())' \
+    '    headers["Authorization"] = request.headers.get("authorization", "")' \
+    "$DOOR::TestTheProxyRelaysMcp::test_the_caller_token_is_not_forwarded" \
+    "the caller's token does not travel upstream"
 
 echo
 echo "mutations: $PASS went red as expected, $FAIL did not"
