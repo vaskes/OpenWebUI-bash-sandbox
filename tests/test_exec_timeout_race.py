@@ -55,7 +55,10 @@ class TestTheTimeoutRace(unittest.TestCase):
     def test_an_out_of_range_limit_refuses_to_start(self) -> None:
         from proxy_core import parse_exec_timeout  # noqa: PLC0415
 
-        for bad in ("0", "1", "601", "-30", "sixty", "", "60s"):
+        # 3601 is the first value above the range: the ceiling is an
+        # hour (2026-10-27), and a test that used the old 601 would
+        # have stopped testing anything.
+        for bad in ("0", "1", "3601", "-30", "sixty", "", "60s"):
             with self.subTest(value=bad):
                 with self.assertRaises(ValueError):
                     parse_exec_timeout(bad)
@@ -64,10 +67,10 @@ class TestTheTimeoutRace(unittest.TestCase):
         from proxy_core import parse_exec_timeout  # noqa: PLC0415
 
         with self.assertRaises(ValueError) as ctx:
-            parse_exec_timeout("601")
+            parse_exec_timeout("3601")
         message = str(ctx.exception)
         self.assertIn("AGENT_EXEC_TIMEOUT", message)
-        self.assertIn("601", message)
+        self.assertIn("3601", message)
 
     def test_the_proxy_forwards_the_configured_limit(self) -> None:
         import asyncio  # noqa: PLC0415

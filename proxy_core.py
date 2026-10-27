@@ -7,7 +7,7 @@ command syntax that the LLM sees.
 
 from __future__ import annotations
 
-__version__ = "2.13.1"
+__version__ = "2.14.0"
 
 SSH_PREFIX = "ssh "
 DEFAULT_SESSION_ID = "openwebui"
@@ -24,8 +24,15 @@ EXEC_TIMEOUT_SECONDS = 60.0
 #: error instead of the timeout it asked for.
 PROXY_WAIT_GRACE_SECONDS = 15.0
 #: The accepted range for the exec limit, in seconds.
+#:
+#: 2026-10-27: the ceiling was 600 s, and the operator measured the
+#: limit from the inside -- a command that ran for a minute was cut
+#: off, and the output that had already been produced went with it.
+#: His ruling: an hour. The ceiling is now 3600 s, which is what the
+#: agent's own hard cap allows (see ``agent_api.MAX_TIMEOUT``), so the
+#: proxy can ask for a limit the agent will actually honour.
 EXEC_TIMEOUT_MIN_SECONDS = 5
-EXEC_TIMEOUT_MAX_SECONDS = 600
+EXEC_TIMEOUT_MAX_SECONDS = 3600
 WEBSOCKET_POLL_INTERVAL = 0.5
 WEBSOCKET_SESSION_ID = "openwebui-ws"
 

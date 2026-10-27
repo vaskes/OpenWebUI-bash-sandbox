@@ -43,7 +43,7 @@ ones.
 | Area | Before | After |
 |------|--------|-------|
 | The command's stdin | the terminal — it could read the protocol | `/dev/null` — it reads EOF |
-| The exec limit | 60 s, hard-coded in the proxy | `AGENT_EXEC_TIMEOUT`, default 60 s, range 5..600 |
+| The exec limit | 60 s, hard-coded in the proxy | `AGENT_EXEC_TIMEOUT`, default 60 s, range 5..3600 |
 | The proxy's wait | 60 s — the same as the limit | limit + 15 s, always strictly larger |
 | A timeout's error | `"sandbox-agent request failed: "` (empty) | names the timeout and the numbers |
 | A transport error's error | `"sandbox-agent request failed: {exc}"` | `"...: {exc!r}"` — the exception class is in the text |
@@ -97,7 +97,7 @@ added to `docker-compose.production.yml`:
 - **Name:** `AGENT_EXEC_TIMEOUT`
 - **Default:** `60`
 - **Unit:** seconds
-- **Range:** 5..600. A value outside it is a **startup failure**, not a
+- **Range:** 5..3600. A value outside it is a **startup failure**, not a
   clamp.
 - **Meaning:** the longest a single command may run before the agent
   gives up on it and answers `timed_out: true` with the output it
@@ -111,7 +111,7 @@ and in `.env.example`.
 **Why the proxy, and not the agent.** The limit is *chosen* by the
 proxy (it asks the agent for it) and *enforced* by the agent (its
 `ExecRequest.timeout` field). The proxy's own hard cap on that field is
-600 seconds, which is the same ceiling as the knob's range — the proxy
+3600 seconds, which is the same ceiling as the knob's range — the proxy
 can never ask for a timeout the agent would refuse.
 
 ## 5. What the bot side may want to do with this

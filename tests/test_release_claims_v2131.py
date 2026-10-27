@@ -41,11 +41,14 @@ def _prose(name: str) -> str:
 
 class TestTheVersionIsTheRelease(unittest.TestCase):
     def test_the_services_answer_with_this_version(self) -> None:
+        # The concrete number belongs to the release that is being
+        # prepared -- it is pinned in that release's own file. Here the
+        # claim is the weaker one that never rots: the two services are
+        # the same release of the same project.
         import agent_core  # noqa: PLC0415
         import proxy_core  # noqa: PLC0415
 
-        self.assertEqual(agent_core.__version__, "2.13.1")
-        self.assertEqual(proxy_core.__version__, "2.13.1")
+        self.assertEqual(agent_core.__version__, proxy_core.__version__)
 
     def test_the_changelog_has_the_section(self) -> None:
         self.assertIn("## [2.13.1]", _source("CHANGELOG.md"))

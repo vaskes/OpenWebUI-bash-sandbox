@@ -106,7 +106,7 @@ RATE_LIMIT_MAX_KEYS: int = int(os.environ.get("OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS
 #: the longest a single command may run before the agent gives up on it
 #: and answers ``timed_out: true``.
 #:
-#: Configurable via ``AGENT_EXEC_TIMEOUT`` (5..600, default 60). A value
+#: Configurable via ``AGENT_EXEC_TIMEOUT`` (5..3600, default 60). A value
 #: outside the range is a start-up failure, not a clamp: a limit nobody
 #: can trust is worse than a container that refuses to boot.
 AGENT_EXEC_TIMEOUT: int = parse_exec_timeout(
@@ -125,7 +125,7 @@ PROXY_REQUEST_TIMEOUT_SECONDS: float = AGENT_EXEC_TIMEOUT + PROXY_WAIT_GRACE_SEC
 #: door's horizon is this proxy's own ``AGENT_EXEC_TIMEOUT`` — the proxy
 #: decides it, asks the agent for that much, and waits a little longer.
 #: The MCP door's horizon is the *model's*: the tool takes a ``timeout``
-#: argument, and the agent honours it up to its own hard cap (600 s).
+#: argument, and the agent honours it up to its own hard cap (3600 s).
 #: With the shared client timeout the relay would drop the connection
 #: at 75 s and the caller would get a transport error instead of the
 #: answer the agent was still computing.
@@ -137,7 +137,7 @@ PROXY_REQUEST_TIMEOUT_SECONDS: float = AGENT_EXEC_TIMEOUT + PROXY_WAIT_GRACE_SEC
 #:
 #: The agent's hard cap lives in ``agent_api.MAX_TIMEOUT``; a tripwire
 #: checks that this number is still above it.
-MCP_RELAY_TIMEOUT_SECONDS: float = 900.0
+MCP_RELAY_TIMEOUT_SECONDS: float = 3660.0
 # Idle timeout for WebSocket terminal connections (sandbox-recommendations #M3).
 # Connections with no inbound traffic for this long are closed by the server
 # so a forgotten browser tab does not pin a file descriptor and a tmux
