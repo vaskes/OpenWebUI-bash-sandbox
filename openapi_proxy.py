@@ -65,6 +65,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from body_limit import BodySizeLimit
 from json_logging import configure_logging
 from metrics import Metrics
 from proxy_core import (
@@ -469,27 +470,17 @@ app = FastAPI(
 # Pydantic ever sees it.
 MAX_BODY_BYTES = 2 * 1024 * 1024
 
+# The limit counts the bytes as they arrive, not just the ones the
+# client declared: a chunked body has no length to read, and reading
+# only the header leaves the case the limit exists for open. The proxy
+# is the published surface, so it is the one that has to hold the line.
+app.add_middleware(BodySizeLimit, limit=MAX_BODY_BYTES)
+
 
 @app.middleware("http")
 async def _count_requests(request, call_next):
     """Count every request the proxy handled."""
     METRICS.inc("requests_total")
-    return await call_next(request)
-
-
-@app.middleware("http")
-async def _body_size_limit(request, call_next):
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            if int(content_length) > MAX_BODY_BYTES:
-                return Response(
-                    status_code=413,
-                    content=b'{"detail":"request body too large"}',
-                    media_type="application/json",
-                )
-        except ValueError:
-            pass
     return await call_next(request)
 
 
