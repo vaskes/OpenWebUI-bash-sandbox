@@ -410,12 +410,16 @@ what a caller that can talk HTTP can do — no more.
   other and nothing else does. There is no second, weaker credential
   for MCP, and the MCP SDK's own OAuth machinery is not used — the
   sandbox has one trust boundary and one secret in it.
-* **The DNS-rebinding protection is on.** A request whose `Host` header
-  is not on `AGENT_MCP_ALLOWED_HOSTS` is refused with a 421 before
-  anything else happens. The default is the loopback names the stack
-  publishes on; a deployment behind a domain names its domain there.
-  The bearer token is the real guard — this is one less thing a page in
-  the operator's browser can reach for.
+* **The DNS-rebinding protection is available, and off by default.** Set
+  `AGENT_MCP_ALLOWED_HOSTS` and a request whose `Host` header is not
+  on the list is refused with a 421 before anything else happens. It is
+  off by default because a containerised service is reached by its
+  service name, and a list that does not contain that name refuses
+  every legitimate caller — including the proxy, which is the published
+  surface. A footgun in the primary use case buys little: the endpoint
+  needs the bearer token, and a page in a browser cannot read the
+  token. The agent says so once at start-up, so the posture is never a
+  surprise.
 * **The transport is stateless.** The server keeps no session, so
   there is nothing to hijack, nothing to lose on a restart, and no
   session affinity to keep when the endpoint sits behind a proxy.
@@ -423,6 +427,10 @@ what a caller that can talk HTTP can do — no more.
   a command that arrives over MCP can become root inside the container
   exactly as one that arrives over HTTP. The MCP door is not a way
   around section 9.
+* **The proxy forwards the caller's `Host`.** The agent's Host check
+  (when it is on) has to see the host the *caller* used; a proxy that
+  rewrote it to the agent's own address would turn the check into a
+  rubber stamp.
 
 **What a caller should know:** a refusal is not a protocol error. The
 call succeeds and the result carries `isError: true` with the reason

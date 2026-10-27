@@ -66,12 +66,22 @@ DEFAULT_SESSION_ID = "mcp"
 #: agent's own configuration, so the two doors cannot disagree.
 BINARY_LIMIT_BYTES = 0
 
-#: Hosts the MCP endpoint answers for. The MCP SDK refuses a request
-#: whose ``Host`` header is not on this list — that is the protection
-#: against DNS rebinding, where a web page in the operator's browser
-#: talks to a service on localhost. The default is the loopback names
-#: the stack actually publishes on; a deployment behind a domain has to
-#: name that domain in ``AGENT_MCP_ALLOWED_HOSTS``.
+#: Hosts the MCP endpoint answers for **when the check is on**. The MCP
+#: SDK refuses a request whose ``Host`` header is not on this list — the
+#: protection against DNS rebinding, where a web page in the operator's
+#: browser talks to a service on the machine.
+#:
+#: The check is **off by default**, and that is the SDK's own default
+#: for a server that is not bound to the loopback: a containerised
+#: service is reached by its service name, and a list that does not
+#: contain that name refuses every legitimate caller — including the
+#: proxy, which is the published surface. A footgun in the primary use
+#: case buys very little: the endpoint needs the bearer token, and a
+#: page in a browser cannot read the token.
+#:
+#: Set ``AGENT_MCP_ALLOWED_HOSTS`` to turn the check on and to name the
+#: hosts the endpoint answers for. A deployment that publishes the
+#: endpoint on a name the operator controls should turn it on.
 DEFAULT_ALLOWED_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
 
 #: The token check. The agent passes its own in; the module never reads
@@ -325,27 +335,27 @@ def _default_timeout() -> int:
 
 
 def allowed_hosts() -> list[str]:
-    """The hosts the MCP endpoint answers for.
+    """The hosts the MCP endpoint answers for, or an empty list.
 
     ``AGENT_MCP_ALLOWED_HOSTS`` is a comma-separated list of ``Host``
     header values. A pattern may end in ``:*`` to allow any port. An
-    empty value means "the loopback names the stack publishes on".
+    empty value means "no check" — see :data:`DEFAULT_ALLOWED_HOSTS`.
     """
     raw = os.environ.get("AGENT_MCP_ALLOWED_HOSTS", "").strip()
     if not raw:
-        return list(DEFAULT_ALLOWED_HOSTS)
+        return []
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def transport_security() -> TransportSecuritySettings:
     """The DNS-rebinding protection for the MCP endpoint.
 
-    The check is on by default: a request whose ``Host`` header is not
-    on the list is refused. The list is the loopback names by default —
-    the compose publishes the stack on 127.0.0.1 — and a deployment
-    behind a domain says so in ``AGENT_MCP_ALLOWED_HOSTS``.
+    On when ``AGENT_MCP_ALLOWED_HOSTS`` names the hosts, off when it
+    does not. The reasons are in :data:`DEFAULT_ALLOWED_HOSTS`.
     """
     hosts = allowed_hosts()
+    if not hosts:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
     origins = []
     for host in hosts:
         base = host[:-2] if host.endswith(":*") else host
@@ -356,6 +366,11 @@ def transport_security() -> TransportSecuritySettings:
         allowed_hosts=hosts,
         allowed_origins=origins,
     )
+
+
+def rebinding_protection_is_on() -> bool:
+    """True when the endpoint checks the ``Host`` header."""
+    return bool(allowed_hosts())
 
 
 # ---------------------------------------------------------------------------
@@ -428,6 +443,15 @@ async def lifespan() -> AsyncIterator[None]:
     sub-application does not get a lifespan of its own, so the agent
     enters this one.
     """
+    if not rebinding_protection_is_on():
+        # Said out loud, once, at startup: the operator should know that
+        # the endpoint does not check the Host header, and why that is
+        # the default rather than an oversight.
+        logger.warning(
+            "mcp.host_check_off — the MCP endpoint does not check the Host "
+            "header (AGENT_MCP_ALLOWED_HOSTS is empty). The bearer token is "
+            "the guard; set AGENT_MCP_ALLOWED_HOSTS to add the check."
+        )
     async with mcp.session_manager.run():
         yield
 

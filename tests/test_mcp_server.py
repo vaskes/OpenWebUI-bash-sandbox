@@ -36,15 +36,21 @@ if str(ROOT) not in sys.path:
 TOKEN = "test-agent-token-xyz"
 
 
-def _fresh_app():
-    """Reload agent_api (and the MCP module) against a temp workspace."""
+def _fresh_app(allowed_hosts: str | None = None):
+    """Reload agent_api (and the MCP module) against a temp workspace.
+
+    ``allowed_hosts`` is the value of ``AGENT_MCP_ALLOWED_HOSTS``; None
+    means "unset", which is the default posture (the Host check is off
+    unless the operator asks for it).
+    """
     tmpdir = tempfile.mkdtemp(prefix="agent-mcp-test-")
     os.environ["AGENT_SESSIONS_FILE"] = os.path.join(tmpdir, "sessions.json")
     os.environ["AGENT_WORKSPACE"] = tmpdir
     os.environ["AGENT_TOKEN"] = TOKEN
-    # The MCP endpoint answers for the loopback names by default; the
-    # test client uses the same ones.
-    os.environ.pop("AGENT_MCP_ALLOWED_HOSTS", None)
+    if allowed_hosts is None:
+        os.environ.pop("AGENT_MCP_ALLOWED_HOSTS", None)
+    else:
+        os.environ["AGENT_MCP_ALLOWED_HOSTS"] = allowed_hosts
     for name in ("agent_api", "mcp_server"):
         if name in sys.modules:
             del sys.modules[name]
@@ -119,21 +125,21 @@ class TestTheDoorIsLocked(_Base):
         )
         self.assertEqual(response.status_code, 401)
 
-    def test_a_foreign_host_is_refused(self) -> None:
-        """The DNS-rebinding protection is on.
+    def test_a_foreign_host_is_answered_by_default(self) -> None:
+        """The Host check is off unless the operator asks for it.
 
-        A web page in the operator's browser can talk to a service on
-        localhost. The bearer token is the real guard, but a request
-        whose Host header is not one the endpoint knows about is
-        refused before it is even looked at — one less thing a browser
-        can reach for.
+        A containerised service is reached by its service name, and a
+        list that does not contain that name refuses every legitimate
+        caller — including the proxy, which is the published surface.
+        The endpoint needs the bearer token either way, and a page in a
+        browser cannot read the token.
         """
         response = self.client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
             headers={**self.auth, "Host": "evil.example.com"},
         )
-        self.assertEqual(response.status_code, 421)
+        self.assertNotEqual(response.status_code, 421)
 
     def test_a_token_in_the_wrong_scheme_is_refused(self) -> None:
         response = self.client.post(
@@ -166,6 +172,50 @@ class TestTheDoorIsLocked(_Base):
             headers={**self.auth, "Accept": "application/json, text/event-stream"},
         )
         self.assertEqual(response.status_code, 200)
+
+
+class TestTheHostCheckWhenItIsOn(unittest.TestCase):
+    """The DNS-rebinding protection, when the operator turns it on.
+
+    A web page in the operator's browser can talk to a service on the
+    machine. The bearer token is the real guard — a page cannot read
+    it — but a request whose Host header is not one the endpoint knows
+    about can be refused before it is even looked at.
+    """
+
+    def setUp(self) -> None:
+        try:
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+        except ImportError:
+            self.skipTest("fastapi.testclient not available")
+        self.app, self.mcp, self.tmpdir = _fresh_app("sandbox.example.com")
+        self.client = TestClient(self.app, base_url="http://sandbox.example.com")
+        self.client.__enter__()
+        self.addCleanup(self.client.__exit__, None, None, None)
+        self.auth = {"Authorization": f"Bearer {TOKEN}"}
+
+    def test_a_foreign_host_is_refused(self) -> None:
+        response = self.client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            headers={**self.auth, "Host": "evil.example.com"},
+        )
+        self.assertEqual(response.status_code, 421)
+
+    def test_the_named_host_is_answered(self) -> None:
+        response = self.client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            headers={**self.auth, "Host": "sandbox.example.com"},
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_the_check_is_off_when_the_list_is_empty(self) -> None:
+        import mcp_server  # noqa: PLC0415
+
+        os.environ.pop("AGENT_MCP_ALLOWED_HOSTS", None)
+        self.assertEqual(mcp_server.allowed_hosts(), [])
+        self.assertFalse(mcp_server.rebinding_protection_is_on())
 
 
 class TestTheProtocol(_Base):
