@@ -28,9 +28,12 @@ same constant-time comparison. The check lives in this module only as a
 "one token, one comparison" has exactly one implementation.
 
 The transport is MCP's Streamable HTTP, in its stateless flavour: every
-request is independent, the server keeps no session, and a restart in
-the middle of a conversation costs the client nothing but a reconnect.
-That also means the endpoint can sit behind the proxy (or any other reverse
+request is independent, the server keeps no session, and a restart of
+the *transport* costs the client nothing but a reconnect. The sandbox
+itself is stateful: the shell lives in a tmux session inside the agent,
+and a restart of the agent takes those sessions with it. The
+statelessness is a property of the protocol, not of the shell. That
+also means the endpoint can sit behind the proxy (or any other reverse
 proxy) without session affinity.
 """
 
@@ -166,6 +169,7 @@ async def bash(
 ) -> BashResult:
     """Run a command and return what it printed."""
     from agent_api import (  # noqa: PLC0415 - the module is mounted, not imported
+        MAX_TIMEOUT,
         SESSIONS,
         WORKSPACE_REAL,
         CreateSession,
@@ -174,6 +178,22 @@ async def bash(
         exec_cmd,
     )
     from agent_core import safe_id  # noqa: PLC0415
+
+    if timeout is not None:
+        # The tool knows the range, so the tool says it. The request
+        # model would refuse an out-of-range timeout in its own words:
+        # the model would read a validation error about a class it has
+        # never heard of, and no range at all.
+        #
+        # A bad argument is a client's mistake, not a fault of the
+        # server, so it is refused without a traceback — the SDK has
+        # already logged the call.
+        if isinstance(timeout, bool) or not isinstance(timeout, int):
+            raise ToolError(f"the timeout must be a whole number of seconds, got {timeout!r}")
+        if not 1 <= timeout <= MAX_TIMEOUT:
+            raise ToolError(
+                f"the timeout must be between 1 and {MAX_TIMEOUT} seconds, got {timeout}"
+            )
 
     sid = safe_id(session_id or DEFAULT_SESSION_ID)
     if sid not in SESSIONS:
