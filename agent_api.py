@@ -119,11 +119,13 @@ from metrics import Metrics
 #: back. The proxy asks for its own number explicitly, so the two
 #: defaults never meet: what the proxy requests is what the agent runs.
 DEFAULT_TIMEOUT = 30  # seconds
-#: The hard cap on one command, in seconds. 2026-10-27: 600 (10 min).
-#: The operator's ruling raised it to an hour, because the limit he
-#: measured was the proxy's, and the proxy could not ask for more than
-#: this. The two numbers are now equal on purpose: a caller may ask for
-#: anything the machine accepts, and the machine accepts an hour.
+#: The hard cap on one command, in seconds.
+#:
+#: It was 600 (10 min) until 2026-10-27. The operator's ruling raised
+#: it to an hour, because the limit he measured was the proxy's, and
+#: the proxy could not ask for more than this. The two numbers are now
+#: equal on purpose: a caller may ask for anything the machine accepts,
+#: and the machine accepts an hour.
 MAX_TIMEOUT = 3600  # 60 min hard cap
 MAX_COMMAND_LEN = 1_000_000  # 1 MB hard cap on a single command
 #: How much text one command may return. Configurable via

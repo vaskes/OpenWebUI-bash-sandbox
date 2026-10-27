@@ -33,6 +33,11 @@ make format       # or:  ruff format .
 ```
 agent_api.py        # FastAPI app — endpoints and tmux plumbing
 agent_core.py       # Pure functions: safe_id, tmux_name, constants
+agent_config.py     # Every knob, read from the environment once and validated once
+mcp_server.py       # The MCP server: the same tools over the MCP protocol
+body_limit.py       # Pure-ASGI body limiter (413), shared by both services
+json_logging.py     # JSON log formatting
+metrics.py          # Prometheus counters and gauges
 openapi_proxy.py    # FastAPI app — OpenAPI surface + WS terminal
 proxy_core.py       # Pure constants: command prefixes, timeouts, WebSocket tunables
 tests/              # stdlib-unittest suite
