@@ -106,9 +106,14 @@ class TestTheTimeoutIsRefusedLegibly(unittest.TestCase):
         self.assertIn("1", message)
 
     def test_a_timeout_above_the_range_is_refused(self) -> None:
+        import agent_api  # noqa: PLC0415
+
         message = self._refusal(10_000)
         self.assertIn("timeout", message)
-        self.assertIn("600", message)
+        # The number comes from the code, not from a copy of it in this
+        # file: a test that quotes the number it checks cannot notice
+        # the number changing.
+        self.assertIn(str(agent_api.MAX_TIMEOUT), message)
 
     def test_a_timeout_that_is_not_a_number_is_refused(self) -> None:
         message = self._refusal("soon")

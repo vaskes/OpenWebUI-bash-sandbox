@@ -61,14 +61,14 @@ mutate body_limit.py \
 
 echo "== the open follows symlinks again =="
 mutate agent_api.py \
-  'fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW)' \
-  'fd = os.open(name, os.O_RDONLY)' \
+  '        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)' \
+  '        return os.open(parts[-1], os.O_RDONLY, dir_fd=dir_fd)' \
   'tests/test_hardening_v2121.py' \
   "the open does not follow a symlink"
 
 echo "== the refusal loses its reason =="
 mutate agent_api.py \
-  'if exc.errno == errno.ELOOP:' \
+  'if exc.errno in (errno.ELOOP, errno.ENOTDIR):' \
   'if False:' \
   'tests/test_hardening_v2121.py' \
   "the symlink refusal names the reason"
@@ -111,7 +111,7 @@ mutate mcp_server.py \
 
 echo "== the relay stops outlasting the agent =="
 mutate openapi_proxy.py \
-  'MCP_RELAY_TIMEOUT_SECONDS: float = 900.0' \
+  'MCP_RELAY_TIMEOUT_SECONDS: float = 3660.0' \
   'MCP_RELAY_TIMEOUT_SECONDS: float = 75.0' \
   'tests/test_review_v2120.py' \
   "the relay waits longer than the agent works"

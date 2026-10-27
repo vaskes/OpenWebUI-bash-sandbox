@@ -214,6 +214,29 @@ is not. The `cwd` check asks the same question about a directory, and
 the answer is the 400 that `POST /sessions` returns for a path outside
 the workspace.
 
+**How the file is opened.** The check above is a check of a *name*, and
+a name can be changed between the check and the open — the workspace
+is writable by the agent, so that race is real. `O_NOFOLLOW` alone does
+not close it: the flag guards the **last** component only, and the
+kernel follows a substituted *directory* on the way to it. The file
+door therefore opens the vetted path **relative to a directory
+descriptor** of the workspace, one component at a time: the root is
+opened with `O_DIRECTORY|O_NOFOLLOW` and pinned, every intermediate
+component is opened with `O_DIRECTORY|O_NOFOLLOW` relative to its
+parent's descriptor, and the last one with `O_NOFOLLOW` relative to
+the last directory. A component that is a symlink fails the open
+(`ELOOP`, or `ENOTDIR` when the component was a directory a moment
+ago) and the door answers `409` — "the file was replaced while it was
+being opened". The file that is served is the file that was vetted, by
+construction and not by timing. The size in the MCP answer comes from
+the same descriptor (`fstat`), so the size and the bytes cannot
+disagree.
+
+This is a hygiene guarantee, not a privilege boundary: the bash door
+reads the same bytes with the same uid, so nothing is gained here that
+the shell did not already have. What is gained is a promise the door
+can actually keep.
+
 The file door is deliberately **not** rate limited: a per-minute request
 budget would break a chunked transfer for a reason that has nothing to
 do with the transfer. The bearer token and the workspace scope are the
