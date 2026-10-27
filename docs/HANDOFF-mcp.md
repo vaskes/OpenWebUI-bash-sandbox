@@ -220,5 +220,7 @@ The refusals that can come back:
 | `file_info` | `GET /files/meta?path=P` |
 | `delete_file` | `DELETE /files?path=P` |
 
-Both doors call the same functions in the same process, so they cannot
-drift apart — and the tests check that they do not.
+Both doors call the same functions in the same process, so the code
+cannot drift apart — and the tests check that it does not. The budgets
+are the one thing that differs on purpose; `read_file` above says how
+and why.
