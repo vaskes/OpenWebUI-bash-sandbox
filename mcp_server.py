@@ -183,6 +183,7 @@ async def bash(
         try:
             await create_session(CreateSession(session_id=sid, cwd=cwd or WORKSPACE_REAL))
         except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+            logger.exception("mcp.bash cannot start the session %s", sid)
             raise ToolError(f"cannot start the session: {_reason(exc)}") from exc
 
     request = ExecRequest(
@@ -192,6 +193,7 @@ async def bash(
     try:
         result = await exec_cmd(sid, request)
     except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.bash failed in the session %s", sid)
         raise ToolError(f"the command did not run: {_reason(exc)}") from exc
 
     return BashResult(
@@ -222,12 +224,14 @@ async def read_file(path: str) -> CallToolResult:
     try:
         target = _safe_file(path)
     except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.read_file refused %s", path)
         raise ToolError(f"cannot read the file: {_reason(exc)}") from exc
 
     limit = _read_limit()
     try:
         size = os.path.getsize(target)
     except OSError as exc:
+        logger.exception("mcp.read_file cannot stat %s", path)
         raise ToolError(f"cannot read the file: {_reason(exc)}") from exc
     if limit and size > limit:
         raise ToolError(
@@ -238,6 +242,7 @@ async def read_file(path: str) -> CallToolResult:
     try:
         handle = _open_for_download(target)
     except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.read_file cannot open %s", path)
         raise ToolError(f"cannot read the file: {_reason(exc)}") from exc
     with handle:
         # Read one byte more than the limit allows: a file that grew
@@ -291,6 +296,7 @@ async def file_info(path: str) -> FileInfo:
     try:
         target = _safe_file(path)
     except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.file_info refused %s", path)
         raise ToolError(f"cannot stat the file: {_reason(exc)}") from exc
 
     stat = os.stat(target)
@@ -318,6 +324,7 @@ async def delete_file(path: str) -> DeleteResult:
     try:
         target = _safe_file(path)
     except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.delete_file refused %s", path)
         raise ToolError(f"cannot delete the file: {_reason(exc)}") from exc
 
     size = os.path.getsize(target)
