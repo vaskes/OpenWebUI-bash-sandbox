@@ -159,5 +159,60 @@ class TestTheToolResolvesTheAgentAtCallTime(unittest.TestCase):
         self.assertIn("FROM-THE-OTHER-FILE", result.content[0].text)
 
 
+class TestTheTestsDoNotLeaveTempDirs(unittest.TestCase):
+    """A test workspace is removed when the test process ends.
+
+    The review pointed at ``tempfile.mkdtemp`` without a cleanup: every
+    test run leaves a directory behind, and the pile grows until
+    somebody notices. The check is end-to-end on purpose — a registry
+    that is never emptied is not a cleanup, and a line that registers
+    a cleanup that never runs is not one either.
+    """
+
+    def test_the_workspace_does_not_survive_the_process(self) -> None:
+        import subprocess  # noqa: PLC0415
+        import sys  # noqa: PLC0415
+
+        tests_dir = str(Path(__file__).resolve().parent)
+        code = (
+            "import sys\n"
+            f"sys.path.insert(0, {tests_dir!r})\n"
+            "from test_agent_api_endpoints import _fresh_app\n"
+            "print(_fresh_app()[2])\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(ROOT),
+        )
+        path = result.stdout.strip().splitlines()[-1]
+        self.assertTrue(path, "the subprocess did not report a workspace")
+        self.assertFalse(os.path.exists(path), "the workspace survived the process")
+
+    def test_the_mcp_harness_cleans_up_too(self) -> None:
+        import subprocess  # noqa: PLC0415
+        import sys  # noqa: PLC0415
+
+        tests_dir = str(Path(__file__).resolve().parent)
+        code = (
+            "import sys\n"
+            f"sys.path.insert(0, {tests_dir!r})\n"
+            "from test_mcp_server import _fresh_app\n"
+            "print(_fresh_app()[2])\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(ROOT),
+        )
+        path = result.stdout.strip().splitlines()[-1]
+        self.assertTrue(path, "the subprocess did not report a workspace")
+        self.assertFalse(os.path.exists(path), "the workspace survived the process")
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

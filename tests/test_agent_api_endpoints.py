@@ -13,9 +13,11 @@ real marker into a follow-up capture-pane response.
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -31,6 +33,11 @@ def _fresh_app():
     """Reload the agent_api module with a per-call SESSIONS_FILE in a fresh
     tempdir. Returns ``(app, SESSIONS, tmpdir, workspace_real)``."""
     tmpdir = tempfile.mkdtemp(prefix="agent-test-")
+    # The workspace is removed when the test process ends. A directory
+    # that is created for every test and never removed is a pile of
+    # somebody else's disk — the suite runs on CI, on a laptop, and on
+    # a host that has no janitor.
+    atexit.register(lambda: shutil.rmtree(tmpdir, ignore_errors=True))
     os.environ["AGENT_SESSIONS_FILE"] = os.path.join(tmpdir, "sessions.json")
     os.environ["AGENT_WORKSPACE"] = tmpdir
     os.environ["AGENT_TOKEN"] = "test-agent-token-xyz"
