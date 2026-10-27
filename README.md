@@ -1,8 +1,10 @@
 # OpenWebUI-bash-sandbox
 
 > Persistent bash sandbox for [Open WebUI](https://github.com/open-webui/open-webui) via
-> built-in External Tool Servers. One `bash` tool, persistent state, no
-> middleware patching, no model reconfiguration.
+> built-in External Tool Servers — and the same sandbox over the
+> [Model Context Protocol](https://modelcontextprotocol.io/) for every other
+> client. One `bash` tool, persistent state, no middleware patching, no
+> model reconfiguration.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
@@ -43,15 +45,21 @@ The LLM calls it, gets back a shell transcript, and continues — with
 running processes).
 
 This repo is the minimal, production-shaped packaging of that pattern:
-three containers, one OpenAPI endpoint, zero patches.
+**two services** in this repository — `openapi-proxy` and `sandbox-agent` —
+plus an optional upstream `open-webui` container that is not built from here.
+One bearer token, two doors (OpenAPI and MCP), zero patches.
 
 ```
-User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ──▶ sandbox-agent (UID 1000, r/o fs) ──▶ tmux ──▶ bash
+HTTP:  User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ──▶ sandbox-agent (UID 1000, r/o fs) ──▶ tmux ──▶ bash
+MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer auth) ──▶ sandbox-agent ──▶ tmux ──▶ bash
 ```
 
 ## Features
 
 - ✅ **One `bash` tool** — runs any shell command in a persistent sandbox
+- ✅ **MCP endpoint** — the same sandbox over the Model Context Protocol
+  (`POST /mcp`): `bash`, `read_file`, `file_info`, `delete_file`, for any
+  client that is not Open WebUI
 - ✅ **Persistent state** — cwd, env vars, history survive across LLM calls
 - ✅ **Auto-wire** — `TOOL_SERVER_CONNECTIONS` env var pre-loads the tool
 - ✅ **Zero patches** — uses Open WebUI's built-in External Tool Servers
@@ -115,14 +123,32 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the long version.
 Short version:
 
 ```
-┌─────────────────┐    HTTP     ┌─────────────────┐    HTTP     ┌──────────────────┐
-│   Open WebUI    │ ──────────▶ │  openapi-proxy  │ ──────────▶ │  sandbox-agent   │
-│   :3001         │             │   :8090         │             │   :8082          │
-└─────────────────┘             └─────────────────┘             └──────────────────┘
-        ▲                                                                  │
-        │            WebSocket                                       tmux  │
-        └───────────  /ws (per-conn session)  ────────────────────── agent_<id>
+┌────────────────────────┐        ┌───────────────────────────────┐
+│  Open WebUI (optional) │        │  any MCP client               │
+│  :3001, tool server    │        │  llama.cpp-style, bot harness │
+└───────────┬────────────┘        └──────────────┬────────────────┘
+            │  HTTP  /bash, /files, …             │  MCP  POST /mcp
+            │                                     │
+            └────────────────┬────────────────────┘
+                             ▼
+        ┌────────────────────────────────────────────────────────────┐
+        │  openapi-proxy   :8090       the only published surface   │
+        └────────────────────────────┬───────────────────────────────┘
+                                     │  HTTP, internal Docker network
+                                     ▼
+        ┌────────────────────────────────────────────────────────────┐
+        │  sandbox-agent   :8082       internal only, bearer token   │
+        │  HTTP door:  /sessions · /files · /metrics · /healthz     │
+        │  MCP door:   POST /mcp → bash · read_file · file_info ·   │
+        │                                    delete_file             │
+        └────────────────────────────┬───────────────────────────────┘
+                                     ▼
+                 tmux session `agent_<id>`  ·  /workspace files
 ```
+
+The agent has **no host port mapping**: everything that reaches the outside
+world goes through the proxy, where the token, the CORS policy, the rate
+limit and the body limit live.
 
 ## Configuration
 
@@ -179,9 +205,12 @@ make format      # ruff format
 make health      # curl every public endpoint
 ```
 
-The test suite uses stdlib `unittest` so it runs without installing
-pytest, fastapi, or httpx. See [CONTRIBUTING.md](CONTRIBUTING.md) for
-the full development workflow.
+The test suite is written with stdlib `unittest`, so the **runner** needs no
+pytest — `make test` runs `python3 -m unittest discover`. The suite does
+need the runtime dependencies, though: it imports `agent_api`, which mounts
+the MCP endpoint, so `fastapi`, `httpx` and the MCP SDK must be importable.
+Install them with `pip install -r requirements-dev.txt`. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow.
 
 ## API quick reference
 
