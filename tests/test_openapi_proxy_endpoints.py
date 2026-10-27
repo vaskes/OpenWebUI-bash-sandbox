@@ -159,6 +159,28 @@ class TestSshAllowlist(_Base):
         sent = mock_client.post.call_args.kwargs["json"]["command"]
         self.assertIn("StrictHostKeyChecking=accept-new", sent)
 
+    def test_a_flag_after_the_host_survives(self) -> None:
+        """The command is re-assembled whole.
+
+        The host is the only positional argument, but a flag may come
+        after it — ``ssh user@host -p 2222`` is ordinary ssh, and the
+        flag has to reach the agent. The re-assembled command used to
+        be sliced at a position that only *happened* to be the end of
+        the command; the property is pinned here so that a slice cut
+        at the host cannot come back unnoticed.
+        """
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(return_value={"stdout": "ok", "exit_code": 0})
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        with patch("openapi_proxy._client", new=lambda _req: mock_client):
+            body = self._post_bash("ssh user@lab.local -p 2222")
+        self.assertEqual(body.get("exit_code"), 0)
+        sent = mock_client.post.call_args.kwargs["json"]["command"]
+        self.assertIn("-p 2222", sent)
+        self.assertIn("lab.local", sent)
+
     def test_ssh_to_disallowed_host_rejected(self) -> None:
         body = self._post_bash("ssh root@attacker.example")
         self.assertIn("not in allowlist", body.get("error", ""))

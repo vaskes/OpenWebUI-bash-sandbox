@@ -224,8 +224,22 @@ echo "== a test leaves its tmux session behind =="
 mutate tests/conftest.py \
     '        subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True, check=False)' \
     '        pass  # the session is left behind' \
-    "tests/test_mcp_server.py::TestTheToolsWork::test_bash_runs_a_command_and_returns_its_output" \
+    "tests/test_exec_budget.py::TestLiveExecIsComplete::test_the_pane_really_holds_the_budget" \
     "a test leaves no session behind"
+
+echo "== the ssh command is cut short =="
+mutate openapi_proxy.py \
+    '    return bare_host, " ".join(shlex.quote(t) for t in tokens[:])' \
+    '    return bare_host, " ".join(shlex.quote(t) for t in tokens[:2])' \
+    "tests/test_openapi_proxy_endpoints.py::TestSshAllowlist::test_a_flag_after_the_host_survives" \
+    "the whole command reaches the agent"
+
+echo "== the handshake reports a placeholder version =="
+mutate agent_api.py \
+    '_set_mcp_version(__version__)' \
+    '_set_mcp_version("0.0.0")' \
+    "tests/test_mcp_server.py::TestTheProtocol::test_the_handshake_names_the_version_of_the_release" \
+    "the handshake names the version of the release"
 
 echo
 echo "mutations: $PASS went red as expected, $FAIL did not"

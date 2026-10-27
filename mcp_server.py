@@ -77,22 +77,6 @@ DEFAULT_SESSION_ID = "mcp"
 
 #: Hosts the MCP endpoint answers for **when the check is on**. The MCP
 #: SDK refuses a request whose ``Host`` header is not on this list — the
-#: protection against DNS rebinding, where a web page in the operator's
-#: browser talks to a service on the machine.
-#:
-#: The check is **off by default**, and that is the SDK's own default
-#: for a server that is not bound to the loopback: a containerised
-#: service is reached by its service name, and a list that does not
-#: contain that name refuses every legitimate caller — including the
-#: proxy, which is the published surface. A footgun in the primary use
-#: case buys very little: the endpoint needs the bearer token, and a
-#: page in a browser cannot read the token.
-#:
-#: Set ``AGENT_MCP_ALLOWED_HOSTS`` to turn the check on and to name the
-#: hosts the endpoint answers for. A deployment that publishes the
-#: endpoint on a name the operator controls should turn it on.
-DEFAULT_ALLOWED_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
-
 #: The token check. The agent passes its own in; the module never reads
 #: the token itself, so there is exactly one comparison in the service.
 TokenChecker = Callable[[str | None], bool]
@@ -446,7 +430,8 @@ def allowed_hosts() -> list[str]:
 
     ``AGENT_MCP_ALLOWED_HOSTS`` is a comma-separated list of ``Host``
     header values. A pattern may end in ``:*`` to allow any port. An
-    empty value means "no check" — see :data:`DEFAULT_ALLOWED_HOSTS`.
+    empty value means "no check": the check is off by default, and
+    :func:`transport_security` says why.
     """
     raw = os.environ.get("AGENT_MCP_ALLOWED_HOSTS", "").strip()
     if not raw:
@@ -458,7 +443,24 @@ def transport_security() -> TransportSecuritySettings:
     """The DNS-rebinding protection for the MCP endpoint.
 
     On when ``AGENT_MCP_ALLOWED_HOSTS`` names the hosts, off when it
-    does not. The reasons are in :data:`DEFAULT_ALLOWED_HOSTS`.
+    does not.
+
+    The check is **off by default**, and that is the SDK's own default
+    for a server that is not bound to the loopback: a containerised
+    service is reached by its service name, and a list that does not
+    contain that name refuses every legitimate caller — including the
+    proxy, which is the published surface. A footgun in the primary use
+    case buys very little: the endpoint needs the bearer token, and a
+    page in a browser cannot read the token.
+
+    Set ``AGENT_MCP_ALLOWED_HOSTS`` to turn the check on and to name the
+    hosts the endpoint answers for. A deployment that publishes the
+    endpoint on a name the operator controls should turn it on.
+
+    (There used to be a constant here — ``DEFAULT_ALLOWED_HOSTS`` — that
+    named a list nobody read. A constant that is not used is a claim
+    about the default that nobody can check, and this one was wrong: the
+    default is "no check", not "the loopback names".)
     """
     hosts = allowed_hosts()
     if not hosts:
