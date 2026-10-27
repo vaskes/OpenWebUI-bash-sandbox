@@ -272,6 +272,16 @@ class TestColdStart(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp(prefix="agent-cold-")
+        # A tmux server of its own. `kill-server` on the shared server
+        # takes every other test's live session with it — that is how a
+        # suite becomes flaky, and it is how a green run turns red on the
+        # next one. tmux keeps its socket in $TMUX_TMPDIR, so a private
+        # directory is a private server: this test kills its own server
+        # and nobody else's.
+        self._tmux_tmpdir = os.environ.get("TMUX_TMPDIR")
+        private = os.path.join(self.tmpdir, "tmux")
+        os.makedirs(private, exist_ok=True)
+        os.environ["TMUX_TMPDIR"] = private
         os.environ["AGENT_SESSIONS_FILE"] = os.path.join(self.tmpdir, "sessions.json")
         os.environ["AGENT_WORKSPACE"] = self.tmpdir
         os.environ["AGENT_TOKEN"] = "test-agent-token-xyz"
@@ -282,7 +292,12 @@ class TestColdStart(unittest.TestCase):
         self.agent_api = agent_api
 
     def tearDown(self) -> None:
+        # The private server — and only the private server.
         subprocess.run(["tmux", "kill-server"], capture_output=True, check=False)
+        if self._tmux_tmpdir is None:
+            os.environ.pop("TMUX_TMPDIR", None)
+        else:
+            os.environ["TMUX_TMPDIR"] = self._tmux_tmpdir
 
     def test_a_session_survives_a_cold_tmux_server(self) -> None:
         import asyncio

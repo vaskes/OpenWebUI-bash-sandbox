@@ -18,7 +18,9 @@
 #   * the caller's token does not travel upstream;
 #   * a directory a running session cannot honour is refused, not ignored;
 #   * a live session is adopted, not replaced;
-#   * the systemd unit builds the image it starts.
+#   * the systemd unit builds the image it starts;
+#   * the tmux double is really in effect while the request runs;
+#   * a test leaves no tmux session behind.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -210,6 +212,20 @@ mutate agent-stack.service.example \
     'ExecStart=/usr/bin/docker compose up -d' \
     "tests/test_deploy_artifacts.py::TestTheSystemdUnitAlwaysBuilds::test_the_unit_builds_on_start" \
     "the systemd unit builds what it starts"
+
+echo "== the tmux double is patched into the wrong namespace =="
+mutate tests/test_busy_session_v2131.py \
+    '    return patch.dict(endpoint.__globals__, {"_tmux": double})' \
+    '    return patch.dict({}, {"_tmux": double})' \
+    "tests/test_busy_session_v2131.py::TestTheBusySessionLeak::test_the_stdout_is_empty" \
+    "the double is in effect while the request runs"
+
+echo "== a test leaves its tmux session behind =="
+mutate tests/conftest.py \
+    '        subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True, check=False)' \
+    '        pass  # the session is left behind' \
+    "tests/test_mcp_server.py::TestTheToolsWork::test_bash_runs_a_command_and_returns_its_output" \
+    "a test leaves no session behind"
 
 echo
 echo "mutations: $PASS went red as expected, $FAIL did not"

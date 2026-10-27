@@ -61,22 +61,42 @@ DONE_PANE = (
 )
 
 
-def _tmux_double(
-    bounded: str,
-    full: str | None = None,
-    history_size: str = "12",
-    history_limit: str = "0",
-):
+class _TmuxDouble:
     """A tmux double for the busy-session scenarios.
+
+    It remembers the calls it answered. That is not bookkeeping: a
+    double that was never called means the request went somewhere else
+    — to the live tmux server — and the test would be measuring the
+    wrong thing while looking green. The call list is the proof that
+    the double was in effect.
 
     ``bounded`` is what a bounded capture returns, ``full`` is what the
     whole scrollback returns (``None`` means "the same as bounded").
     ``history_limit`` of ``0`` means "unknown" — the pane does not
     report a limit, so the scrollback cannot be proven full.
     """
-    state: dict[str, str] = {"send_keys": ""}
 
-    async def _side_effect(*args: str) -> tuple[int, str, str]:
+    def __init__(
+        self,
+        bounded: str,
+        full: str | None = None,
+        history_size: str = "12",
+        history_limit: str = "0",
+    ) -> None:
+        self.bounded = bounded
+        self.full = full
+        self.history_size = history_size
+        self.history_limit = history_limit
+        self.state: dict[str, str] = {"send_keys": ""}
+        self.calls: list[tuple[str, ...]] = []
+
+    async def __call__(self, *args: str) -> tuple[int, str, str]:
+        bounded = self.bounded
+        full = self.full
+        history_size = self.history_size
+        history_limit = self.history_limit
+        state = self.state
+        self.calls.append(args)
         cmd = args[0] if args else ""
         if cmd == "send-keys":
             try:
@@ -102,7 +122,31 @@ def _tmux_double(
             return (0, _substitute(bounded, state["send_keys"]), "")
         return (0, "", "")
 
-    return _side_effect
+
+def _patched_tmux(app, double):
+    """Patch the tmux call in the module that serves *this* app.
+
+    ``patch("agent_api._tmux")`` patches whatever module happens to be
+    in ``sys.modules`` under that name, and the harness reloads
+    ``agent_api`` for every test — so the app under test and the module
+    in ``sys.modules`` can be two different objects. When they are, the
+    patch does not reach the request, and the test quietly talks to the
+    live tmux server instead of the double: green, and measuring
+    nothing.
+
+    The globals of the endpoint function are the exact namespace the
+    request runs in. Patching them cannot go wrong that way.
+    """
+    from unittest.mock import patch  # noqa: PLC0415
+
+    endpoint = None
+    for route in app.routes:
+        func = getattr(route, "endpoint", None)
+        if func is not None and getattr(route, "path", "") == "/sessions/{session_id}/exec":
+            endpoint = func
+            break
+    assert endpoint is not None, "the exec route is not on the app under test"
+    return patch.dict(endpoint.__globals__, {"_tmux": double})
 
 
 def _substitute(text: str, send_keys: str) -> str:
@@ -141,15 +185,18 @@ class TestTheBusySessionLeak(_Base):
     """A command that never started must not answer with the pane."""
 
     def _run_busy(self, history_limit: str = "8448") -> dict:
-        from unittest.mock import patch  # noqa: PLC0415
-
-        mock = _tmux_double(
+        double = _TmuxDouble(
             BUSY_PANE,
             history_size="12",
             history_limit=history_limit,
         )
-        with patch("agent_api._tmux", new=mock):
-            return self._exec()
+        with _patched_tmux(self.app, double):
+            result = self._exec()
+        self.assertTrue(
+            double.calls,
+            "the double was never called — the request went somewhere other than the double",
+        )
+        return result
 
     def test_the_previous_commands_output_is_not_the_stdout(self) -> None:
         result = self._run_busy()
@@ -199,11 +246,10 @@ class TestTheEchoedMarkerIsNotAPrintedMarker(_Base):
     """The echo of the queued command carries the marker inside a line."""
 
     def test_a_marker_inside_a_line_does_not_count_as_started(self) -> None:
-        from unittest.mock import patch  # noqa: PLC0415
-
-        mock = _tmux_double(BUSY_PANE, history_size="12", history_limit="0")
-        with patch("agent_api._tmux", new=mock):
+        double = _TmuxDouble(BUSY_PANE, history_size="12", history_limit="0")
+        with _patched_tmux(self.app, double):
             result = self._exec()
+        self.assertTrue(double.calls, "the double was never called")
         self.assertEqual(result["stdout"], "")
         self.assertIn("did not start", result["stderr"])
 
@@ -212,11 +258,11 @@ class TestTheCommandThatRan(_Base):
     """The fix must not touch the answers that were already right."""
 
     def _run_done(self) -> dict:
-        from unittest.mock import patch  # noqa: PLC0415
-
-        mock = _tmux_double(DONE_PANE, history_size="20", history_limit="0")
-        with patch("agent_api._tmux", new=mock):
-            return self._exec()
+        double = _TmuxDouble(DONE_PANE, history_size="20", history_limit="0")
+        with _patched_tmux(self.app, double):
+            result = self._exec()
+        self.assertTrue(double.calls, "the double was never called")
+        return result
 
     def test_the_output_of_the_command_is_returned(self) -> None:
         result = self._run_done()
@@ -235,15 +281,15 @@ class TestTheOverflowedScrollback(_Base):
     """Only a command's own output can overflow the history."""
 
     def _run_overflowed(self) -> dict:
-        from unittest.mock import patch  # noqa: PLC0415
-
-        mock = _tmux_double(
+        double = _TmuxDouble(
             BUSY_PANE,
             history_size="100",
             history_limit="100",
         )
-        with patch("agent_api._tmux", new=mock):
-            return self._exec()
+        with _patched_tmux(self.app, double):
+            result = self._exec()
+        self.assertTrue(double.calls, "the double was never called")
+        return result
 
     def test_the_lost_beginning_notice_is_kept(self) -> None:
         # The history is full, so the marker was pushed out of it: the
@@ -260,16 +306,15 @@ class TestTheMarkerInTheFullScrollback(_Base):
     """The bounded capture can be too small; the whole history can hold it."""
 
     def test_the_output_is_taken_from_the_full_scrollback(self) -> None:
-        from unittest.mock import patch  # noqa: PLC0415
-
-        mock = _tmux_double(
+        double = _TmuxDouble(
             "the pane scrolled past the beginning of the output\n",
             full=DONE_PANE,
             history_size="20",
             history_limit="0",
         )
-        with patch("agent_api._tmux", new=mock):
+        with _patched_tmux(self.app, double):
             result = self._exec()
+        self.assertTrue(double.calls, "the double was never called")
         self.assertIn("hello from this command", result["stdout"])
         self.assertEqual(result["stderr"], "")
 
