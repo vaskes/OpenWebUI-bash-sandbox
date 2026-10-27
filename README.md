@@ -10,7 +10,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 485](https://img.shields.io/badge/tests-485_passing-brightgreen)](tests/)
+[![Tests: 484](https://img.shields.io/badge/tests-484_passing-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -69,10 +69,9 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 - ✅ **SSH host allowlist** (CIDR + hostname, empty = disabled)
 - ✅ **Per-WebSocket session** — no cross-user output leak
 - ✅ **Singleton HTTP client** — no per-request TCP handshake
-- ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **485 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **484 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -471,12 +470,6 @@ curl -X POST http://localhost:8090/bash \
   -H "Authorization: Bearer $OPENAPI_PROXY_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"command":"cd bar && git log --oneline | head -5", "session_id":"work-2026-10"}'
-
-# Web search shortcut (proxied to SearXNG)
-curl -X POST http://localhost:8090/bash \
-  -H "Authorization: Bearer $OPENAPI_PROXY_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"command":"web_search latest cve docker"}'
 ```
 
 ### Use it from Python

@@ -18,9 +18,7 @@ if str(ROOT) not in sys.path:
 from proxy_core import (  # noqa: E402
     DEFAULT_SESSION_ID,
     EXEC_TIMEOUT_SECONDS,
-    SEARXNG_TIMEOUT_SECONDS,
     SSH_PREFIX,
-    WEB_SEARCH_PREFIX,
     WEBSOCKET_POLL_INTERVAL,
     WEBSOCKET_SESSION_ID,
 )
@@ -31,20 +29,15 @@ from proxy_core import (
 
 class TestPrefixConstants(unittest.TestCase):
     """The command prefixes are part of the public API. If they change, every
-    prompt that uses ``web_search`` or ``ssh`` will silently break."""
-
-    def test_web_search_prefix(self) -> None:
-        self.assertEqual(WEB_SEARCH_PREFIX, "web_search ")
+    prompt that uses ``ssh`` will silently break."""
 
     def test_ssh_prefix(self) -> None:
         self.assertEqual(SSH_PREFIX, "ssh ")
 
-    def test_both_prefixes_have_trailing_space(self) -> None:
-        self.assertTrue(WEB_SEARCH_PREFIX.endswith(" "))
+    def test_the_prefix_has_a_trailing_space(self) -> None:
         self.assertTrue(SSH_PREFIX.endswith(" "))
 
-    def test_both_prefixes_are_lowercase(self) -> None:
-        self.assertEqual(WEB_SEARCH_PREFIX, WEB_SEARCH_PREFIX.lower())
+    def test_the_prefix_is_lowercase(self) -> None:
         self.assertEqual(SSH_PREFIX, SSH_PREFIX.lower())
 
 
@@ -61,7 +54,6 @@ class TestSessionDefaults(unittest.TestCase):
 class TestTimeouts(unittest.TestCase):
     def test_all_timeouts_positive(self) -> None:
         self.assertGreater(EXEC_TIMEOUT_SECONDS, 0)
-        self.assertGreater(SEARXNG_TIMEOUT_SECONDS, 0)
         self.assertGreater(WEBSOCKET_POLL_INTERVAL, 0)
 
     def test_exec_timeout_longer_than_poll(self) -> None:

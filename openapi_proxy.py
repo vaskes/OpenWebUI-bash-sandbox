@@ -20,11 +20,9 @@ Security
 * **Rate limiting** — simple in-memory token-bucket; protects the upstream
   from runaway LLM tool loops.
 
-Two convenience pseudo-commands are recognised by the proxy before the
-command is forwarded to the sandbox:
+One convenience pseudo-command is recognised by the proxy before the command
+is forwarded to the sandbox:
 
-* ``web_search <query>`` — search via a configured SearXNG instance and
-  return JSON. Useful when the model needs up-to-date web context.
 * ``ssh <rest>`` — invoke ``ssh`` against a host from the configured
   whitelist (``OPENAPI_PROXY_SSH_ALLOWLIST``).
 
@@ -73,7 +71,6 @@ from proxy_core import (
     EXEC_TIMEOUT_SECONDS,
     PROXY_WAIT_GRACE_SECONDS,
     SSH_PREFIX,
-    WEB_SEARCH_PREFIX,
     WEBSOCKET_POLL_INTERVAL,
     parse_exec_timeout,
     token_problem,
@@ -88,7 +85,6 @@ __version__ = _PROXY_CORE_VERSION
 # Configuration
 # ---------------------------------------------------------------------------
 SANDBOX_URL: str = os.environ.get("SANDBOX_URL", "http://127.0.0.1:8082")
-SEARXNG_URL: str = os.environ.get("SEARXNG_URL", "http://127.0.0.1:8888")
 PROXY_TOKEN: str = os.environ.get("OPENAPI_PROXY_TOKEN", "")
 CORS_ORIGINS: list[str] = [
     o.strip() for o in os.environ.get("OPENAPI_PROXY_CORS_ORIGINS", "").split(",") if o.strip()
@@ -582,27 +578,6 @@ async def api_config(_: str = Depends(_require_token)) -> dict[str, Any]:
     }
 
 
-async def _do_web_search(client: httpx.AsyncClient, query: str) -> dict[str, Any]:
-    """Search via SearXNG and return the top 5 results as a JSON-friendly dict."""
-    try:
-        r = await client.get(
-            f"{SEARXNG_URL}/search",
-            params={"q": query, "format": "json"},
-            headers={"User-Agent": "openapi-proxy/2.1 (sandbox-agent)"},
-        )
-        r.raise_for_status()
-        results = r.json().get("results", [])[:5]
-        return {
-            "results": [
-                {"title": item.get("title", ""), "url": item.get("url", "")} for item in results
-            ]
-        }
-    except httpx.HTTPError as exc:
-        return {"error": f"searxng request failed: {exc}"}
-    except Exception as exc:  # noqa: BLE001 — last-resort guard for JSON parse errors
-        return {"error": f"searxng response parse failed: {exc}"}
-
-
 async def _do_ssh(client: httpx.AsyncClient, rest: str, session_id: str) -> dict[str, Any]:
     """Validate the SSH args, then forward to the sandbox."""
     # ``rest`` is everything after the ``ssh`` prefix that triggered
@@ -687,13 +662,10 @@ async def run_bash(
 ) -> dict[str, Any]:
     """Top-level command dispatcher.
 
-    Recognises ``web_search <q>`` and ``ssh <rest>`` shortcuts; everything
-    else is forwarded verbatim to the sandbox.
+    Recognises the ``ssh <rest>`` shortcut; everything else is forwarded
+    verbatim to the sandbox.
     """
     stripped = command.strip()
-    if stripped.startswith(WEB_SEARCH_PREFIX):
-        query = stripped[len(WEB_SEARCH_PREFIX) :].strip()
-        return await _do_web_search(client, query)
     if stripped.startswith(SSH_PREFIX):
         rest = stripped[len(SSH_PREFIX) :]
         return await _do_ssh(client, rest, session_id)
