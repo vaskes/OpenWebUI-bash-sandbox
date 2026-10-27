@@ -946,6 +946,24 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         capture, begin_marker, marker, ec_var, grouped
     )
     if not head_survived and output.strip():
+        # The bounded capture is sized by the *growth* of the scrollback
+        # during the command, and that growth is a bad measure when the
+        # scrollback was already nearly full: the command's output took
+        # the place of the old lines instead of adding to them, so the
+        # growth is a fraction of what the command printed — and the
+        # capture stops short of the beginning.
+        #
+        # The whole output is in the scrollback. So the full scrollback
+        # is read — the same fallback the timeout path takes — and the
+        # answer is the whole output rather than a fragment with a
+        # notice in front of it.
+        full = await _capture_full_pane(name)
+        full_output, full_exit_code, full_head_survived = _extract_command_output(
+            full, begin_marker, marker, ec_var, grouped
+        )
+        if full_head_survived:
+            output, exit_code, head_survived = full_output, full_exit_code, True
+    if not head_survived and output.strip():
         # The pane overflowed and the beginning of the output is gone.
         # Say so, loudly and first, instead of handing back a fragment
         # that reads like a complete result.

@@ -20,7 +20,13 @@
 #   * a live session is adopted, not replaced;
 #   * the systemd unit builds the image it starts;
 #   * the tmux double is really in effect while the request runs;
-#   * a test leaves no tmux session behind.
+#   * a test leaves no tmux session behind;
+#   * the whole ssh command reaches the agent;
+#   * the handshake names the version of the release;
+#   * the proxy's MCP door is POST only, and refuses before the pool;
+#   * the image scan sees the MCP module;
+#   * the Host knob is read once, at start-up;
+#   * the terminal survives the cancellation it causes.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -240,6 +246,34 @@ mutate agent_api.py \
     '_set_mcp_version("0.0.0")' \
     "tests/test_mcp_server.py::TestTheProtocol::test_the_handshake_names_the_version_of_the_release" \
     "the handshake names the version of the release"
+
+echo "== the proxy relays every method =="
+mutate openapi_proxy.py \
+    '    if request.method != "POST":' \
+    '    if request.method not in ("GET", "POST", "DELETE"):' \
+    "tests/test_mcp_proxy.py::TestTheMcpDoorIsPostOnly::test_get_is_refused_without_asking_the_agent" \
+    "the proxy's MCP door is POST only"
+
+echo "== the image scan stops looking at the MCP module =="
+mutate tests/test_deploy_artifacts.py \
+    'AGENT_MODULES = ("agent_api.py", "agent_core.py", "agent_config.py", "mcp_server.py")' \
+    'AGENT_MODULES = ("agent_api.py", "agent_core.py", "agent_config.py")' \
+    "tests/test_deploy_artifacts.py::TestAgentModulesAreInTheImage::test_the_scan_looks_at_every_module_the_agent_ships" \
+    "the scan sees the MCP module"
+
+echo "== the Host knob ignores the environment =="
+mutate agent_config.py \
+    '    for item in os.environ.get("AGENT_MCP_ALLOWED_HOSTS", "").split(",")' \
+    '    for item in "".split(",")' \
+    "tests/test_mcp_server.py::TestTheHostCheckWhenItIsOn::test_a_foreign_host_is_refused" \
+    "the Host knob is read from the environment"
+
+echo "== the terminal dies when the reader is cancelled =="
+mutate openapi_proxy.py \
+    '        except (asyncio.CancelledError, Exception):  # noqa: BLE001' \
+    '        except Exception:  # noqa: BLE001' \
+    "tests/test_wave2_fixes.py::TestWebSocketNoTokenInQuery::test_websocket_protocol_header_accepted" \
+    "the terminal survives the cancellation it causes"
 
 echo
 echo "mutations: $PASS went red as expected, $FAIL did not"
