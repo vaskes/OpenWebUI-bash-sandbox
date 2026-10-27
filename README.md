@@ -8,7 +8,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 401](https://img.shields.io/badge/tests-401_passing-brightgreen)](tests/)
+[![Tests: 423](https://img.shields.io/badge/tests-423_passing-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -64,7 +64,7 @@ User ──▶ Open WebUI ──▶ openapi-proxy (OpenAPI 3.0, bearer auth) ─
 - ✅ **`web_search <q>` shortcut** — proxied to SearXNG
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **401 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **423 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -141,6 +141,12 @@ The most important knobs:
 - **`OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT`** — close `/ws` connections
   idle for this many seconds (default 300). 0 = disabled. Prevents a
   forgotten browser tab from pinning a tmux session forever.
+- **`AGENT_MCP_ALLOWED_HOSTS`** — comma-separated `Host` header values
+  the MCP endpoint answers for. Empty = the loopback names the stack
+  publishes on (`127.0.0.1`, `localhost`, `[::1]`). A deployment behind
+  a domain has to name that domain here, or the MCP endpoint refuses
+  the request with a 421 — that is the protection against DNS
+  rebinding, and it is on by default.
 - **`/workspace` mount** — bind-mount `/opt/agent-workspace` to put files
   on the host that survive container restarts.
 - **`AGENT_ALLOW_SUDO`** — `0` by default. `1` builds the image with
@@ -191,6 +197,9 @@ the full development workflow.
 | GET    | `/files?path=P`                   | The file's **raw bytes** (no base64)   |
 | DELETE | `/files?path=P`                   | Remove a delivered file from the sandbox |
 | GET    | `/metrics`                        | Prometheus exposition (bearer token)   |
+| POST   | `/mcp`                            | **MCP endpoint** — the same tools in the MCP protocol |
+| GET    | `/mcp`                            | The MCP event stream (Streamable HTTP) |
+| DELETE | `/mcp`                            | Terminate an MCP session              |
 
 ### `openapi-proxy` (port 8090, **bearer auth required**)
 
@@ -210,6 +219,44 @@ the full development workflow.
 > **Never** pass the token via `?token=...` query param — reverse proxies
 > (nginx, Caddy, Cloudflare, ALB) log URLs by default and that is a token
 > leak. Token is rejected if you try, see `tests/test_wave2_fixes.py`.
+
+## Talking to it over MCP
+
+The sandbox is also a **Model Context Protocol server**. Same sandbox,
+same tools, different protocol — so a telegram harness, an Open WebUI
+instance or a llama.cpp-style caller can all drive it, and none of them
+needs to know that the sandbox was ever an OpenAPI service.
+
+The endpoint is `POST /mcp` (the Streamable HTTP transport), on the
+proxy (the published surface) or on the agent directly. The bearer
+token is the one you already have.
+
+```bash
+# A handshake, in plain JSON-RPC. The answer names the protocol
+# version the client offered and the tools on offer.
+curl -sS -H "Authorization: Bearer $OPENAPI_PROXY_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -H 'Accept: application/json, text/event-stream' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+           "protocolVersion":"2025-06-18","capabilities":{},
+           "clientInfo":{"name":"probe","version":"1"}}}' \
+     http://127.0.0.1:8099/mcp
+```
+
+Four tools, one per capability — the same ones the HTTP API exposes:
+
+| Tool          | What it does                                              |
+|---------------|-----------------------------------------------------------|
+| `bash`        | run a command, get stdout, the exit code and the timing   |
+| `read_file`   | take a file out of the workspace (text as text, binary as a base64 blob) |
+| `file_info`   | name, size, mime and mtime — without reading the file      |
+| `delete_file` | remove a file from the workspace                           |
+
+The full contract — the tool schemas, the error shapes, what the
+session handling means — is in
+[docs/HANDOFF-mcp.md](docs/HANDOFF-mcp.md). The short version: the
+MCP door grants exactly what the HTTP door grants, and the token is
+the same gate.
 
 ## Monitoring
 
