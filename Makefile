@@ -37,7 +37,7 @@ ps: ## Show service status
 restart: check-env ## Recreate all containers (refuses with placeholder .env)
 	$(COMPOSE) up -d --build --force-recreate
 
-test: ## Run the unit test suite (stdlib unittest, no pytest required)
+test: ## Run the unit test suite (stdlib unittest runner; needs requirements-dev.txt)
 	@python3 -m unittest discover -s tests -v
 
 test-cov: ## Run tests with coverage (requires pytest + pytest-cov)
