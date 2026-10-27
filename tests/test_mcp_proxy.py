@@ -28,11 +28,19 @@ if str(ROOT) not in sys.path:
 
 TOKEN = "test-proxy-token-xyz"
 
+#: The token the proxy uses to call the agent. It is deliberately
+#: **different** from the caller's: the property under test ("the
+#: caller's token does not travel upstream") cannot be observed when the
+#: two values are the same — a mutation that forwards the caller's token
+#: would produce exactly the header the correct code produces.
+UPSTREAM_TOKEN = "test-upstream-token-abc"
+
 
 def _fresh_proxy(rate_limit_rpm: str = "0"):
     """Reload the proxy module with a known token. Returns the module."""
     tempfile.mkdtemp(prefix="proxy-mcp-test-")
     os.environ["OPENAPI_PROXY_TOKEN"] = TOKEN
+    os.environ["OPENAPI_PROXY_UPSTREAM_TOKEN"] = UPSTREAM_TOKEN
     os.environ["SANDBOX_URL"] = "http://sandbox-agent:8082"
     os.environ["OPENAPI_PROXY_RATE_LIMIT_RPM"] = rate_limit_rpm
     if "openapi_proxy" in sys.modules:
@@ -168,11 +176,29 @@ class TestTheProxyRelaysMcp(unittest.TestCase):
         self.assertEqual(sent.get("Host"), "sandbox.example.com")
 
     def test_the_caller_token_is_not_forwarded(self) -> None:
-        """One trust boundary's secret must not travel into another's."""
+        """One trust boundary's secret must not travel into another's.
+
+        The caller's token is the proxy's token; the agent is called with
+        the upstream token. The two are different values here on
+        purpose — with one value the test cannot see the difference
+        between "the upstream token was forwarded" and "the caller's
+        token was forwarded", and the mutation that forwards the
+        caller's token stays green.
+        """
+        self.assertNotEqual(
+            TOKEN,
+            UPSTREAM_TOKEN,
+            "the two tokens are the same value — this test cannot see the difference",
+        )
         fake = self._install(_FakeUpstream(200, b"{}"))
         self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1}, headers=self.auth)
         sent = fake.requests[0]["request"]["headers"]
-        self.assertEqual(sent.get("Authorization"), f"Bearer {TOKEN}")
+        self.assertEqual(sent.get("Authorization"), f"Bearer {UPSTREAM_TOKEN}")
+        self.assertNotEqual(
+            sent.get("Authorization"),
+            f"Bearer {TOKEN}",
+            "the caller's token travelled upstream",
+        )
 
     def test_the_response_is_streamed(self) -> None:
         fake = self._install(_FakeUpstream(200, b"x" * 1024))
