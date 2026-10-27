@@ -77,7 +77,6 @@ services:
     volumes:
       - /opt/telegrambot/sandbox-workspace:/workspace
       - /opt/telegrambot/ssh-keys:/home/agent/.ssh:ro
-      - /opt/search:/opt/search:ro
       # NOTE: there is deliberately NO volume mounted at /home/agent.
       # The application code lives there (WORKDIR is /home/agent so the
       # import path resolves), so a volume at that path shadows agent_api.py

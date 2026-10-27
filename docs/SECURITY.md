@@ -74,7 +74,7 @@ release-prep patch — see the CHANGELOG.
 
 * The host running Docker.
 * The user who can run `docker compose` / edit the compose file.
-* Your SearXNG and whisper-api backends (out of scope).
+* Your whisper-api backend (out of scope).
 
 **Untrusted:**
 
@@ -109,7 +109,6 @@ files visible to the sandbox are:
 * `/home/agent` (the image itself — the code lives there, and **no
   volume is mounted there**; a volume there would shadow the code with
   the copy seeded on the first deploy)
-* `/opt/search` (read-only bind-mount)
 * `/home/agent/.ssh` (read-only bind-mount)
 * `/var/cache/apt`, `/home/agent/.cache/pip` (named volumes)
 
