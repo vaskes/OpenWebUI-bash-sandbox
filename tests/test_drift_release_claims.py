@@ -44,6 +44,14 @@ CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 # (sub-bullets, prose) is ignored.
 BULLET_RE = re.compile(r"^[\-\*] ")
 
+# An environment variable the runtime reads. Both spellings count:
+# ``os.environ.get("X")`` and ``os.environ["X"]``.
+#
+# The parenthesis after ``get`` is part of the pattern, not decoration:
+# an earlier version of this tripwire expected ``os.environ.get"X"``,
+# matched nothing at all, and passed on an empty set for years.
+ENV_VAR_RE = re.compile(r'os\.environ(?:\.get\(\s*|\[\s*)["\']([A-Z][A-Z0-9_]+)')
+
 # Path candidates inside a bullet. Matches:
 #   docs/SECURITY.md
 #   tests/test_foo.py
@@ -189,10 +197,21 @@ class TestAllEnvVarsDocumented(unittest.TestCase):
     This tripwire reads every ``os.environ.get("X")`` and
     ``os.environ["X"]`` from the runtime modules, and asserts each X
     appears in docs/CONFIGURATION.md as a literal token.
+
+    The modules covered are the ones that read the environment at all:
+    the two services and the two modules that hold their configuration
+    (``agent_config``) and their MCP door (``mcp_server``). Before
+    v2.13.0 the last two were not in the list, and a knob that lives in
+    them was free to be undocumented.
     """
 
     def setUp(self) -> None:
-        self.runtime = (REPO_ROOT / "agent_api.py", REPO_ROOT / "openapi_proxy.py")
+        self.runtime = (
+            REPO_ROOT / "agent_api.py",
+            REPO_ROOT / "openapi_proxy.py",
+            REPO_ROOT / "agent_config.py",
+            REPO_ROOT / "mcp_server.py",
+        )
         self.docs = REPO_ROOT / "docs" / "CONFIGURATION.md"
         for p in self.runtime:
             if not p.exists():
@@ -204,12 +223,27 @@ class TestAllEnvVarsDocumented(unittest.TestCase):
         names: set[str] = set()
         for path in self.runtime:
             text = path.read_text(encoding="utf-8")
-            for m in re.finditer(r'os\.environ(?:\.get|\[["\'])([A-Z][A-Z0-9_]+)', text):
+            for m in re.finditer(ENV_VAR_RE, text):
                 names.add(m.group(1))
         return names
 
+    def test_the_scan_actually_finds_something(self) -> None:
+        # A scan that finds nothing proves nothing. This check existed
+        # since v2.4.1 and never found a single variable: its pattern
+        # expected `os.environ.get"VAR"`, while the code writes
+        # `os.environ.get("VAR")` — one parenthesis away from matching.
+        # The test below therefore passed on an empty set, for years.
+        #
+        # A sentinel that is certainly read keeps the scan honest: if the
+        # pattern breaks again, this goes red instead of the other one
+        # going quietly green.
+        env_vars = self._env_vars_in_source()
+        self.assertTrue(env_vars, "the env var scan found nothing — the pattern is broken")
+        self.assertIn("AGENT_TOKEN", env_vars)
+
     def test_every_runtime_env_var_appears_in_configuration(self) -> None:
         env_vars = self._env_vars_in_source()
+        self.assertTrue(env_vars, "the env var scan found nothing — the pattern is broken")
         docs_text = self.docs.read_text(encoding="utf-8")
         missing = sorted(v for v in env_vars if v not in docs_text)
         if missing:
