@@ -110,6 +110,14 @@ from metrics import Metrics
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+#: The default timeout of the HTTP door, in seconds.
+#:
+#: It is shorter than the proxy's default (60 s, ``proxy_core``) on
+#: purpose: the agent's number applies to a caller that talks to the
+#: agent directly and says nothing about how long it intends to wait,
+#: and the shorter default is the one that gives a model its answer
+#: back. The proxy asks for its own number explicitly, so the two
+#: defaults never meet: what the proxy requests is what the agent runs.
 DEFAULT_TIMEOUT = 30  # seconds
 #: The hard cap on one command, in seconds. 2026-10-27: 600 (10 min).
 #: The operator's ruling raised it to an hour, because the limit he
@@ -197,6 +205,16 @@ async def _save_sessions() -> None:
         logger.error("failed to persist sessions: %s", exc)
 
 
+#: The session registry.
+#:
+#: One process, one registry — and that is a promise, not an
+#: accident. The agent runs a single uvicorn worker (see the
+#: Dockerfile); with more than one, every worker would hold its own
+#: copy of this dict and its own view of which sessions exist. The
+#: registry is written to disk on every change, so the file is the
+#: shared truth — but two workers would still disagree about what is
+#: alive. Adding a worker means adding a lock *and* a decision about
+#: who owns the tmux server; it is not a flag to flip.
 SESSIONS: dict[str, dict[str, Any]] = _load_sessions()
 
 
@@ -1295,8 +1313,10 @@ def _safe_file(candidate: str) -> str:
     try:
         resolved = os.path.realpath(raw, strict=True)
     except OSError as exc:
+        # A symlink loop is an OSError (ELOOP) like any other, and
+        # ``strict=True`` raises it here — there is no separate
+        # RuntimeError to catch.
         raise HTTPException(status_code=404, detail=f"file not found: {candidate}") from exc
-    except RuntimeError as exc:  # symlink loop
         raise HTTPException(status_code=400, detail=f"unresolvable path: {candidate}") from exc
 
     if resolved == WORKSPACE_REAL:

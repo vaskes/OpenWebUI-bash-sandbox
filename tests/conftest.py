@@ -35,22 +35,34 @@ def _tmux_sessions() -> set[str]:
     return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
 
 
-@pytest.fixture(autouse=True)
-def _no_test_leaves_a_session_behind():
-    """Kill the tmux sessions the test created — and only those.
+@pytest.fixture(scope="session")
+def _the_sessions_of_the_machine():
+    """The tmux sessions that were running before the suite started.
 
-    Whatever was running on the machine before the test started belongs
+    Whatever was running on the machine before the suite started belongs
     to whoever started it: the operator may have their own session open
     on the same box, and the suite has no business killing it.
+    """
+    return _tmux_sessions()
+
+
+@pytest.fixture(autouse=True)
+def _no_test_leaves_a_session_behind(_the_sessions_of_the_machine):
+    """Kill the tmux sessions the test created — and only those.
 
     A session that cannot be killed is reported. "The suite left a
     session behind" is not a thing one should discover a week later,
     when a run inherits a pane with somebody else's ``cd`` in it.
+
+    The check is against the sessions of the *whole run*, not of this
+    test: a session a previous test left behind is already in this
+    test's "before" set, and the leftover would go unnoticed — the
+    first test to leave it is the one that has to be told.
     """
     before = _tmux_sessions()
     yield
     for name in sorted(_tmux_sessions() - before):
         subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True, check=False)
-    left = sorted(_tmux_sessions() - before)
+    left = sorted(_tmux_sessions() - _the_sessions_of_the_machine)
     if left:
         raise RuntimeError(f"the test left tmux sessions behind: {left}")

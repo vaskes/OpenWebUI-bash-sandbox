@@ -415,7 +415,12 @@ def _validate_ssh_args(rest: str) -> tuple[str | None, str | None]:
 
     # Re-assemble the command. StrictHostKeyChecking=accept-new is the
     # default; we don't need to override it.
-    return bare_host, " ".join(shlex.quote(t) for t in tokens[: i + 1])
+    # The whole command. The slice used to end at the loop's stop
+    # position — which happens to be the end of the token list, but only
+    # because the loop walks every token. It reads as "up to the host",
+    # and it is not: a flag after the host ("ssh user@host -p 2222")
+    # is part of the command and has to reach the agent.
+    return bare_host, " ".join(shlex.quote(t) for t in tokens[:])
 
 
 # ---------------------------------------------------------------------------
@@ -1122,6 +1127,17 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         try:
             await reader
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            # Both, and the order does not matter: CancelledError is
+            # **not** an Exception (it is a BaseException since 3.8), so
+            # the bare `except Exception` would not catch the task that
+            # was just cancelled — the CancelledError would walk out of
+            # this `finally` and kill the websocket handler, and the
+            # terminal would die instead of closing.
+            #
+            # The tuple looks redundant and is not. A linter that calls
+            # it redundant is wrong about this Python, and the review
+            # that called it redundant was wrong about it: the change
+            # was made, and the test that opens a websocket went red.
             pass
         # Best-effort cleanup of the per-connection tmux session.
         try:
