@@ -66,6 +66,19 @@ DEFAULT_SESSION_ID = "mcp"
 #: agent's own configuration, so the two doors cannot disagree.
 BINARY_LIMIT_BYTES = 0
 
+#: The hard ceiling for one MCP read, independent of the configured limit.
+#:
+#: The HTTP door streams a file out in chunks and never holds it whole, so
+#: its limit is a policy about what may be *served*. The MCP door cannot
+#: stream: a tool result is one JSON-RPC message, so the file is held in
+#: memory and then base64-encoded (a third more). With the configured
+#: limit set to "no limit" — a legal setting — one call could therefore
+#: ask the machine for everything it has. This ceiling is the answer to
+#: that: the configured limit still decides the policy, and this decides
+#: how much one call may cost the machine. It is above the limit the
+#: HTTP door is normally run with, so it does not silently narrow it.
+MCP_MAX_READ_BYTES = 64 * 1024 * 1024
+
 #: Hosts the MCP endpoint answers for **when the check is on**. The MCP
 #: SDK refuses a request whose ``Host`` header is not on this list — the
 #: protection against DNS rebinding, where a web page in the operator's
@@ -211,8 +224,11 @@ async def read_file(path: str) -> CallToolResult:
     except Exception as exc:  # noqa: BLE001 - the detail must reach the model
         raise ToolError(f"cannot read the file: {_reason(exc)}") from exc
 
-    limit = _binary_limit()
-    size = os.path.getsize(target)
+    limit = _read_limit()
+    try:
+        size = os.path.getsize(target)
+    except OSError as exc:
+        raise ToolError(f"cannot read the file: {_reason(exc)}") from exc
     if limit and size > limit:
         raise ToolError(
             f"the file is {size} bytes, which is over the limit of {limit} bytes; "
@@ -224,7 +240,17 @@ async def read_file(path: str) -> CallToolResult:
     except Exception as exc:  # noqa: BLE001 - the detail must reach the model
         raise ToolError(f"cannot read the file: {_reason(exc)}") from exc
     with handle:
-        payload = handle.read()
+        # Read one byte more than the limit allows: a file that grew
+        # between the stat and the read is caught here instead of being
+        # read whole, and the call is refused with the reason. The
+        # limit is never zero — the ceiling is always in force — so
+        # there is no "read it all" branch to fall into.
+        payload = handle.read(limit + 1)
+    if len(payload) > limit:
+        raise ToolError(
+            f"the file grew past the limit of {limit} bytes while it was being read; "
+            "read it in pieces or compress it first"
+        )
 
     mime = mimetypes.guess_type(target)[0] or "application/octet-stream"
     try:
@@ -325,6 +351,19 @@ def _binary_limit() -> int:
     from agent_api import BINARY_LIMIT_BYTES  # noqa: PLC0415
 
     return int(BINARY_LIMIT_BYTES)
+
+
+def _read_limit() -> int:
+    """How many bytes one MCP read may return.
+
+    The configured limit is the policy; the ceiling is the guard. With
+    the limit set to 0 ("no limit"), the ceiling is what applies — see
+    :data:`MCP_MAX_READ_BYTES` for why a read needs one.
+    """
+    limit = _binary_limit()
+    if limit and limit <= MCP_MAX_READ_BYTES:
+        return limit
+    return MCP_MAX_READ_BYTES
 
 
 def _default_timeout() -> int:
