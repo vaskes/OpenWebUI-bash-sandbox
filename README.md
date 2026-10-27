@@ -10,7 +10,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 591](https://img.shields.io/badge/tests-591_passing-brightgreen)](tests/)
+[![Tests: 595](https://img.shields.io/badge/tests-595_passing-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -71,7 +71,7 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 - ✅ **Singleton HTTP client** — no per-request TCP handshake
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **591 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **595 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -92,6 +92,12 @@ button, enable **SandboxTools**, and type:
 ```
 pwd && ls /workspace
 ```
+
+> The published ports bind to the **loopback** by default — the address is
+> the operator's choice and is not written into the compose file. A
+> deployment that needs another machine to reach the stack sets
+> `SANDBOX_BIND_HOST` (`0.0.0.0` publishes on every interface; then the
+> bearer token is the only thing between that network and a shell).
 
 The model should call `bash(command="pwd && ls /workspace")` and you should
 see `/workspace` and the contents of the workspace.

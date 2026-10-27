@@ -105,8 +105,8 @@ services:
       - AGENT_MCP_MAX_READ_BYTES=${AGENT_MCP_MAX_READ_BYTES:-1m}
       - AGENT_TOKEN=${AGENT_STACK_TOKEN:?AGENT_STACK_TOKEN must be set}
       # The Host header values the MCP endpoint answers for. Empty =
-      # the loopback names the stack publishes on. A deployment behind
-      # a domain names it here, or the MCP endpoint answers 421.
+      # no check at all — the check is off by default. A deployment
+      # behind a domain names it here, or the MCP endpoint answers 421.
       - AGENT_MCP_ALLOWED_HOSTS=${AGENT_MCP_ALLOWED_HOSTS:-}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/healthz"]

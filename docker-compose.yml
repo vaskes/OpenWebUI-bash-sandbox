@@ -102,8 +102,8 @@ services:
       # every call. The agent refuses to serve if this is empty.
       - AGENT_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
       # The Host header values the MCP endpoint answers for. Empty =
-      # the loopback names the stack publishes on. A deployment behind
-      # a domain names it here, or the MCP endpoint answers 421.
+      # no check at all — the check is off by default. A deployment
+      # behind a domain names it here, or the MCP endpoint answers 421.
       - AGENT_MCP_ALLOWED_HOSTS=${AGENT_MCP_ALLOWED_HOSTS:-}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/healthz"]
@@ -121,7 +121,11 @@ services:
     networks:
       - agent-net
     ports:
-      - "192.168.10.7:8090:8090"
+      # The address the stack is published on is the operator's choice,
+      # not a constant in this file: the default is the loopback, and a
+      # deployment that needs another machine to reach it sets
+      # SANDBOX_BIND_HOST (0.0.0.0 to publish on every interface).
+      - "${SANDBOX_BIND_HOST:-127.0.0.1}:8090:8090"
     environment:
       - SANDBOX_URL=http://sandbox-agent:8082
       - OPENAPI_PROXY_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
@@ -168,7 +172,10 @@ services:
     networks:
       - agent-net
     ports:
-      - "192.168.10.7:3001:8080"
+      - "${SANDBOX_BIND_HOST:-127.0.0.1}:3001:8080"
+    # whisper-api usually runs on the host, not in this network.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # Named volume — NOT bind-mounted into /workspace. The Open WebUI
       # SQLite (chats, users, settings) must stay out of the agent's
@@ -184,7 +191,7 @@ services:
       - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-user}
       - ENABLE_AUDIO_STT=true
       - AUDIO_STT_ENGINE=openai
-      - AUDIO_STT_OPENAI_API_BASE_URL=http://192.168.10.7:8000/v1
+      - AUDIO_STT_OPENAI_API_BASE_URL=${AUDIO_STT_OPENAI_API_BASE_URL:-http://host.docker.internal:8000/v1}
       - AUDIO_STT_OPENAI_API_KEY=${WHISPER_API_KEY:-sk-not-needed}
       - TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://openapi-proxy:8090","path":"openapi.json","info":{"id":"sandbox-tools","name":"SandboxTools","description":"Persistent shell"},"config":{"enable":true},"auth_type":"bearer","key":"${OPENAPI_PROXY_TOKEN}","spec_type":"url"}]
     mem_limit: 1g

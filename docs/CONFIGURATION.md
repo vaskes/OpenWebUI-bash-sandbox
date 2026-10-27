@@ -185,7 +185,7 @@ curl -fsS http://127.0.0.1:8090/openapi.json
 | `DEFAULT_USER_ROLE`           | `user`               | Role for new signups                              |
 | `ENABLE_AUDIO_STT`            | `true`               | Allow speech-to-text                              |
 | `AUDIO_STT_ENGINE`            | `openai`             | Use OpenAI-compatible API                         |
-| `AUDIO_STT_OPENAI_API_BASE_URL` | `http://192.168.10.7:8000/v1` | whisper-api URL                          |
+| `AUDIO_STT_OPENAI_API_BASE_URL` | `http://host.docker.internal:8000/v1` | whisper-api URL — `host.docker.internal` is the Docker host as seen from the container |
 | `AUDIO_STT_OPENAI_API_KEY`    | `sk-not-needed`      | whisper-api doesn't validate it                   |
 | `SANDBOX_URL`                 | `http://sandbox-agent:8082` | (optional, used by some integrations)        |
 | `TOOL_SERVER_CONNECTIONS`     | (JSON list)          | Pre-wires the OpenAPI tool connection             |
@@ -283,16 +283,23 @@ Delete these with `docker volume rm <name>` to start fresh.
 
 | Host port           | Service        | Notes                                 |
 |---------------------|----------------|---------------------------------------|
-| `192.168.10.7:3001` | open-webui     | Web UI                                |
-| `192.168.10.7:8090` | openapi-proxy  | OpenAPI + WS                           |
+| `127.0.0.1:3001`   | open-webui     | Web UI                                |
+| `127.0.0.1:8090`   | openapi-proxy  | OpenAPI + WS                           |
+
+The address the stack is published on is **not written into the compose
+file** — it is the operator's choice, and the file's default is the
+loopback:
+
+| Variable            | Default        | Notes                                 |
+|---------------------|----------------|---------------------------------------|
+| `SANDBOX_BIND_HOST` | `127.0.0.1`    | The host address the published ports bind to. `0.0.0.0` publishes on every interface — that is the choice of a deployment that wants the port reachable from the network, and it leaves the bearer token as the only thing between that network and a shell. |
 
 `sandbox-agent` has **no host port mapping** — only `expose:` in compose
 so the openapi-proxy can reach it via the Docker network. The bearer
 token is still required for defence in depth.
 
-Change the host IP / port mapping in `docker-compose.yml` if your host has
-a different address. The internal container ports (3001, 8082, 8090)
-should stay the same — they are referenced by inter-service URLs.
+The internal container ports (3001, 8082, 8090) stay the same — they
+are referenced by inter-service URLs.
 
 ## systemd unit (`/etc/systemd/system/agent-stack.service`)
 
