@@ -308,3 +308,8 @@ is a limit nobody can use.
   gets a traceback in the log.
 * **`Host` not in `AGENT_MCP_ALLOWED_HOSTS`** → `421`. The check is off
   unless the variable is set.
+* **the session is busy** (an earlier command is still running) → the call
+  runs out its timeout and answers with an empty `stdout` and a `stderr`
+  that names the reason. The pane still holds the command that is running
+  and is never handed to the caller as if it were the new command's
+  output.
