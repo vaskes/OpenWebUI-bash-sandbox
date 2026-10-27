@@ -113,22 +113,33 @@ Reads a file out of the workspace.
 | `path` | string, **required** | the file, relative to the workspace or absolute inside it |
 
 A text file comes back as text. Anything else comes back as an
-embedded resource: base64 in the `blob` field, with the mime type. The
-size limit is the same one the HTTP door applies (`AGENT_BINARY_LIMIT`,
-2 MB by default); a bigger file is an error that names its real size.
+embedded resource: base64 in the `blob` field, with the mime type. A
+file over the read limit is an error that names its real size and the
+limit.
+
+**The read has a budget of its own** (`AGENT_MCP_MAX_READ_BYTES`, 1 MiB
+by default). The effective limit is the smallest of three: that
+budget, the file policy the HTTP door applies (`AGENT_BINARY_LIMIT`) and
+a hard ceiling of 64 MiB. The budget is the point: the HTTP door
+serves a *file*, and the deployment lets it serve 50 MiB of one, but
+here the bytes land in a **prompt** — and a text model asked to reason
+about fifty megabytes has lost the thread. The HTTP door keeps its own
+limit, untouched.
 
 **The read holds the file in memory** and base64-encodes it on the way
 out, so a binary file costs about a third more than its own size in
-the answer. One read is capped at **64 MiB** whatever
-`AGENT_BINARY_LIMIT` says: the configured limit is the policy, and the
-ceiling is the guard that stays when the policy is `0` ("no limit").
-A file that grows while it is being read is refused with the reason
-rather than read whole.
+the answer. A file that grows while it is being read is refused with the
+reason rather than read whole.
+
+**A big file is read in pieces, not refused forever.** `read_file` has
+no offset, so the way to read a slice of a large file is the shell:
+`bash` with `head`, `tail` or `sed`.
 
 ### `file_info`
 
 The cheap door: `name`, `path`, `size`, `mtime`, `mime` and the limit
-that applies. Use it before `read_file` when the size is the question.
+that applies — which is the read limit above, not the HTTP door's file
+policy. Use it before `read_file` when the size is the question.
 
 ### `delete_file`
 
@@ -159,7 +170,7 @@ The refusals that can come back:
 | `not a regular file: …` | it is a directory, a fifo or a device |
 | `file not found: …` | nothing there |
 | `permission denied: …` | the agent's own process cannot read it (a root-owned 0600 file) |
-| `the file is N bytes, which is over the limit of M bytes` | the binary limit |
+| `the file is N bytes, which is over the limit of M bytes` | the read limit — the budget, the file policy or the ceiling, whichever is the smallest |
 | `the file grew past the limit of M bytes while it was being read` | the file grew between the size check and the read |
 | `the file was replaced while it was being opened: …` | the path became a symlink after the containment check |
 
@@ -194,8 +205,9 @@ The refusals that can come back:
   import — a refactor, not a patch.
 * **`read_file` does not stream.** The HTTP door streams a file out in
   chunks; the MCP tool holds it in memory and base64-encodes it. The
-  ceiling keeps the cost bounded, but a caller that wants a hundred
-  megabytes has to use the HTTP door.
+  budget and the ceiling keep the cost bounded, but a caller that wants
+  more than the budget has to use the HTTP door, with its own, larger
+  limit.
 
 ---
 

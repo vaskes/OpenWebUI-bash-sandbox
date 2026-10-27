@@ -14,6 +14,7 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_PORT`           | `8082`                                    | uvicorn listen port.                                           |
 | `AGENT_STDOUT_LIMIT`   | `512k`                                    | How much text one command may return in one exec. 32k..1024k.  |
 | `AGENT_BINARY_LIMIT`   | `2048k`                                   | How large a file `/files` will serve. `0` = unlimited.         |
+| `AGENT_MCP_MAX_READ_BYTES` | `1m`                                  | How many bytes one MCP `read_file` may put into a model's context. `0` = no budget of its own. 0..64m. A file over the budget is refused, and the refusal names the file's size and the limit. The HTTP `/files` door keeps `AGENT_BINARY_LIMIT` — there the bytes land in a file, not in a prompt. |
 | `AGENT_ALLOW_SUDO`     | `0`                                       | Build the image with `sudo`, so a command can become root. **Private, secured deployments only.** |
 | `AGENT_NO_NEW_PRIVILEGES` | `true`                                  | The container's `no-new-privileges` flag. `false` is required by the privilege mode. |
 | `AGENT_CAP_DROP`       | `ALL`                                     | Capabilities dropped from the container. `SYS_ADMIN` in the privilege mode. |
