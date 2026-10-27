@@ -1,9 +1,9 @@
 """Integration tests for :mod:`openapi_proxy` HTTP endpoints.
 
 Covers the security-critical paths: bearer-token auth, CORS allowlist,
-rate limiting, SSH host allowlist, the bash command dispatch, and the
-``web_search`` shortcut. The singleton httpx client is patched per-test
-so the upstream sandbox-agent is never actually called.
+rate limiting, SSH host allowlist, and the bash command dispatch. The
+singleton httpx client is patched per-test so the upstream sandbox-agent
+is never actually called.
 """
 
 from __future__ import annotations
@@ -227,26 +227,25 @@ class TestBashDispatch(_Base):
             ).json()
         self.assertIn("sandbox-agent request failed", body["error"])
 
-    def test_web_search_shortcut(self) -> None:
+    def test_the_search_shortcut_is_gone(self) -> None:
+        # The proxy used to answer a ``web_search <q>`` pseudo-command by
+        # querying a SearXNG instance. Search is another MCP's job, so the
+        # shortcut is gone — and a command that starts with those words is
+        # now an ordinary shell command, forwarded to the sandbox verbatim.
         mock_client = AsyncMock()
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(
-            return_value={
-                "results": [{"title": "t", "url": "u"}],
-            }
-        )
-        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_resp.json = MagicMock(return_value={"stdout": "", "stderr": "", "exit_code": 0})
+        mock_client.post = AsyncMock(return_value=mock_resp)
         with patch("openapi_proxy._client", new=lambda _req: mock_client):
-            body = self.client.post(
+            self.client.post(
                 "/bash",
                 json={"command": "web_search python asyncio", "session_id": "x"},
                 headers=self.headers,
-            ).json()
-        self.assertIn("results", body)
-        # Verify SearXNG URL was hit.
-        get_call = mock_client.get.call_args
-        self.assertIn("/search", get_call.args[0])
+            )
+        # Forwarded to the agent, not answered locally: no GET at all.
+        mock_client.get.assert_not_called()
+        self.assertEqual(mock_client.post.call_count, 1)
 
     def test_shell_exec_alias(self) -> None:
         mock_client = AsyncMock()

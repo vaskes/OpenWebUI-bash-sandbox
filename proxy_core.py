@@ -9,7 +9,6 @@ from __future__ import annotations
 
 __version__ = "2.12.1"
 
-WEB_SEARCH_PREFIX = "web_search "
 SSH_PREFIX = "ssh "
 DEFAULT_SESSION_ID = "openwebui"
 #: The default exec limit the proxy asks the sandbox-agent for, in
@@ -27,7 +26,6 @@ PROXY_WAIT_GRACE_SECONDS = 15.0
 #: The accepted range for the exec limit, in seconds.
 EXEC_TIMEOUT_MIN_SECONDS = 5
 EXEC_TIMEOUT_MAX_SECONDS = 600
-SEARXNG_TIMEOUT_SECONDS = 30.0
 WEBSOCKET_POLL_INTERVAL = 0.5
 WEBSOCKET_SESSION_ID = "openwebui-ws"
 
