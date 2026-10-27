@@ -7,7 +7,7 @@ command syntax that the LLM sees.
 
 from __future__ import annotations
 
-__version__ = "2.14.1"
+__version__ = "2.14.2"
 
 SSH_PREFIX = "ssh "
 DEFAULT_SESSION_ID = "openwebui"
