@@ -144,7 +144,11 @@ mcp = MCPServer(
         "sandbox workspace; a path that points outside is refused, and so is a "
         "symlink that leaves the workspace.\n\n"
         "The shell is the write path: there is no separate write tool, and a "
-        "command that writes a file is the way to write one."
+        "command that writes a file is the way to write one.\n\n"
+        "The shell is persistent, and a session is shared: give every task that "
+        "must not see another's state its own `session_id` (a name of your "
+        "choosing, not the default one), or two conversations will read each "
+        "other's output."
     ),
 )
 
