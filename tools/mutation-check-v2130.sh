@@ -117,7 +117,7 @@ echo "== a search engine creeps back into the deployment =="
 mutate docker-compose.yml \
     '      - SANDBOX_URL=http://sandbox-agent:8082' \
     '      - SANDBOX_URL=http://sandbox-agent:8082
-      - SEARXNG_URL=http://192.168.10.7:8888' \
+      - SEARXNG_URL=http://search.invalid:8888' \
     'tests/test_no_search_v2130.py::TestTheSearchIsGone::test_no_file_names_a_search_engine' \
     "the deployment names no search engine"
 
