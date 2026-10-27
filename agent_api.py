@@ -47,6 +47,15 @@ DELETE /files?path=P
     storage: once a file has been delivered, the client can remove it.
 GET  /metrics
     Prometheus exposition (requests, refusals, active sessions).
+POST /mcp
+    The Model Context Protocol endpoint: the same sandbox, in the
+    protocol an MCP caller speaks. One tool per capability — ``bash``,
+    ``read_file``, ``file_info``, ``delete_file`` — and the same bearer
+    token as every other route. See ``mcp_server.py``.
+GET  /mcp
+    The MCP event stream (part of the Streamable HTTP transport).
+DELETE /mcp
+    Terminate an MCP session (part of the Streamable HTTP transport).
 """
 
 from __future__ import annotations
@@ -69,6 +78,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, s
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from starlette.routing import Route as StarletteRoute
 
 from agent_config import (
     BINARY_LIMIT_BYTES as _BINARY_LIMIT_BYTES,
@@ -360,16 +370,20 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     reaped = await _reap_dead_sessions()
     _log_reaped_sessions(reaped)
     _warn_about_the_privilege_mode()
-    try:
-        yield
-    finally:
-        # Best-effort flush so an in-flight session add doesn't get lost
-        # on a clean restart. Skip if the loop is already shutting down.
-        if SESSIONS:
-            try:
-                await _save_sessions()
-            except Exception as exc:  # noqa: BLE001
-                logger.error("final sessions flush failed: %s", exc)
+    # The MCP transport runs in a task group of its own, and it refuses
+    # requests until that group exists. A mounted application does not
+    # get a lifespan of its own, so the agent opens it.
+    async with _mcp_lifespan():
+        try:
+            yield
+        finally:
+            # Best-effort flush so an in-flight session add doesn't get lost
+            # on a clean restart. Skip if the loop is already shutting down.
+            if SESSIONS:
+                try:
+                    await _save_sessions()
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("final sessions flush failed: %s", exc)
 
 
 def _log_reaped_sessions(reaped: list[str]) -> None:
@@ -494,15 +508,31 @@ def _require_token(
             detail="missing bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    import hmac as _hmac
-
-    if not _hmac.compare_digest(creds.credentials, AGENT_TOKEN):
+    if not _token_ok(creds.credentials):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return creds.credentials
+
+
+def _token_ok(credentials: str | None) -> bool:
+    """True when ``credentials`` are the agent's token.
+
+    One comparison, two doors. The HTTP gate and the MCP gate both come
+    here, so the two cannot drift apart — a token that opens the HTTP
+    door opens the MCP door, and nothing else does.
+
+    Constant-time compare defeats timing attacks. An empty token means
+    "not configured", and then nothing matches: the agent is fail-closed
+    and the MCP door is closed with it.
+    """
+    if not AGENT_TOKEN or not credentials:
+        return False
+    import hmac as _hmac
+
+    return _hmac.compare_digest(credentials, AGENT_TOKEN)
 
 
 @app.get("/healthz")
@@ -1337,3 +1367,30 @@ if __name__ == "__main__":
         # Graceful shutdown — give in-flight requests 25s to finish.
         timeout_graceful_shutdown=25,
     )
+
+
+# ---------------------------------------------------------------------------
+# The MCP door
+# ---------------------------------------------------------------------------
+# The same sandbox, in the protocol the caller speaks. The tools are the
+# same tools the HTTP API exposes — this is a face, not a second
+# implementation — and the gate is the same token.
+#
+# The module is imported here, and not at the top of the file, because
+# it reaches back into this module for the tools' behaviour. The import
+# inside the tools is local, so the two modules never import each other
+# at the same time.
+from mcp_server import build_app as _build_mcp_app  # noqa: E402
+from mcp_server import lifespan as _mcp_lifespan  # noqa: E402
+from mcp_server import set_version as _set_mcp_version  # noqa: E402
+
+_set_mcp_version(__version__)
+
+#: The MCP endpoint. It is a route and not a mount on purpose: a mount
+#: at "/mcp" answers "/mcp" with a redirect to "/mcp/", and a redirect
+#: on every call is a round trip the caller pays for nothing — some
+#: clients do not follow it for POST at all.
+_mcp_asgi = _build_mcp_app(_token_ok)
+app.router.routes.append(
+    StarletteRoute("/mcp", endpoint=_mcp_asgi, methods=["GET", "POST", "DELETE"])
+)
