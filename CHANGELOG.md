@@ -62,6 +62,94 @@ containment check on the file door was invisible to the analyser.
   a suppression. The CI CodeQL job runs on every push, so a reappearance
   is a regression, not a false positive to argue about.
 
+## [2.12.1] - 2026-10-27
+
+The MCP release went out to the polygon and to production, and two
+reviews looked at it afterwards. One of them had no access to the
+repository and therefore said nothing about the code; the other found
+six things worth acting on. Four were real defects and are fixed here,
+one was a documentation gap, and one is debt that is written down
+instead of being fixed in a patch release.
+
+The fourth real defect was found by this session, not by the reviewer:
+the proxy's MCP relay gave up before the agent could finish, so a long
+command that the agent would have answered came back as a transport
+error.
+
+### Fixed
+
+- **The file door could serve a symlink it had just refused.** The
+  containment check resolved the path and vetted it, and the open
+  happened a moment later — and between those two moments the file
+  could be replaced by a symlink pointing out of the workspace. The
+  workspace is writable, so the race was real. The open now carries
+  `O_NOFOLLOW`: if the path turned into a symlink in the meantime, the
+  open fails and the caller gets a 409 that says exactly that.
+
+- **A body without a length was not counted.** The size limit read the
+  `Content-Length` header, so a request that arrived with
+  `Transfer-Encoding: chunked` — and therefore with no length to read
+  — was measured by nothing. The limiter counts the bytes as they
+  arrive now, in both services, and refuses the request with a 413 when
+  the count passes the limit. A legitimate chunked client still works:
+  the limit is a limit, not a ban on streaming.
+
+  The limiter is a pure ASGI middleware on purpose. A
+  `@app.middleware("http")` function cannot do this: Starlette hands
+  the downstream application its own wrapped receive channel, so a
+  middleware that wrapped `request` would count bytes the application
+  never sees. It lives in `body_limit.py` and is copied into both
+  images — two copies of the same security rule would be two rules.
+
+- **One MCP read could cost the machine everything.** `read_file` read
+  the whole file and base64-encoded it, and the size limit it applied
+  was the configured binary limit — which is `0` ("no limit") in some
+  deployments, including the one where the operator raised it for
+  Telegram delivery. The read has a ceiling of its own now (64 MiB), and
+  the ceiling is applied *during* the read: the read asks for one byte
+  more than the limit allows, so a file that grows between the `stat`
+  and the read is refused with the reason instead of being read whole.
+
+- **The proxy's MCP relay gave up before the agent could answer.** The
+  proxy waits 75 seconds for the agent — enough for the exec door,
+  whose limit the proxy itself sets, and far too little for the MCP
+  door, where the *model* sets the timeout and the agent honours it up
+  to 600 seconds. A long command that the agent was still computing
+  came back to the caller as a transport error. The relay has its own
+  timeout now, and it is above the agent's own cap: the agent always
+  answers within that cap, and the relay's job is to be there when it
+  does. A tripwire compares the two numbers, so a drift is caught
+  rather than discovered in production.
+
+- **A failing tool left no trace.** The refusal reached the model with
+  its reason, but the operator got nothing in the log. Every failure
+  path in the MCP server now logs a traceback as well.
+
+- **The reaper printed every dropped session id.** A machine that lost
+  a thousand sessions produced a log line a thousand ids long, which
+  is the same as no line at all. The list is truncated to ten; the
+  count in the same line stays the truth.
+
+### Documentation
+
+- The MCP server's own instructions now say that the shell is
+  **persistent and shared**, and that a caller should use its own
+  `session_id`. Two callers that share the default session share a
+  `cwd`, an environment and a history — the model has to know that.
+- `docs/HANDOFF-mcp.md` says what a timeout leaves behind (the command
+  keeps running in tmux — that is what a persistent session means),
+  that `read_file` holds the file in memory and base64-encodes it, and
+  that the lazy local imports are known debt.
+
+### Known debt
+
+- The MCP tools import the agent's functions from inside the function
+  body, to avoid a circular import. It works and it is tested, but the
+  seam is wider than it should be. Moving the shared behaviour into a
+  module both sides import is the right fix; it is not a patch release,
+  and a broad refactor of a deployed repository is riskier than
+  writing the seam down.
+
 ## [2.12.0] - 2026-10-27
 
 The sandbox is now also a **Model Context Protocol server**. Same
