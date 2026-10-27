@@ -9,7 +9,10 @@
 #
 #   * the file door serves a file inside the workspace even when a
 #     directory of the path is swapped for a symlink in between;
-#   * the size in the answer describes the bytes that were read.
+#   * the size in the answer describes the bytes that were read;
+#   * the token is compared in constant time;
+#   * a timeout outside the range is refused in words the model can use;
+#   * the MCP tool resolves the agent at call time.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -168,6 +171,34 @@ mutate mcp_server.py \
     '        size = size' \
     "$DOOR::TestTheSizeDescribesTheBytes::test_the_size_comes_from_the_descriptor" \
     "the size in the answer describes the bytes"
+
+echo "== the token is compared with an ordinary operator =="
+mutate agent_api.py \
+    '    return _hmac.compare_digest(credentials, AGENT_TOKEN)' \
+    '    return credentials == AGENT_TOKEN' \
+    "tests/test_review_kwen_v2141.py::TestTheTokenIsComparedInConstantTime" \
+    "the token is compared in constant time"
+
+echo "== the timeout range is not checked =="
+mutate mcp_server.py \
+    '        if not 1 <= timeout <= MAX_TIMEOUT:' \
+    '        if False:' \
+    "tests/test_review_kwen_v2141.py::TestTheTimeoutIsRefusedLegibly" \
+    "a timeout outside the range is refused"
+
+echo "== the refusal does not name the range =="
+mutate mcp_server.py \
+    '            raise ToolError(
+                f"the timeout must be between 1 and {MAX_TIMEOUT} seconds, got {timeout}"
+            )' \
+    '            raise ToolError(f"the timeout is wrong: {timeout}")' \
+    "tests/test_review_kwen_v2141.py::TestTheTimeoutIsRefusedLegibly::test_a_timeout_above_the_range_is_refused" \
+    "the refusal names the range"
+
+echo "== the tool keeps a reference to the agent =="
+mutate_py mcp_server.py \
+    "tests/test_review_kwen_v2141.py::TestTheToolResolvesTheAgentAtCallTime::test_the_tool_uses_the_current_agent_module" \
+    "the MCP tool resolves the agent at call time"
 
 echo
 echo "mutations: $PASS went red as expected, $FAIL did not"
