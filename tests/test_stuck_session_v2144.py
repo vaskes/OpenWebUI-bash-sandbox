@@ -284,6 +284,46 @@ class TestTheStuckShellIsFreed(_Base):
         self.assertIn("the command did not start", result["stderr"])
 
 
+class TestTheChainIsWhole(unittest.TestCase):
+    """The limit is the deployment's, and every start path has to say so.
+
+    The proxy asks the agent for ``AGENT_EXEC_TIMEOUT`` and ignores the
+    timeout the caller sent, so the deployment's number *is* the limit
+    every command gets.  The compose interpolates
+    ``${AGENT_EXEC_TIMEOUT:-60}``: a path that starts the stack without
+    the deployment's env file falls back to a minute — silently, and with
+    the caller still believing it may run for an hour.  In production
+    that is exactly what happened: the side-car ran with a 60-second
+    limit for a whole release, because the deploy path did not pass the
+    operator's env file.
+    """
+
+    def test_the_agent_and_the_proxy_agree_on_the_ceiling(self) -> None:
+        from agent_api import MAX_TIMEOUT  # noqa: PLC0415
+        from proxy_core import EXEC_TIMEOUT_MAX_SECONDS  # noqa: PLC0415
+
+        self.assertEqual(MAX_TIMEOUT, EXEC_TIMEOUT_MAX_SECONDS)
+
+    def test_the_shipped_default_is_unchanged(self) -> None:
+        """The default is the deployment's to raise, not this release's."""
+        from proxy_core import EXEC_TIMEOUT_SECONDS  # noqa: PLC0415
+
+        self.assertEqual(EXEC_TIMEOUT_SECONDS, 60.0)
+
+    def test_the_unit_names_the_env_file(self) -> None:
+        """The boot path must not start the stack without the settings."""
+        unit = (ROOT / "agent-stack.service.example").read_text(encoding="utf-8")
+        self.assertIn("COMPOSE_ENV_FILE", unit)
+        self.assertIn("AGENT_EXEC_TIMEOUT", unit)
+
+    def test_the_documentation_says_the_limit_is_the_deployments(self) -> None:
+        text = (ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")
+        self.assertIn("AGENT_EXEC_TIMEOUT", text)
+        self.assertIn("env file", text)
+        self.assertIn("COMPOSE_ENV_FILE", text)
+        self.assertIn("the session is busy", text)
+
+
 class TestTheStuckShellRecovers(unittest.TestCase):
     """Against a real tmux: a stuck shell is freed and the session works.
 

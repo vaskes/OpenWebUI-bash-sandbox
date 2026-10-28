@@ -12,6 +12,14 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/home/git/agent-stack
+# The env file carries the deployment's settings — the token, and the
+# exec limit a single command may run for.  It has to be named here,
+# because the compose interpolates `${AGENT_EXEC_TIMEOUT:-60}` and a
+# proxy started without this file silently falls back to a minute while
+# the caller still believes it may run for an hour.  Every path that
+# starts the stack — this unit, a manual `docker compose`, a deploy
+# script — has to pass the same file, or the settings differ per path.
+Environment=COMPOSE_ENV_FILE=/home/git/agent-stack/.env
 # --build is not optional here either. Neither service pins an image, so
 # `up -d` reuses whatever tag is already present and serves the previous
 # code — and a unit that starts at boot would then serve yesterday's

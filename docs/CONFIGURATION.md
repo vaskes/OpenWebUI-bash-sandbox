@@ -142,7 +142,7 @@ Runs every 10 s; container is marked unhealthy after 3 consecutive failures.
 | `OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS`     | `10000`                          | LRU cap on the in-memory rate-limit dict. Past this, oldest key evicted. |
 | `OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT` | `300`                            | Close `/ws` connections idle this long (sec). `0` = disabled. New in v2.4.0. |
 | `OPENAPI_PROXY_LOG_LEVEL`              | `INFO`                           | uvicorn log level.                                                      |
-| `AGENT_EXEC_TIMEOUT`                   | `60`                             | Longest a single command may run, in seconds (5..3600). The proxy asks the agent for exactly this limit and then waits longer. New in v2.10.2; the range's ceiling raised to an hour in v2.14.0. |
+| `AGENT_EXEC_TIMEOUT`                   | `3600`                           | Longest a single command may run, in seconds (5..3600). The proxy asks the agent for exactly this limit and then waits longer. New in v2.10.2; the range's ceiling raised to an hour in v2.14.0; the default raised to the ceiling in v2.14.4 — see below. |
 | `OPENAPI_PROXY_PORT`                   | `8090`                           | uvicorn listen port.                                                    |
 | `SANDBOX_URL`                          | `http://127.0.0.1:8082`          | Upstream sandbox-agent URL.                                             |
 
@@ -169,6 +169,31 @@ The limit is a property of the command, not of the transport: a longer
 command is not a faster answer, it is the same answer with more of it
 already produced when the limit hits.
 
+**The limit is the deployment's, and every path that starts the stack has
+to pass the deployment's env file.** The compose interpolates
+`${AGENT_EXEC_TIMEOUT:-60}`, so a proxy started without that file falls
+back to a minute — silently, and with the caller still believing it may
+run for an hour. That is not hypothetical: in production the side-car ran
+with a 60-second limit for a whole release, because the deploy path did
+not pass `/opt/telegrambot/.env.sandbox`, where the operator's
+`AGENT_EXEC_TIMEOUT=3600` lives.
+
+Two things follow, and the second one is the expensive half.
+
+* **The caller and the side-car must agree.** The bot's contract says a
+  command may run for 3600 s and waits 3630 s for the answer; a proxy
+  that asks the agent for 60 s answers in a minute, and the caller is
+  left waiting for a limit that no longer exists.
+* **A command that is cut keeps the session.** The agent answers
+  "timed out" and the caller moves on, but the command is still running
+  in the session's shell — so the session stays occupied, and every later
+  command in it is refused as "the session is busy". A limit that is
+  shorter than the command therefore does not just shorten the command:
+  it wedges the session it ran in.
+
+The `agent-stack.service.example` template names the env file
+(`COMPOSE_ENV_FILE`) for exactly this reason.
+
 ### An hour-long command is an operational event
 
 The hard cap on one command is 3600 seconds (`MAX_TIMEOUT` in
@@ -191,6 +216,13 @@ hour — and it has three consequences a deployment has to plan for:
   longer at every step, or the answer is lost on the way back: the
   relay's horizon is the agent's cap plus its grace, and a client that
   gives up earlier than the relay never sees the answer at all.
+* **The proxy's number is the number that counts.** The agent's cap is
+  3600 s, but the proxy asks the agent for `AGENT_EXEC_TIMEOUT` and
+  ignores the timeout the caller sent. A deployment that leaves the
+  proxy at 60 s has an agent that can run for an hour and a proxy that
+  can never use it. The knob is the deployment's; the shipped default
+  is 60 s, and a deployment that wants the hour raises it in its env
+  file and passes that file to every path that starts the stack.
 
 ### Healthcheck
 
