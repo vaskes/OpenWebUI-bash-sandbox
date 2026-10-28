@@ -4,6 +4,21 @@ This document describes what the sandbox is and isn't, the threat surface,
 and the controls that ship in the box. Read this before exposing the
 service on a public network.
 
+## Reporting a vulnerability
+
+Report a vulnerability privately, through GitHub's private vulnerability
+reporting channel:
+
+<https://github.com/vaskes/OpenWebUI-bash-sandbox/security/advisories/new>
+
+That link opens a private advisory: the maintainers read it, nobody else
+does, and it stays private until it is published — if it is published at
+all. **Do not** open a public issue for a vulnerability; an issue is public
+the moment it is filed.
+
+Whether the report deserves a fix is a separate question, and a good report
+that says "I could not reproduce this" is still a useful report.
+
 ## Status — v2.14 (post-audit, released)
 
 The v1.x release was a pet project. v2.x is production-shaped. v2.3 was

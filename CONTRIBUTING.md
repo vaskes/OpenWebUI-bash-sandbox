@@ -144,6 +144,16 @@ Open a GitHub issue with:
 
 ## Security issues
 
-**Do not** open a public GitHub issue for security bugs. See
-[docs/SECURITY.md](docs/SECURITY.md) for the threat model and contact
-the maintainer directly.
+**Do not** open a public GitHub issue for security bugs — an issue is public
+the moment it is filed.
+
+Report it through GitHub's private vulnerability reporting channel instead:
+
+<https://github.com/vaskes/OpenWebUI-bash-sandbox/security/advisories/new>
+
+That link opens a private advisory that the maintainers can read and nobody
+else can. It is the channel this repository is checked against, and it is
+where a report belongs whether or not you have ever contributed here.
+
+See [docs/SECURITY.md](docs/SECURITY.md) for the threat model, what the
+sandbox is built to contain, and what it is explicitly not built to contain.
