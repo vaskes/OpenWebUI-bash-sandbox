@@ -1,8 +1,10 @@
 # The review checklist
 
 A review is a list of findings, and a list of findings is alive until
-somebody says it is closed. This file is that list: every finding of
-the three review waves, what it was, and where the answer lives.
+somebody says it is closed. This file is that list: every finding of the
+four numbered review waves, what it was, and where the answer lives.
+(The fifth wave — the audit of v2.14.8 — found nothing new; its report
+is `REVIEW-v2.14.8.md`.)
 
 The rule this file follows: **a finding is closed when something checks
 it, not when a note says so.** The "check" column names the thing that
@@ -14,7 +16,7 @@ would go red if the finding came back.
 | 1 | R2 | a dead session came back in the workspace root | v2.14.5 | `tests/test_session_cwd_v2145.py` |
 | 1 | R3 | a bad command reached the model as `ValidationError` | v2.14.5 | `tests/test_review_kwen_v2141.py::TestTheCommandIsRefusedLegibly` |
 | 1 | R4 | one operator in the tree could never run | v2.14.5 | `tests/test_tree_hygiene_v2145.py` |
-| 1 | R5 | test classes that drive tmux did not say so | v2.14.5 | the CI job "the suite is green without tmux" + `tests/test_ci_without_tmux_v2146.py` |
+| 1 | R5 | test classes that drive tmux did not say so | v2.14.5 | the CI job "The suite is green without tmux" + `tests/test_ci_without_tmux_v2146.py` |
 | 1 | R6 | the MCP tool asked tmux on every call | v2.14.5 | `tests/test_mcp_session_cost_v2145.py` |
 | 2 (v2.14.4) | S1 | the heal could kill a working command | v2.14.5 (the marker), v2.14.8 (the shell's own prompt) | `tests/test_stuck_session_v2144.py` + `tests/test_bare_prompt_v2148.py` |
 | 2 | S2 | the production posture was not named | v2.14.5 | the release notes + `prod-verify.sh` |

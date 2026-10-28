@@ -2,8 +2,11 @@
 
 **For:** the agent that maintains the bot (`vaskes/llama.cpp_telegram`).
 **From:** the sandbox side (`vaskes/OpenWebUI-bash-sandbox`).
-**Code against:** sandbox tag **`v2.7.0`**.
-**Written:** 2026-10-25.
+**Code against:** sandbox tag **`v2.14.8`** (the contract below was written
+against `v2.7.0`; §6 lists what changed since, and the status-code table
+in §3 is the current one).
+**Written:** 2026-10-25. **Status codes last verified:** 2026-10-29 against
+`v2.14.8`.
 
 This is the contract between the two halves of the system. Everything in
 it is measured or verified — the numbers are not aspirations, they are
@@ -111,18 +114,23 @@ stack), bearer token required (`OPENAPI_PROXY_TOKEN` / `AGENT_TOKEN`):
 | `GET` | `/files?path=P` | the file's **raw bytes**; honours a single `Range` header (206 + `Content-Range`) |
 | `DELETE` | `/files?path=P` | remove the file from the sandbox (204; 404 if there was nothing to remove) |
 
-The path is resolved inside the sandbox workspace with symlinks resolved
-first. A path outside the workspace is a 400, a directory is a 400, a
-symlink pointing out is a 400. The agent's own `/files` endpoints are
-not published to the outside — the proxy is the only surface.
+The path is resolved inside the sandbox workspace. A path outside the
+workspace is a 400, a directory is a 400. Since **v2.14.1** the door no
+longer follows a symlink: the file is opened relative to a descriptor of
+the workspace, one component at a time, every component with
+`O_NOFOLLOW`, so a component that turned into a symlink is refused with a
+**409** instead of being followed out of the workspace. The agent's own
+`/files` endpoints are not published to the outside — the proxy is the only
+surface.
 
 **All three endpoints answer the same way.** A file that is not there is
 a **404**, a path that is refused is a **400**, a file that is over the
-binary limit is a **413** (and the message names the real size), and an
-unreachable sandbox agent is a **502**. The error body is
-`{"detail": "..."}` — the message itself, not a JSON document inside a
-JSON string. Do not look for an `error` key: there is none, and a client
-that checks the status code is told the truth.
+binary limit is a **413** (and the message names the real size), a path
+that was replaced while it was being opened is a **409**, an unsatisfiable
+`Range` is a **416**, and an unreachable sandbox agent is a **502**. The
+error body is `{"detail": "..."}` — the message itself, not a JSON document
+inside a JSON string. Do not look for an `error` key: there is none, and a
+client that checks the status code is told the truth.
 
 **A file the agent cannot read is a 403 on the download endpoint**
 (`GET /files`), and it is a *decision*, not an accident. The agent opens
@@ -294,7 +302,7 @@ Then, in the bot:
 The sandbox side has its own checks; you can lean on them:
 
 ```bash
-git clone --branch v2.7.0 https://github.com/vaskes/OpenWebUI-bash-sandbox.git
+git clone --branch v2.14.8 https://github.com/vaskes/OpenWebUI-bash-sandbox.git
 cd OpenWebUI-bash-sandbox && python3 -m unittest discover -s tests
 ```
 
@@ -309,7 +317,7 @@ purges the file and checks that it is really gone from the workspace.
 
 | Question | Answer |
 |----------|--------|
-| Which sandbox version | tag **`v2.7.0`** (`git checkout v2.7.0`) |
+| Which sandbox version | tag **`v2.14.8`** (`git checkout v2.14.8`) |
 | Endpoint list | `README.md` → "API quick reference" (kept honest by a tripwire) |
 | The delivery contract | `README.md` → "Moving files out of the sandbox" |
 | The stdout contract | `README.md` → "Reading command output"; `agent_api.py` docstring |
@@ -320,3 +328,24 @@ If the bot's behaviour and this document disagree, this document is
 wrong and should be fixed here — the sandbox is the side that ships the
 contract, and the tripwires here check that the contract in the code, the
 README and the docstring say the same thing.
+
+---
+
+## 6. What changed after v2.7.0
+
+The contract above was written against `v2.7.0`. The door's behaviour
+changed since; the table in §3 is the current one. What a client must
+know:
+
+| Since | Change | What it means for a client |
+|-------|--------|----------------------------|
+| v2.9.1 | a file the agent cannot read is a **403**, not a 200 with a truncated body | treat 403 as "change the mode", not "the transport broke" |
+| v2.13.0 | the MCP door (`POST /mcp`) appeared — a separate surface with its own read budget | see `docs/HANDOFF-mcp.md`; the HTTP door is untouched |
+| v2.14.1 | the file door opens relative to a workspace descriptor, every component with `O_NOFOLLOW` | a path replaced mid-read is a **409**, and a symlinked component is never followed |
+| v2.14.6 | the size limit is checked **before** the file is opened | a file over the limit is a **413** without the descriptor ever being opened |
+
+The route list itself did not change: `POST /sessions/{id}/exec`,
+`GET /files`, `GET /files/meta` and `DELETE /files` are the same four,
+with the same methods and the same authorization contract. `/metrics`
+appeared on both services (v2.12.1), and that is the only addition to the
+published surface.
