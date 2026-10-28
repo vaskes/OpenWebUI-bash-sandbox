@@ -8,6 +8,7 @@ sanitization, naming conventions) lives here.
 from __future__ import annotations
 
 import re
+import subprocess
 import uuid
 
 __version__ = "2.14.3"
@@ -189,6 +190,101 @@ def command_can_be_grouped(command: str) -> bool:
     contain a brace that bash would read as a group delimiter.
     """
     return not unquoted_standalone_braces(command)
+
+
+def _ends_with_a_line_continuation(command: str) -> bool:
+    """Does the command end with a backslash that continues the line?
+
+    An odd number of trailing backslashes leaves the shell waiting for
+    the rest of the line; an even number is an escaped backslash.
+    """
+    lines = [line for line in command.splitlines() if line.strip()]
+    if not lines:
+        return False
+    trailing = 0
+    for char in reversed(lines[-1]):
+        if char != "\\":
+            break
+        trailing += 1
+    return trailing % 2 == 1
+
+
+def _bash_parse_verdict(command: str) -> tuple[int, str, bool] | None:
+    """Ask bash to parse *command* without running it.
+
+    Returns ``(returncode, first_line_of_stderr, warns_about_a_here_document)``,
+    or ``None`` when bash could not be asked at all.  The check is a
+    hardening, not a wall: a shell that is missing must not refuse every
+    command.
+
+    Two details are measured, not guessed:
+
+    * **The parse runs in ``/``.**  bash resolves its working directory
+      at start-up, and if that directory is gone it says so on stderr
+      ("shell-init: error retrieving current directory: ...") — noise
+      that has nothing to do with the command.  A caller whose working
+      directory was removed underneath it must still be able to run
+      commands.
+    * **Only a here-document warning counts as a trap.**  A parse error
+      (a non-zero return code) is a syntax error.  A warning with a
+      zero return code is bash talking about the input, and the one
+      that matters is the unterminated here-document.  Any stderr at
+      all would be the wrong rule: a benign environment message would
+      refuse a valid command, and a sandbox that refuses valid work is
+      worse than one that lets a rare trap through.
+    """
+    try:
+        proc = subprocess.run(
+            ["bash", "-n"],
+            input=command,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            cwd="/",
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    lines = (proc.stderr or "").strip().splitlines()
+    first = lines[0] if lines else ""
+    heredoc = any("here-document" in line for line in lines)
+    return proc.returncode, first, heredoc
+
+
+def command_would_stick(command: str) -> str | None:
+    """Would *command* leave the shell waiting for more input?
+
+    Returns the reason as a phrase, or ``None`` when the command is safe
+    to type into the session's shell.
+
+    The shell is interactive: a command whose text is not a complete
+    shell command leaves it waiting for the rest of the line, and the
+    protocol that follows is swallowed as part of it.  The session is then
+    stuck — every later command is queued behind the unfinished one, and
+    nothing in the system frees it.
+
+    Three shapes do that, and all three were measured against a live
+    shell: an unterminated quote, an unterminated here-document and a
+    trailing backslash.  The first two are caught by asking bash to parse
+    the command without running it; the third is a line continuation that
+    bash accepts at the end of a script.
+    """
+    if _ends_with_a_line_continuation(command):
+        return (
+            "ends with a line continuation (a trailing backslash), so the shell "
+            "would wait for the rest of the line"
+        )
+    verdict = _bash_parse_verdict(command)
+    if verdict is None:
+        return None
+    returncode, message, warns_about_a_here_document = verdict
+    if returncode != 0:
+        return f"is not valid shell syntax: {message}"
+    if warns_about_a_here_document:
+        # bash accepted the command and warned about it.  The warning is
+        # about an unterminated here-document — the same trap.
+        return f"would leave the shell waiting for the rest of it: {message}"
+    return None
 
 
 def build_exec_block(command: str, begin_marker: str, ec_var: str, marker: str) -> tuple[str, bool]:
