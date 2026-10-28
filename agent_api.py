@@ -94,6 +94,7 @@ from agent_core import (
     SESSION_ID_MAX_LEN,
     __version__,
     build_exec_block,
+    command_would_stick,
     new_marker_token,
     parse_capability_status,
     redact_secrets,
@@ -111,12 +112,12 @@ from metrics import Metrics
 # ---------------------------------------------------------------------------
 #: The default timeout of the HTTP door, in seconds.
 #:
-#: It is shorter than the proxy's default (60 s, ``proxy_core``) on
-#: purpose: the agent's number applies to a caller that talks to the
-#: agent directly and says nothing about how long it intends to wait,
-#: and the shorter default is the one that gives a model its answer
-#: back. The proxy asks for its own number explicitly, so the two
-#: defaults never meet: what the proxy requests is what the agent runs.
+#: It is shorter than the proxy's default (``proxy_core``) on purpose:
+#: the agent's number applies to a caller that talks to the agent
+#: directly and says nothing about how long it intends to wait, and the
+#: shorter default is the one that gives a model its answer back. The
+#: proxy asks for its own number explicitly, so the two defaults never
+#: meet: what the proxy requests is what the agent runs.
 DEFAULT_TIMEOUT = 30  # seconds
 #: The hard cap on one command, in seconds.
 #:
@@ -156,6 +157,10 @@ configure_logging(os.environ.get("AGENT_LOG_LEVEL", "INFO"))
 METRICS = Metrics("sandbox_agent")
 METRICS.counter("exec_total", "Commands the agent executed.")
 METRICS.counter("exec_timeouts_total", "Commands that ran out of time.")
+METRICS.counter(
+    "exec_refused_total",
+    "Commands refused before they were typed because they would stick the shell.",
+)
 METRICS.gauge(
     "active_sessions",
     "Sessions the agent currently holds.",
@@ -798,10 +803,6 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
     METRICS.inc("exec_total")
     sid = safe_id(session_id)
     name = tmux_name(sid)
-    if not await tmux_session_exists(name):
-        # Auto-create — this is what makes the API forgiving for clients that
-        # don't explicitly create a session first.
-        await create_session(CreateSession(session_id=sid, cwd=WORKSPACE_REAL))
 
     # C1 (sandbox-recommendations): log a preview of the command itself
     # in addition to its length, so post-incident audit can reconstruct
@@ -819,6 +820,36 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         if len(body.command) <= 200
         else body.command[:200] + f"... (+{len(body.command) - 200} bytes)"
     )
+
+    # A command whose text is not a complete shell command leaves the
+    # session's shell waiting for the rest of the line, and the protocol
+    # that follows is swallowed as part of it. The session is then stuck:
+    # every later command is queued behind the unfinished one, and the
+    # only thing that frees the session is a restart of the container.
+    # Refuse before the command is typed — a stuck shell cannot be
+    # unf-stuck by the caller.
+    stuck_reason = await asyncio.to_thread(command_would_stick, body.command)
+    if stuck_reason:
+        METRICS.inc("exec_refused_total")
+        logger.warning(
+            "exec.refused sid=%s reason=%s cmd=%r",
+            sid,
+            stuck_reason,
+            cmd_preview,
+        )
+        return {
+            "stdout": "",
+            "stderr": f"the command was not run: it {stuck_reason}",
+            "exit_code": None,
+            "timed_out": False,
+            "duration_ms": 0,
+            "refused": True,
+        }
+
+    if not await tmux_session_exists(name):
+        # Auto-create — this is what makes the API forgiving for clients that
+        # don't explicitly create a session first.
+        await create_session(CreateSession(session_id=sid, cwd=WORKSPACE_REAL))
 
     marker = f"__AGENT_DONE_{new_marker_token()}__"
     # A second marker, printed BEFORE the command runs. It is the proof
@@ -1022,6 +1053,7 @@ _HEAD_LOST_NOTICE = (
 #: still holds the *previous* command's output, and handing that back as
 #: this command's stdout is a lie the caller cannot detect. A model that
 #: reads it quotes the other command's output as if it were its own.
+#:
 _BUSY_NOTICE = (
     "the command did not start: the session is busy running another "
     "command, so this one is queued and will run once the session is free"
