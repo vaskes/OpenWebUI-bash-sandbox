@@ -317,6 +317,41 @@ def _bash_parse_verdict(command: str) -> tuple[int, str, bool] | None:
     return proc.returncode, first, heredoc
 
 
+#: What bash says when the command is not *finished* rather than wrong.
+#:
+#: Measured, on a real bash:
+#:
+#:   * ``echo "unterminated``  -> "unexpected EOF while looking for
+#:     matching `"'"
+#:   * ``echo $(unterminated``  -> "unexpected EOF while looking for
+#:     matching `)'"
+#:   * ``if true; then``       -> "syntax error: unexpected end of file
+#:     from `if' command on line 1"
+#:   * ``case x in``            -> the same, for `case'
+#:   * ``echo )``               -> "syntax error near unexpected token `)'"
+#:
+#: The first three are a command that stops in the middle; the last one
+#: is a command that is complete and wrong.  A model that reads
+#: "not valid shell syntax" about the first kind concludes it has a
+#: typo, and tries another line -- instead of sending the construct
+#: whole.
+_UNFINISHED_MARKERS = ("unexpected EOF", "unexpected end of file")
+
+
+def _is_an_unfinished_command(message: str) -> bool:
+    """Does bash's complaint mean "the command stops in the middle"?"""
+    return any(marker in message for marker in _UNFINISHED_MARKERS)
+
+
+def _is_an_unclosed_quote(message: str) -> bool:
+    """Does bash's complaint mean "a quote was never closed"?
+
+    ``echo "unterminated`` is one line with a quote that never ends --
+    the construct is not the problem, the quote is.
+    """
+    return "while looking for matching" in message
+
+
 def command_would_stick(command: str) -> str | None:
     """Would *command* leave the shell waiting for more input?
 
@@ -345,6 +380,25 @@ def command_would_stick(command: str) -> str | None:
         return None
     returncode, message, warns_about_a_here_document = verdict
     if returncode != 0:
+        if _is_an_unclosed_quote(message):
+            # The command is complete except for the quote that was
+            # never closed.  "Send the whole construct" is the wrong
+            # advice here — the construct is one line, and the quote is
+            # what is missing.
+            return (
+                "leaves a quote or bracket open: the shell would wait for the rest "
+                f"of the line, so close it and send the command again (bash: {message})"
+            )
+        if _is_an_unfinished_command(message):
+            # The syntax is valid; the command is not *finished*. Those
+            # are different problems and the caller needs different
+            # words: "is not valid shell syntax" reads as "you have a
+            # typo", and the model will try another line instead of
+            # sending the construct whole.
+            return (
+                "is not finished: the shell would wait for the rest of the "
+                f"line, so send the whole construct in one command (bash: {message})"
+            )
         return f"is not valid shell syntax: {message}"
     if warns_about_a_here_document:
         # bash accepted the command and warned about it.  The warning is
