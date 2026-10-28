@@ -26,6 +26,7 @@ would go red if the finding came back.
 | 3 | T3 | the limit was checked after the file was opened | v2.14.6 | `tests/test_file_door_order_v2146.py` |
 | 4 (v2.14.7) | U1 | a mutation script counted a catch for a test that never ran | v2.14.8 | `tests/test_mutation_scripts_run_v2148.py` |
 | 4 | U2 | the shell's own `>` was read as a continuation prompt | v2.14.8 | `tests/test_bare_prompt_v2148.py` |
+| 4 | U3 | the false "101 mutations" stayed in the section that said it | v2.14.8 | `tests/test_changelog_correction_v2148.py` |
 
 ## How to use it
 
