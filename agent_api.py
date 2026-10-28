@@ -97,6 +97,7 @@ from agent_core import (
     build_exec_block,
     command_would_stick,
     is_a_continuation_prompt,
+    is_a_default_continuation_prompt,
     is_a_shell_name,
     looks_like_a_bare_prompt,
     new_marker_token,
@@ -998,7 +999,13 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
                 # running, and interrupting it cannot kill anybody's
                 # work. The first case shows the command's echo or its
                 # output as the last line, and is left alone.
-                if await _reset_a_stuck_shell(name):
+                #
+                # The shell's own ">" is only a prompt in a shell where
+                # the protocol has never run. Once it has, that ">" is a
+                # program's output — and interrupting on it would kill
+                # a working command and call it a reset.
+                protocol_ran = bool(SESSIONS.get(sid, {}).get("protocol"))
+                if await _reset_a_stuck_shell(name, protocol_ran=protocol_ran):
                     duration_ms = int((time.time() - start) * 1000)
                     METRICS.inc("exec_timeouts_total")
                     METRICS.inc("exec_stuck_resets_total")
@@ -1032,6 +1039,11 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
                     "timed_out": True,
                     "duration_ms": duration_ms,
                 }
+        if head_survived:
+            # The protocol's first line ran, so from now on the shell's
+            # own ">" is a program's output and not a continuation
+            # prompt in this session.
+            await _note_the_protocol_ran(sid)
         if not head_survived and output.strip():
             # The pane overflowed and the beginning of the output is
             # gone. Say so, loudly and first, instead of handing back a
@@ -1085,6 +1097,10 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         # Say so, loudly and first, instead of handing back a fragment
         # that reads like a complete result.
         output = _HEAD_LOST_NOTICE + output
+    # The completion marker is printed by the protocol's last line, so
+    # the protocol ran: the shell's own ">" is no longer a continuation
+    # prompt in this session.
+    await _note_the_protocol_ran(sid)
     output = _truncate_output(output)
     duration_ms = int((time.time() - start) * 1000)
     logger.info(
@@ -1244,15 +1260,40 @@ async def _pane_tail(name: str, lines: int = 20) -> list[str]:
     return [line for line in out.splitlines() if line.strip()]
 
 
-async def _pane_is_waiting_for_input(name: str) -> bool:
+async def _note_the_protocol_ran(sid: str) -> None:
+    """Record that the agent's protocol ran in this session's shell.
+
+    The protocol's first line installs the agent's own continuation
+    prompt (``PS2``).  From that moment on, the shell's default ``>`` is
+    a program's output and not the shell waiting for the rest of a line
+    — so the stuck-shell heal must not fire on it.
+
+    The flag lives in the session registry, because the question is
+    about *this shell*: a session that is created anew gets a new
+    shell, and its registry entry starts without the flag.
+    """
+    session = SESSIONS.get(sid)
+    if not session or session.get("protocol"):
+        return
+    session["protocol"] = True
+    await _save_sessions()
+
+
+async def _pane_is_waiting_for_input(name: str, protocol_ran: bool = False) -> bool:
     """Is the shell sitting there, waiting for the rest of a line?
 
     Two things have to hold.  tmux must report the *shell* as the
     foreground process — anything else means a command is running.  And
-    the pane must end with the shell's **continuation prompt**: the
-    marker the agent's protocol installs (``PS2``), or the shell's own
-    default (``>``), which is what a shell shows when it was waiting
-    before the protocol ever ran.
+    the pane must end with the shell's **continuation prompt**.
+
+    Which continuation prompt depends on the shell.  The agent's
+    protocol installs its own marker (``PS2``), and that marker is
+    printed by nothing else: "the shell is waiting for the rest of the
+    line" is something one can *look at*.  The shell's own default is
+    ``>``, and a program is free to print it — so the default only means
+    "waiting" in a shell where the protocol has never run.  Once it has
+    run, a bare ``>`` at the end of the pane is a program's output, and
+    a working command must not be interrupted because of it.
 
     The old rule was "the last line looks like a prompt", and it was
     wrong: ``while true; do echo 'tick$'; done`` runs in the shell
@@ -1268,7 +1309,14 @@ async def _pane_is_waiting_for_input(name: str) -> bool:
     tail = await _pane_tail(name)
     if not tail:
         return False
-    return is_a_continuation_prompt(tail[-1])
+    if is_a_continuation_prompt(tail[-1]):
+        return True
+    if protocol_ran:
+        # The protocol installed its own marker in this shell, so the
+        # shell's default prompt is no longer what a waiting shell
+        # shows.  A bare ">" here is a program's output.
+        return False
+    return is_a_default_continuation_prompt(tail[-1])
 
 
 async def _pane_is_idle(name: str) -> bool:
@@ -1288,7 +1336,7 @@ async def _pane_is_idle(name: str) -> bool:
     return looks_like_a_bare_prompt(tail[-1])
 
 
-async def _reset_a_stuck_shell(name: str) -> bool:
+async def _reset_a_stuck_shell(name: str, protocol_ran: bool = False) -> bool:
     """Free a shell that waits for the rest of an unfinished command.
 
     The shell is interrupted, which makes it forget the line it is
@@ -1296,11 +1344,16 @@ async def _reset_a_stuck_shell(name: str) -> bool:
     checks that first — the pane must end with the shell's continuation
     prompt, and the shell must be the foreground process.
 
+    ``protocol_ran`` says whether the agent's protocol has already run
+    in this shell: from that moment on the shell's own ``>`` is a
+    program's output, and interrupting on it would kill a working
+    command.
+
     Returns True when the shell is back at a prompt afterwards: the
     session is usable again. Returns False when the shell was busy
     after all, and nothing was touched.
     """
-    if not await _pane_is_waiting_for_input(name):
+    if not await _pane_is_waiting_for_input(name, protocol_ran=protocol_ran):
         return False
     await _tmux("send-keys", "-t", name, "C-c")
     await asyncio.sleep(0.2)
