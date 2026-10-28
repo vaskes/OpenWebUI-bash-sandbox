@@ -4,6 +4,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.4] - 2026-10-28
+
+The session that stopped executing commands. Two different states were
+hiding behind the same refusal, and one of them was a bug in the agent.
+
+### Fixed
+
+- **A command that would stick the shell is refused before it is
+  typed.** The session's shell is interactive, and a command whose text
+  is not a complete shell command leaves it waiting for the rest of the
+  line: the protocol that follows is swallowed, every later command is
+  queued behind the unfinished one, and nothing in the system frees the
+  session — not the next command, not a timeout, not the agent. Only a
+  restart of the container does. Measured against a live shell, three
+  shapes do that: an unterminated quote, an unterminated here-document
+  and a trailing backslash. The first two are caught by asking bash to
+  parse the command without running it (~2 ms); the third has a rule of
+  its own. The refusal names the reason, says that the command was not
+  run, and the shell is not touched at all — a command that is typed
+  and only then recognised as broken has already poisoned the session.
+- **A shell that waits for the rest of a command is freed, and the
+  session works again.** The pane of a session that runs something ends
+  with the command's echo; the pane of a session whose shell waits for
+  input ends with a prompt. Both look like "the session is busy" from
+  the outside, and only one of them may be interrupted — interrupting
+  the other would kill a running command. The distinction is two
+  measurements: tmux must report the shell as the foreground process,
+  and the pane's last line must be nothing but a prompt. `C-c` frees
+  the shell; `C-u` does not (measured: the queued text is already split
+  into lines in the terminal's input buffer, so it runs anyway). The
+  answer says what happened, so the caller knows the command has to be
+  sent again.
+- **The busy refusal names the way out.** "The session is busy" on its
+  own leaves a caller — a model, most of the time — with nothing to
+  guess but the wrong thing: retry the same session, and land on the
+  same refusal. The notice now says that the command is queued and
+  will run when the session is free, and that a different `session_id`
+  runs it now.
+- **The refusal is precise.** The first version of the check read any
+  stderr from `bash -n` as a trap. Bash says things on stderr that
+  have nothing to do with the command: with a working directory that
+  was removed underneath the process it says "shell-init: error
+  retrieving current directory". The suite caught the gate refusing a
+  perfectly valid `git commit -m 'Press Enter to continue'`. The parse
+  now runs in `/`, and only a here-document warning counts as a trap —
+  a sandbox that refuses valid work is worse than one that lets a rare
+  trap through.
+- **The paths that start the stack name the deployment's env file.**
+  The proxy asks the agent for `AGENT_EXEC_TIMEOUT` and ignores the
+  timeout the caller sent, so the deployment's number is the limit
+  every command gets. In production the side-car ran with a
+  60-second limit for a whole release: not because the shipped default
+  was 60, but because the path that started the stack did not pass
+  `/opt/telegrambot/.env.sandbox`, where the operator's 3600 lives, and
+  the compose interpolates `${AGENT_EXEC_TIMEOUT:-60}`. The systemd
+  template now names the env file (`COMPOSE_ENV_FILE`), so the unit
+  that starts the stack at boot cannot come up with different settings
+  than the operator's own script.
+
+### Changed
+
+- **The shipped default is still 60 seconds.** The operator's v2.14.0
+  decided that ("the range is what says how far; a deployment raises
+  it"), and a release that moves it silently would contradict the one
+  before it. The number is the deployment's to raise.
+- **The documentation says what a limit does to a session.** A command
+  that outlives the limit is not shortened — it keeps the session
+  occupied, and every later command in it is refused. That is the
+  operator's report ("the sandbox does not fall over, but does not
+  execute the simplest commands either"), and it needs no load at all
+  to happen.
+
+### Added
+
+- `tests/test_stuck_session_v2144.py` (15 tests) and
+  `tools/mutation-check-v2144.sh` (11 mutations, 11 red, 0 escaped):
+  the gate, the interrupt, the difference between a stuck shell and a
+  busy one, the limit's chain, and the documentation's claim.
+- `tests/test_release_claims_v2144.py` (18 tests).
+
+The test counter rides with the tests: 670 -> 703.
+
 ## [2.14.3] - 2026-10-28
 
 The last two findings of the v2.14.2 review, closed on their own: the
