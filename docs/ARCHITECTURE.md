@@ -243,6 +243,7 @@ mcp_server.py         # MCP server: the four tools, refusals, protocol
 metrics.py            # Prometheus metrics
 openapi_proxy.py      # FastAPI app — OpenAPI surface, relay, WS, /mcp relay
 proxy_core.py         # Pure constants: command prefixes, timeouts, WS tunables
+token_rules.py        # Pure rules about the bearer token, shared by both services
 tests/                # unittest suite, run by pytest in CI
 docker-compose.yml    # dev stack: agent + proxy + open-webui
 docker-compose.production.yml   # production stack: agent + proxy
