@@ -44,18 +44,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_agent_api_endpoints import _fresh_app  # noqa: E402
 
 #: The pane of a shell that waits for the rest of an unfinished command.
-#: The last line is nothing but a prompt: the shell is at a prompt, so
-#: nothing is running, so it can be interrupted safely.
+#: The last line is the shell's *continuation prompt*: the marker the
+#: agent's protocol installs, and the one thing that cannot be printed
+#: by a program.
 STUCK_PANE = (
     "ubuntu@host:/workspace$ {\n"
     'ubuntu@host:/workspace$ echo "unterminated\n'
     "ubuntu@host:/workspace$ } < /dev/null; __AGENT_EC_x__=$?; printf 'x'\n"
-    "ubuntu@host:/workspace$"
+    "__AGENT_CONT__"
 )
+
+#: The pane of a shell that waits for the rest of a line *before* the
+#: protocol ever ran in it: the shell's own continuation prompt.
+STUCK_PANE_DEFAULT = 'root@host:/# echo "unterminated\n> '
 
 #: The pane of a session that runs something. The last line is the
 #: terminal's echo of the running command — not a prompt.
 BUSY_PANE = "ubuntu@host:/workspace$ sleep 20\nubuntu@host:/workspace$ sleep 20"
+
+#: The pane of a *running* command whose output ends with a dollar sign.
+#: A builtin loop forks nothing, so tmux reports the shell itself as the
+#: foreground process, and its output looks exactly like a prompt. The
+#: old rule ("the last line looks like a prompt") called this a stuck
+#: shell and interrupted a working command.
+RUNNING_PANE = "ubuntu@host:/workspace$ while true; do echo 'tick$'; done\ntick$\ntick$"
 
 
 class _Double:
@@ -71,13 +83,25 @@ class _Double:
     the exec protocol, so the agent sees a completed command.
     """
 
-    def __init__(self, pane: str = "", command: str = "bash", runs: bool = True) -> None:
+    def __init__(
+        self,
+        pane: str = "",
+        command: str = "bash",
+        runs: bool = True,
+        interrupt_frees: bool = True,
+    ) -> None:
         self.pane = pane
         self.command = command
         self.runs = runs
+        # Whether the interrupt frees the shell. A real shell forgets the
+        # line it was reading; a shell that does not is a different
+        # case, and the answer must not claim a reset that did not
+        # happen.
+        self.interrupt_frees = interrupt_frees
         self.calls: list[tuple[str, ...]] = []
         self.sent: list[str] = []
         self.interrupts = 0
+        self.interrupted = False
 
     async def __call__(self, *args: str) -> tuple[int, str, str]:
         self.calls.append(args)
@@ -85,6 +109,11 @@ class _Double:
         if cmd == "send-keys":
             if args and args[-1] == "C-c":
                 self.interrupts += 1
+                # A real shell that is interrupted forgets the line it
+                # was reading and comes back to a prompt.  The double
+                # has to show that, or the "did the interrupt work?"
+                # check can never be true.
+                self.interrupted = True
                 return (0, "", "")
             try:
                 index = args.index("-l")
@@ -107,6 +136,13 @@ class _Double:
         return (0, "", "")
 
     def _capture(self) -> str:
+        if self.interrupted and self.interrupt_frees:
+            lines = self.pane.split("\n")
+            while lines and not lines[-1].strip():
+                lines.pop()
+            if lines:
+                lines[-1] = "ubuntu@host:/workspace$"
+            return "\n".join(lines)
         if not self.runs or not self.sent:
             return self.pane
         begin = re.search(r"__AGENT_BEGIN_([0-9a-f]+)__", self.sent[-1])
@@ -115,7 +151,7 @@ class _Double:
             return self.pane
         return (
             "ubuntu@host:/workspace$ printf '\\n"
-            f'__AGENT_BEGIN_{begin.group(1)}__\\n\'; PS2="$PS1"\n'
+            f'__AGENT_BEGIN_{begin.group(1)}__\\n\'; PS2="__AGENT_CONT__ "\n'
             f"\n__AGENT_BEGIN_{begin.group(1)}__\n"
             "hello\n"
             f"\n__AGENT_DONE_{done.group(1)}__=0\n"
@@ -277,6 +313,45 @@ class TestTheStuckShellIsFreed(_Base):
         self.assertEqual(double.interrupts, 0)
         self.assertIn("the session is busy", result["stderr"])
 
+    def test_a_running_command_whose_output_ends_with_a_dollar_is_not_interrupted(self) -> None:
+        """The measured case: a builtin loop, the shell as foreground.
+
+        ``while true; do echo 'tick$'; done`` forks nothing, so tmux
+        reports the *shell* — and the last line of the pane ends with
+        ``$``, exactly like a prompt.  The old rule read that as "the
+        shell is waiting", interrupted a working command, and told the
+        caller the shell had been reset.  The continuation prompt is
+        the marker now, and a program cannot print it by accident.
+        """
+        double = _Double(pane=RUNNING_PANE, command="bash", runs=False)
+        result = self._exec("echo hi", timeout=1, double=double)
+        self.assertEqual(double.interrupts, 0, "a working command was interrupted")
+        self.assertIn("the session is busy", result["stderr"])
+
+    def test_a_shell_waiting_with_the_default_prompt_is_interrupted(self) -> None:
+        """A shell that was waiting before the protocol ever ran.
+
+        Its continuation prompt is the shell's own ``>`` — the marker
+        was never installed in that shell.  That case is still healed.
+        """
+        double = _Double(pane=STUCK_PANE_DEFAULT, command="bash", runs=False)
+        result = self._exec("echo hi", timeout=1, double=double)
+        self.assertEqual(double.interrupts, 1, "the shell was not interrupted")
+        self.assertIn("has been reset", result["stderr"])
+
+    def test_an_interrupt_that_frees_nothing_is_not_reported_as_a_reset(self) -> None:
+        """The answer must not claim a reset that did not happen.
+
+        The shell was interrupted, and it is still waiting.  The caller
+        has to be told the session is busy — a "has been reset" would
+        send it back into the same dead end with a wrong story.
+        """
+        double = _Double(pane=STUCK_PANE, command="bash", runs=False, interrupt_frees=False)
+        result = self._exec("echo hi", timeout=1, double=double)
+        self.assertEqual(double.interrupts, 1, "the shell was not interrupted")
+        self.assertNotIn("has been reset", result["stderr"])
+        self.assertIn("the session is busy", result["stderr"])
+
     def test_the_busy_refusal_names_the_way_out(self) -> None:
         double = _Double(pane=BUSY_PANE, command="sleep", runs=False)
         result = self._exec("echo hi", timeout=1, double=double)
@@ -322,6 +397,49 @@ class TestTheChainIsWhole(unittest.TestCase):
         self.assertIn("env file", text)
         self.assertIn("COMPOSE_ENV_FILE", text)
         self.assertIn("the session is busy", text)
+
+
+class TestTheProtocolIsTheClaim(unittest.TestCase):
+    """The protocol installs the marker the heal looks for.
+
+    "The shell is waiting for the rest of a line" is only visible if
+    the shell shows something that nothing else prints.  The protocol
+    puts that marker into ``PS2`` — on the first line, so the shell
+    knows it *before* it reads the command that may leave it waiting.
+    """
+
+    def test_the_protocol_installs_the_marker(self) -> None:
+        from agent_core import (  # noqa: PLC0415
+            CONTINUATION_PROMPT,
+            build_exec_block,
+        )
+
+        for command in ("echo hi", "echo }"):
+            with self.subTest(command=command):
+                block, _grouped = build_exec_block(command, "BEGIN", "EC", "DONE")
+                first = block.splitlines()[0]
+                self.assertIn(f'PS2="{CONTINUATION_PROMPT} "', first)
+
+    def test_the_marker_is_cut_out_of_the_caller_s_output(self) -> None:
+        """The marker is the shell's output, and the caller never saw it."""
+        from agent_api import _strip_continuation_prompts  # noqa: PLC0415
+        from agent_core import CONTINUATION_PROMPT  # noqa: PLC0415
+
+        region = f"hello\n{CONTINUATION_PROMPT}\nworld\n"
+        self.assertEqual(_strip_continuation_prompts(region), "hello\nworld\n")
+
+    def test_a_program_that_prints_the_marker_loses_the_line(self) -> None:
+        """A program may print the marker; the line is still cut away.
+
+        The marker is rare enough that this costs nothing, and the
+        alternative — a line the caller sees that it has never seen
+        before — costs the caller a strange line in every output.
+        """
+        from agent_api import _strip_continuation_prompts  # noqa: PLC0415
+        from agent_core import CONTINUATION_PROMPT  # noqa: PLC0415
+
+        region = f"before\n{CONTINUATION_PROMPT} \nafter"
+        self.assertEqual(_strip_continuation_prompts(region), "before\nafter")
 
 
 class TestTheStuckShellRecovers(unittest.TestCase):
@@ -379,10 +497,12 @@ class TestTheStuckShellRecovers(unittest.TestCase):
         )
         name = self.agent_api.tmux_name(sid)
 
-        # Make the shell wait for the rest of a command. The protocol sets
-        # PS2="$PS1", so a continuation looks exactly like a normal
-        # prompt — that is what the heal looks for.
-        for text in ('PS2="$PS1"', 'echo "unterminated'):
+        # Make the shell wait for the rest of a command. The protocol
+        # installs its own continuation prompt, so a shell that is
+        # waiting shows exactly that — and the heal looks for exactly
+        # that.
+        marker = self.agent_api.CONTINUATION_PROMPT
+        for text in (f'PS2="{marker} "', 'echo "unterminated'):
             subprocess.run(["tmux", "send-keys", "-t", name, "-l", text], check=False)
             subprocess.run(["tmux", "send-keys", "-t", name, "Enter"], check=False)
         import time
@@ -398,6 +518,53 @@ class TestTheStuckShellRecovers(unittest.TestCase):
         self.assertFalse(again.get("timed_out"), again)
         self.assertIn("alive", again["stdout"])
         self.assertEqual(again["exit_code"], 0)
+
+    def test_a_running_command_is_not_interrupted(self) -> None:
+        """The measured case, against a real tmux.
+
+        A builtin loop forks nothing, so tmux reports the *shell* as
+        the foreground process, and the loop's output ends with a dollar
+        sign — which the old rule read as a prompt.  The heal must not
+        touch a working command, and the loop must keep running.
+        """
+        sid = f"running-{uuid.uuid4().hex[:8]}"
+        import asyncio
+        import time
+
+        asyncio.run(
+            self.agent_api.create_session(
+                self.agent_api.CreateSession(session_id=sid, cwd=self.tmpdir)
+            )
+        )
+        name = self.agent_api.tmux_name(sid)
+
+        subprocess.run(
+            ["tmux", "send-keys", "-t", name, "-l", "while true; do echo 'tick$'; done"],
+            check=False,
+        )
+        subprocess.run(["tmux", "send-keys", "-t", name, "Enter"], check=False)
+        time.sleep(1.0)
+
+        before = asyncio.run(self.agent_api._pane_tail(name))
+        self.assertTrue(before, "the loop printed nothing")
+        self.assertTrue(
+            any("tick$" in line for line in before),
+            f"the loop is not running: {before}",
+        )
+
+        freed = asyncio.run(self.agent_api._reset_a_stuck_shell(name))
+        self.assertFalse(freed, "a working command was called a stuck shell")
+
+        time.sleep(0.5)
+        after = asyncio.run(self.agent_api._pane_tail(name))
+        self.assertTrue(
+            any("tick$" in line for line in after),
+            f"the loop was killed: {after}",
+        )
+        self.assertFalse(
+            any(line.strip() == "^C" for line in after),
+            f"the shell was interrupted: {after}",
+        )
 
 
 if __name__ == "__main__":

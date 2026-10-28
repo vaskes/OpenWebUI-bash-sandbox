@@ -91,10 +91,12 @@ from agent_config import (
     STDOUT_LIMIT_BYTES,
 )
 from agent_core import (
+    CONTINUATION_PROMPT,
     SESSION_ID_MAX_LEN,
     __version__,
     build_exec_block,
     command_would_stick,
+    is_a_continuation_prompt,
     is_a_shell_name,
     looks_like_a_bare_prompt,
     new_marker_token,
@@ -1214,17 +1216,40 @@ async def _pane_tail(name: str, lines: int = 20) -> list[str]:
     return [line for line in out.splitlines() if line.strip()]
 
 
-async def _pane_is_at_a_prompt(name: str) -> bool:
-    """Is the shell sitting at a prompt, with nothing running?
+async def _pane_is_waiting_for_input(name: str) -> bool:
+    """Is the shell sitting there, waiting for the rest of a line?
 
     Two things have to hold.  tmux must report the *shell* as the
-    foreground process — anything else means a command is running, and an
-    interrupt would kill it.  And the pane must end with nothing but a
-    prompt — the pane of a session that runs something ends with the
-    command's echo or with its output.
+    foreground process — anything else means a command is running.  And
+    the pane must end with the shell's **continuation prompt**: the
+    marker the agent's protocol installs (``PS2``), or the shell's own
+    default (``>``), which is what a shell shows when it was waiting
+    before the protocol ever ran.
 
-    The two together are what makes it safe to interrupt the shell: a
-    running command must not be killed by accident.
+    The old rule was "the last line looks like a prompt", and it was
+    wrong: ``while true; do echo 'tick$'; done`` runs in the shell
+    itself (a builtin loop forks nothing, so tmux reports the shell),
+    and its output ends with ``$`` — so a *working* command was
+    interrupted and the caller was told the shell had been waiting.
+    The marker cannot be printed by accident, and that is the whole
+    point of it.
+    """
+    rc, current, _ = await _tmux("display-message", "-p", "-t", name, "#{pane_current_command}")
+    if rc != 0 or not is_a_shell_name(current or ""):
+        return False
+    tail = await _pane_tail(name)
+    if not tail:
+        return False
+    return is_a_continuation_prompt(tail[-1])
+
+
+async def _pane_is_idle(name: str) -> bool:
+    """Is the shell back at a prompt, with nothing running?
+
+    The loose question, and the right one *after* an interrupt: has the
+    shell come back to a prompt?  Here any prompt will do — the point
+    is not whether the shell is waiting for input, but whether the
+    interrupt freed it.
     """
     rc, current, _ = await _tmux("display-message", "-p", "-t", name, "#{pane_current_command}")
     if rc != 0 or not is_a_shell_name(current or ""):
@@ -1240,17 +1265,18 @@ async def _reset_a_stuck_shell(name: str) -> bool:
 
     The shell is interrupted, which makes it forget the line it is
     reading. That is only safe when nothing is running, and the caller
-    checks that first — the pane must end with nothing but a prompt.
+    checks that first — the pane must end with the shell's continuation
+    prompt, and the shell must be the foreground process.
 
-    Returns True when the shell is at a prompt afterwards: the session
-    is usable again. Returns False when the shell was busy after all, and
-    nothing was touched.
+    Returns True when the shell is back at a prompt afterwards: the
+    session is usable again. Returns False when the shell was busy
+    after all, and nothing was touched.
     """
-    if not await _pane_is_at_a_prompt(name):
+    if not await _pane_is_waiting_for_input(name):
         return False
     await _tmux("send-keys", "-t", name, "C-c")
     await asyncio.sleep(0.2)
-    return await _pane_is_at_a_prompt(name)
+    return await _pane_is_idle(name)
 
 
 async def _scrollback_is_full(name: str) -> bool:
@@ -1351,7 +1377,25 @@ def _extract_command_output(
     if grouped:
         region = _strip_group_open(region)
 
+    region = _strip_continuation_prompts(region)
+
     return region.strip("\n"), exit_code, head_survived
+
+
+def _strip_continuation_prompts(region: str) -> str:
+    """Remove the lines where the shell printed its continuation prompt.
+
+    The protocol installs its own ``PS2`` (a marker), and the shell
+    prints it when it reads a line that is not a complete command.  The
+    marker is there to make the waiting state *visible*; it is still
+    the shell's output, and the caller never saw it before, so it is
+    cut away like the rest of the protocol's bookkeeping.
+    """
+    if CONTINUATION_PROMPT not in region:
+        return region
+    lines = region.split("\n")
+    kept = [line for line in lines if line.rstrip() != CONTINUATION_PROMPT]
+    return "\n".join(kept)
 
 
 def _strip_group_open(region: str) -> str:
