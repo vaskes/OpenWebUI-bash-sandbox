@@ -4,10 +4,10 @@ This is the sidecar half of the "stdin eats the marker / timeout race"
 handoff. The bot side has its own half; this document is everything the
 bot side needs to know about **this** repository.
 
-- **Tag:** `v2.14.8` (this contract was written against `v2.10.2`; the
+- **Tag:** `v2.14.9` (this contract was written against `v2.10.2`; the
   behaviour it describes has not changed since — see the note below)
-- **Agent version (`agent_core.__version__`):** `2.14.8`
-- **Proxy version (`proxy_core.__version__`):** `2.14.8`
+- **Agent version (`agent_core.__version__`):** `2.14.9`
+- **Proxy version (`proxy_core.__version__`):** `2.14.9`
 - **The API surface did not change.** No route was added, removed or
   renamed *by the work this document describes*.
   `POST /sessions/{id}/exec` and the authorization contract are

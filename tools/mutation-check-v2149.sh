@@ -45,10 +45,17 @@ mutate docs/HANDOFF-binary-transport.md \
   "$RULE_DRIFT" \
   "the contract names every status the door answers"
 
-echo "== the handoff contract pins a tag that is not the shipped one =="
+echo "== the handoff contract stops pinning a version =="
 mutate docs/HANDOFF-binary-transport.md \
-  '**Code against:** sandbox tag **`v2.14.8`**' \
-  '**Code against:** sandbox tag **`v2.7.0`**' \
+  '**Code against:** sandbox tag' \
+  '**Code against (unpinned):**' \
+  "$RULE_DRIFT" \
+  "the contract pins the version that is deployed"
+
+echo "== the tree's version stops matching the contract's =="
+mutate agent_core.py \
+  '__version__ = "' \
+  '__version__ = "0.0.0' \
   "$RULE_DRIFT" \
   "the contract pins the version that is deployed"
 
