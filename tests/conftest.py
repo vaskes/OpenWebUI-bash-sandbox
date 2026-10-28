@@ -35,6 +35,38 @@ def _tmux_sessions() -> set[str]:
     return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _the_suite_has_a_tmux_server_of_its_own(tmp_path_factory):
+    """The suite's tmux lives in a server of its own.
+
+    tmux keeps its socket in ``$TMUX_TMPDIR``, so a private directory
+    is a private server.  That is what makes the fixture below safe:
+    it can only see — and only kill — the sessions the suite itself
+    made.
+
+    The old rule was "a session that appeared during the run is ours",
+    and that is not the same thing.  The machine's default server
+    belongs to whoever runs on the machine: the operator's own
+    session, another repository's suite, a probe.  The review's probe
+    was killed by a suite run — live, not hypothetically.
+    """
+    if shutil.which("tmux") is None:
+        yield
+        return
+    private = tmp_path_factory.mktemp("tmux")
+    previous = os.environ.get("TMUX_TMPDIR")
+    os.environ["TMUX_TMPDIR"] = str(private)
+    try:
+        yield
+    finally:
+        # Only our own server: tmux reads $TMUX_TMPDIR for the socket.
+        subprocess.run(["tmux", "kill-server"], capture_output=True, check=False)
+        if previous is None:
+            os.environ.pop("TMUX_TMPDIR", None)
+        else:
+            os.environ["TMUX_TMPDIR"] = previous
+
+
 @pytest.fixture(scope="session")
 def _the_sessions_of_the_machine():
     """The tmux sessions that were running before the suite started.
