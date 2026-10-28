@@ -30,19 +30,11 @@ class TestLicenseCopyright(unittest.TestCase):
         self.assertNotIn("Copyright (c) 2026 vaskes", text)
 
 
-class TestCodeOfConductEnforcementContact(unittest.TestCase):
-    """Wave 3: CODE_OF_CONDUCT.md must have a real enforcement contact."""
-
-    def test_has_email_contact(self) -> None:
-        text = (ROOT / "CODE_OF_CONDUCT.md").read_text(encoding="utf-8")
-        # The contact must look like an email, not a placeholder.
-        import re  # noqa: PLC0415
-
-        emails = re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+", text)
-        self.assertTrue(emails, "CODE_OF_CONDUCT.md has no email contact")
-        for e in emails:
-            self.assertNotIn("CHANGEME", e)
-            self.assertNotIn("example.com", e)
+# The wave-3 check that CODE_OF_CONDUCT.md carries an enforcement
+# contact is gone with the file: the document itself is gone, and a
+# test that reads a file that must not exist is a test that asks for
+# the file back.  Where a security report goes is stated in
+# CONTRIBUTING.md and pinned by tests/test_release_claims_v2147.py.
 
 
 class TestPyprojectTargetVersion(unittest.TestCase):
