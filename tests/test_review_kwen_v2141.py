@@ -42,6 +42,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_agent_api_endpoints import _fresh_app  # noqa: E402
 
 
+def _has_tmux() -> bool:
+    """Is tmux on this machine?  The classes that drive a real tmux
+    session are skipped when it is not — a missing tool is an
+    environment, not a defect."""
+    import shutil  # noqa: PLC0415
+
+    return shutil.which("tmux") is not None
+
+
+requires_tmux = unittest.skipUnless(_has_tmux(), "tmux is not installed")
+
+
 def _source(name: str) -> str:
     return (ROOT / name).read_text(encoding="utf-8")
 
@@ -85,6 +97,7 @@ class TestTheTokenIsComparedInConstantTime(unittest.TestCase):
         self.assertNotIn("compare_digest", source)
 
 
+@requires_tmux
 class TestTheTimeoutIsRefusedLegibly(unittest.TestCase):
     def setUp(self) -> None:
         self.app, self.sessions, self.tmpdir, self.workspace_real = _fresh_app()
@@ -133,6 +146,48 @@ class TestTheTimeoutIsRefusedLegibly(unittest.TestCase):
 
         result = asyncio.run(mcp_server.bash("echo ok", session_id="t2", timeout=5))
         self.assertIn("ok", result["stdout"])
+
+
+class TestTheCommandIsRefusedLegibly(unittest.TestCase):
+    """A bad command reaches the model as words, not as a framework error.
+
+    The review's R3: the request model was built outside the guard, so
+    an empty command (or one over the size cap) raised a pydantic
+    error, and the model read "Error executing tool bash" — with the
+    internals of a framework in it and nothing it could act on.
+    """
+
+    def setUp(self) -> None:
+        self.app, self.sessions, self.tmpdir, self.workspace_real = _fresh_app()
+
+    def _refusal(self, command: str) -> str:
+        import asyncio  # noqa: PLC0415
+
+        from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
+
+        import mcp_server  # noqa: PLC0415
+
+        with self.assertRaises(ToolError) as ctx:
+            asyncio.run(mcp_server.bash(command, session_id="t"))
+        return str(ctx.exception)
+
+    def test_an_empty_command_is_refused_in_words(self) -> None:
+        message = self._refusal("")
+        self.assertIn("empty", message)
+
+    def test_a_command_over_the_cap_is_refused_in_words(self) -> None:
+        import agent_api  # noqa: PLC0415
+
+        message = self._refusal("x" * (agent_api.MAX_COMMAND_LEN + 1))
+        self.assertIn("long", message)
+        self.assertIn(str(agent_api.MAX_COMMAND_LEN), message)
+
+    def test_the_refusal_does_not_mention_an_internal_class(self) -> None:
+        for bad in ("", "x" * 1_000_001):
+            with self.subTest(length=len(bad)):
+                message = self._refusal(bad)
+                self.assertNotIn("ValidationError", message)
+                self.assertNotIn("ExecRequest", message)
 
 
 class TestTheToolResolvesTheAgentAtCallTime(unittest.TestCase):

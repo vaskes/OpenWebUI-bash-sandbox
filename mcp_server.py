@@ -156,6 +156,7 @@ async def bash(
 ) -> BashResult:
     """Run a command and return what it printed."""
     from agent_api import (  # noqa: PLC0415 - the module is mounted, not imported
+        MAX_COMMAND_LEN,
         MAX_TIMEOUT,
         SESSIONS,
         CreateSession,
@@ -181,6 +182,18 @@ async def bash(
                 f"the timeout must be between 1 and {MAX_TIMEOUT} seconds, got {timeout}"
             )
 
+    if not command:
+        # The request model refuses an empty command, and its refusal
+        # is a pydantic error: "ValidationError: ... String should have
+        # at least 1 character".  The model would read a framework's
+        # internals instead of its own mistake.
+        raise ToolError("the command is empty — there is nothing to run")
+    if len(command) > MAX_COMMAND_LEN:
+        raise ToolError(
+            f"the command is {len(command)} characters long, over the limit of "
+            f"{MAX_COMMAND_LEN} — send it in parts"
+        )
+
     sid = safe_id(session_id or DEFAULT_SESSION_ID)
     # The session is opened (or adopted) on every call, and not only when
     # it is missing: this is the only place where the directory of a
@@ -194,10 +207,17 @@ async def bash(
         logger.exception("mcp.bash cannot use the session %s", sid)
         raise ToolError(f"cannot use the session: {_reason(exc)}") from exc
 
-    request = ExecRequest(
-        command=command,
-        timeout=timeout if timeout is not None else _default_timeout(),
-    )
+    try:
+        request = ExecRequest(
+            command=command,
+            timeout=timeout if timeout is not None else _default_timeout(),
+        )
+    except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        # The checks above cover the two ways this can fail today.  The
+        # guard is here for the day a third way appears: a framework
+        # error must not reach the model as "Error executing tool bash".
+        logger.exception("mcp.bash cannot build the request")
+        raise ToolError(f"the command cannot be run: {_reason(exc)}") from exc
     try:
         result = await exec_cmd(sid, request)
     except Exception as exc:  # noqa: BLE001 - the detail must reach the model
