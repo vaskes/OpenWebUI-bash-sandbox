@@ -1562,7 +1562,6 @@ def _safe_file(candidate: str) -> str:
         # ``strict=True`` raises it here — there is no separate
         # RuntimeError to catch.
         raise HTTPException(status_code=404, detail=f"file not found: {candidate}") from exc
-        raise HTTPException(status_code=400, detail=f"unresolvable path: {candidate}") from exc
 
     if resolved == WORKSPACE_REAL:
         raise HTTPException(status_code=400, detail="path is a directory, not a file")
