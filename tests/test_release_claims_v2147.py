@@ -121,9 +121,17 @@ class TestTheRepositoryCarriesNoCommunityBoilerplate(unittest.TestCase):
         self.assertIn("Hardening checklist", security)
 
     def test_contributing_says_where_security_issues_go(self) -> None:
+        """The section must still say where a security issue goes.
+
+        The phrase it used to require — "contact the maintainer
+        directly" — named no address, so the section sent the reporter
+        nowhere in particular.  The requirement is now the property the
+        phrase was standing in for: the section names a concrete
+        channel.  See ``tests/test_security_contact_v2148.py``.
+        """
         text = _prose("CONTRIBUTING.md").replace("**", "")
         self.assertIn("Do not open a public GitHub issue for security bugs", text)
-        self.assertIn("contact the maintainer directly", text)
+        self.assertIn("security/advisories/new", text)
 
 
 if __name__ == "__main__":
