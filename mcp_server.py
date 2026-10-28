@@ -195,17 +195,27 @@ async def bash(
         )
 
     sid = safe_id(session_id or DEFAULT_SESSION_ID)
-    # The session is opened (or adopted) on every call, and not only when
-    # it is missing: this is the only place where the directory of a
-    # running session can be compared with the one the caller asked for.
-    # A `cwd` the session cannot honour is refused here, in words, with
-    # the directory the session is really in — instead of being ignored
-    # and the command running somewhere the caller did not ask for.
-    try:
-        await create_session(CreateSession(session_id=sid, cwd=cwd))
-    except Exception as exc:  # noqa: BLE001 - the detail must reach the model
-        logger.exception("mcp.bash cannot use the session %s", sid)
-        raise ToolError(f"cannot use the session: {_reason(exc)}") from exc
+    # The session is opened (or adopted) only when it has to be:
+    #
+    # * a directory was asked for — this is the only place where the
+    #   directory of a running session can be compared with the one the
+    #   caller asked for. A `cwd` the session cannot honour is refused
+    #   here, in words, with the directory the session is really in —
+    #   instead of being ignored and the command running somewhere the
+    #   caller did not ask for;
+    # * the session is unknown — it has to be opened.
+    #
+    # A call that names neither needs neither: the session is in the
+    # registry, and the exec path opens it if its pane has died. The old
+    # code asked tmux on every call (has-session, and then the
+    # directory of the live pane) — two processes for an answer the
+    # registry already held.
+    if cwd is not None or sid not in SESSIONS:
+        try:
+            await create_session(CreateSession(session_id=sid, cwd=cwd))
+        except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+            logger.exception("mcp.bash cannot use the session %s", sid)
+            raise ToolError(f"cannot use the session: {_reason(exc)}") from exc
 
     try:
         request = ExecRequest(
