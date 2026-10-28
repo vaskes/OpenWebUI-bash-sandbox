@@ -192,6 +192,44 @@ def command_can_be_grouped(command: str) -> bool:
     return not unquoted_standalone_braces(command)
 
 
+#: The shells a session may run under. tmux reports the name of the
+#: foreground process, and a login shell is reported with a leading dash
+#: (``-bash``).
+SHELL_NAMES = ("bash", "sh", "zsh", "dash", "ksh")
+
+
+def is_a_shell_name(name: str) -> bool:
+    """Is *name* the name of a shell?"""
+    return name.strip().lstrip("-") in SHELL_NAMES
+
+
+#: A line that is nothing but a shell prompt.  The pane of a session
+#: whose shell waits for input ends with one; the pane of a session that
+#: runs something ends with the command's echo or with its output.
+_BARE_PROMPT_RE = re.compile(r"^.*?[\$#%]$")
+
+
+def looks_like_a_bare_prompt(line: str) -> bool:
+    """Is *line* nothing but a shell prompt?
+
+    ``capture-pane`` drops the prompt's trailing space, so a prompt
+    arrives as ``...$`` and not as ``...$ ``.  The terminal's echo of a
+    typed command does not qualify: the command text follows the prompt,
+    and a command that is running is exactly what must not be
+    interrupted.
+
+    The default continuation prompt (``>``) counts on its own.  It is
+    not what the agent's own protocol produces — the protocol sets
+    ``PS2="$PS1"``, so a continuation looks exactly like a normal prompt
+    — but a shell that was stuck before the protocol ever ran shows this
+    one.
+    """
+    stripped = line.rstrip()
+    if stripped == ">":
+        return True
+    return bool(_BARE_PROMPT_RE.match(stripped))
+
+
 def _ends_with_a_line_continuation(command: str) -> bool:
     """Does the command end with a backslash that continues the line?
 

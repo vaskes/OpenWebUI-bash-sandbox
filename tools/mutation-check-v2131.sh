@@ -107,9 +107,12 @@ mutate agent_api.py \
     "the reason is named in stderr"
 
 echo "== the reason says something else =="
+# The pattern points at the message, not at the way the string is
+# wrapped: v2.14.4 reworded the notice (it now names the way out), and
+# a tripwire whose pattern rots is a tripwire that stops watching.
 mutate agent_api.py \
-    '"the command did not start: the session is busy running another "' \
-    '"the command failed: the session is busy running another "' \
+    '"the command did not start: the session is busy running another command, "' \
+    '"the command failed: the session is busy running another command, "' \
     "$BUSY::test_the_reason_is_named_in_stderr" \
     "the reason says that the command did not start"
 
