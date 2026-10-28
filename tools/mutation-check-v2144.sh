@@ -104,6 +104,13 @@ mutate agent_api.py \
     "$RULE::TestTheGate::test_the_command_is_never_typed" \
     "the answer says the command was refused"
 
+echo "== an unfinished construct is called a syntax error again =="
+mutate agent_core.py \
+    '        if _is_an_unfinished_command(message):' \
+    '        if False:' \
+    "$RULE::TestTheRefusalNamesTheRightThing::test_an_unfinished_construct_is_not_called_a_syntax_error" \
+    "an unfinished construct is not called a syntax error"
+
 echo "== the line continuation is not noticed =="
 mutate agent_core.py \
     '    return trailing % 2 == 1' \

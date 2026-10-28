@@ -209,7 +209,7 @@ class TestTheGate(_Base):
     def test_an_unterminated_quote_is_refused(self) -> None:
         result = self._exec('echo "unterminated')
         self.assertTrue(result["refused"])
-        self.assertIn("not valid shell syntax", result["stderr"])
+        self.assertIn("quote or bracket open", result["stderr"])
         self.assertEqual(result["stdout"], "")
         self.assertFalse(result["timed_out"])
 
@@ -397,6 +397,41 @@ class TestTheChainIsWhole(unittest.TestCase):
         self.assertIn("env file", text)
         self.assertIn("COMPOSE_ENV_FILE", text)
         self.assertIn("the session is busy", text)
+
+
+class TestTheRefusalNamesTheRightThing(unittest.TestCase):
+    """Three different problems, three different words.
+
+    A model that reads "is not valid shell syntax" about an unfinished
+    construct concludes it has a typo, and tries another line — instead
+    of sending the construct whole.  The refusal has to say which of
+    the three it is.
+    """
+
+    def test_an_unfinished_construct_is_not_called_a_syntax_error(self) -> None:
+        from agent_core import command_would_stick  # noqa: PLC0415
+
+        reason = command_would_stick("if true; then")
+        self.assertIsNotNone(reason)
+        self.assertIn("is not finished", reason)
+        self.assertIn("the whole construct", reason)
+        self.assertNotIn("is not valid shell syntax", reason)
+
+    def test_an_unclosed_quote_says_that_the_quote_is_open(self) -> None:
+        from agent_core import command_would_stick  # noqa: PLC0415
+
+        reason = command_would_stick('echo "unterminated')
+        self.assertIsNotNone(reason)
+        self.assertIn("quote or bracket open", reason)
+        self.assertNotIn("is not valid shell syntax", reason)
+
+    def test_a_real_syntax_error_is_still_a_syntax_error(self) -> None:
+        from agent_core import command_would_stick  # noqa: PLC0415
+
+        reason = command_would_stick("echo )")
+        self.assertIsNotNone(reason)
+        self.assertIn("is not valid shell syntax", reason)
+        self.assertNotIn("is not finished", reason)
 
 
 class TestTheProtocolIsTheClaim(unittest.TestCase):
