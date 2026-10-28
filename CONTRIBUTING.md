@@ -50,6 +50,35 @@ every script is still in the code. When you move code around, run
 `make mutation` before you push: a script that reports `SKIP … pattern
 not found` is a broken tripwire, and it fails the same way in CI.
 
+### What a line of the output means
+
+| line | meaning |
+|------|---------|
+| `OK …` | the named test ran and went red — the mutation was caught |
+| `FAIL …` | the named test stayed green — the property is not pinned |
+| `INVALID …` | the test did not run at all — the selector matched nothing |
+| `SKIP …` | the pattern was not in the code — the mutation did not apply |
+
+Only `OK` is a catch. `INVALID` and `SKIP` are failures: they mean the
+script proved nothing, and they fail the run.
+
+### The interpreter
+
+The scripts need a python **with pytest**. They look for one themselves
+(`python3`, then `python`), and `PY` overrides the choice:
+
+```bash
+PY=/path/to/python-with-pytest bash tools/mutation-check-docs.sh
+```
+
+`PY` is honoured only when it can `import pytest`. If no interpreter has
+pytest, the script exits **2** before it touches the code: it does not
+fall back to a python without pytest and count the resulting "command not
+found" as a caught mutation. That is exactly how two of these scripts
+used to report ten and eleven catches for tests that never started —
+the release notes counted them as caught, and nobody noticed for a
+release.
+
 ## Project layout
 
 ```
