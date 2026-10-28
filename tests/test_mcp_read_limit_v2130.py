@@ -41,6 +41,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
+
+def _has_tmux() -> bool:
+    """Is tmux on this machine?  The classes that drive a real tmux
+    session are skipped when it is not — a missing tool is an
+    environment, not a defect."""
+    import shutil  # noqa: PLC0415
+
+    return shutil.which("tmux") is not None
+
+
+requires_tmux = unittest.skipUnless(_has_tmux(), "tmux is not installed")
+
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -191,6 +204,7 @@ def _fresh_app():
     return app, mcp, tmpdir
 
 
+@requires_tmux
 class TestTheBudgetInTheWire(unittest.TestCase):
     """What the model actually sees."""
 

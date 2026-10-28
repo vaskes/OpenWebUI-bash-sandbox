@@ -61,6 +61,35 @@ jobs:
         with:
           file: coverage.xml
 
+  # The suite must be green on a machine that has no tmux.  A test that
+  # drives a real tmux session and is not marked ``requires_tmux`` does
+  # not skip there — it fails, and the run reads as a red suite instead
+  # of as an environment that lacks a tool.  That has already happened
+  # once: a restarted sandbox lost its tmux, the suite showed ten red,
+  # and the red was read as a defect in the commits.
+  suite-without-tmux:
+    name: The suite is green without tmux
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      # A PATH without tmux, built from the runner's own binaries: the
+      # tests ask for tmux by name, and a missing binary is what a
+      # machine without tmux looks like.
+      - name: Build a PATH without tmux
+        run: |
+          mkdir -p /tmp/no-tmux
+          for f in /usr/bin/*; do
+            [ "$(basename "$f")" = "tmux" ] && continue
+            ln -sf "$f" /tmp/no-tmux/
+          done
+      - name: Run the suite without tmux
+        run: PATH=/tmp/no-tmux:$PATH pytest -q tests/
+
   sast:
     name: SAST (ruff B-rules)
     runs-on: ubuntu-26.04
