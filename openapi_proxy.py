@@ -78,6 +78,7 @@ from proxy_core import (
 from proxy_core import (
     __version__ as _PROXY_CORE_VERSION,
 )
+from token_rules import is_placeholder
 
 __version__ = _PROXY_CORE_VERSION
 
@@ -239,9 +240,23 @@ def _require_token(
     Rejects the request with 401 if the proxy has no token configured (we
     never want an unauthenticated deployment) or if the supplied token
     doesn't match. Constant-time comparison defeats timing attacks.
+
+    A token that is still the template's **placeholder** is refused the
+    same way an empty one is: it is a published string, so a deployment
+    carrying it has no secret — only the appearance of one. The refusal
+    is 503 rather than 401: nothing is wrong with the caller, the
+    deployment is.
     """
     if not PROXY_TOKEN:
         logger.error("auth disabled but OPENAPI_PROXY_TOKEN is empty — refusing all requests")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="proxy not configured"
+        )
+    if is_placeholder(PROXY_TOKEN):
+        logger.error(
+            "auth disabled but OPENAPI_PROXY_TOKEN is still the template placeholder — "
+            "refusing all requests"
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="proxy not configured"
         )
@@ -682,8 +697,16 @@ def _upstream_headers() -> dict[str, str]:
     If ``OPENAPI_PROXY_UPSTREAM_TOKEN`` is set, use it. Otherwise fall
     back to the same ``OPENAPI_PROXY_TOKEN`` we use for incoming auth —
     that's the typical single-trust-boundary deployment.
+
+    An **empty** value is not a value: ``os.environ.get`` with a default
+    does not fall back on an empty string, so a compose file that passes
+    ``OPENAPI_PROXY_UPSTREAM_TOKEN=`` (unset in the operator's env file)
+    would otherwise forward **no** Authorization header at all — and the
+    agent would answer every call with a 401 that says nothing about the
+    cause. An empty setting therefore means "not set", exactly as it
+    does in the shell.
     """
-    token = os.environ.get("OPENAPI_PROXY_UPSTREAM_TOKEN", PROXY_TOKEN)
+    token = os.environ.get("OPENAPI_PROXY_UPSTREAM_TOKEN") or PROXY_TOKEN
     if not token:
         return {}
     return {"Authorization": f"Bearer {token}"}
@@ -1083,7 +1106,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     """Bidirectional terminal. Per-connection session_id prevents cross-user
     output leakage. Reads use the dedicated /capture endpoint instead of
     a shell wrapper so the polling loop is cheap."""
-    if not PROXY_TOKEN:
+    if not PROXY_TOKEN or is_placeholder(PROXY_TOKEN):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="proxy not configured")
         return
 

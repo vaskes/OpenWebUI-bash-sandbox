@@ -111,6 +111,7 @@ from agent_core import (
 from body_limit import BodySizeLimit
 from json_logging import configure_logging
 from metrics import Metrics
+from token_rules import is_placeholder
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -581,6 +582,14 @@ def _require_token(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="agent not configured"
         )
+    if is_placeholder(AGENT_TOKEN):
+        logger.error(
+            "auth disabled but AGENT_TOKEN is still the template placeholder — "
+            "refusing all requests"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="agent not configured"
+        )
     if creds is None or creds.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -605,9 +614,14 @@ def _token_ok(credentials: str | None) -> bool:
 
     Constant-time compare defeats timing attacks. An empty token means
     "not configured", and then nothing matches: the agent is fail-closed
-    and the MCP door is closed with it.
+    and the MCP door is closed with it. A token that is still the
+    template's placeholder is refused the same way — it is a published
+    string, so a deployment carrying it has no secret, only the
+    appearance of one.
     """
     if not AGENT_TOKEN or not credentials:
+        return False
+    if is_placeholder(AGENT_TOKEN):
         return False
     import hmac as _hmac
 

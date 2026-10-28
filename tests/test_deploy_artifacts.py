@@ -100,7 +100,7 @@ AGENT_MODULES = ("agent_api.py", "agent_core.py", "agent_config.py", "mcp_server
 
 #: The modules both services share. The agent's own modules import
 #: them, so their imports are covered by the scan of those.
-SHARED_MODULES = ("body_limit.py", "json_logging.py", "metrics.py")
+SHARED_MODULES = ("body_limit.py", "json_logging.py", "metrics.py", "token_rules.py")
 
 
 class TestAgentModulesAreInTheImage(unittest.TestCase):

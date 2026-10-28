@@ -2,7 +2,7 @@ name: telegrambot-sandbox
 
 # Production sandbox side-car for the telegram bot on llmhost1.
 #
-# Upstream: github.com/vaskes/OpenWebUI-bash-sandbox @ v2.5.0
+# Upstream: github.com/vaskes/OpenWebUI-bash-sandbox @ v2.14.8
 # Cloned fresh into this directory — nothing is copied from llmhost2.
 #
 # The bot reaches this through the openapi-proxy's bearer-authenticated
@@ -91,7 +91,7 @@ services:
     environment:
       - AGENT_WORKSPACE=/workspace
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
-      - AGENT_LOG_LEVEL=INFO
+      - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-INFO}
       # How much text one command may return. 32k..1024k.
       # The pane scrollback is derived from it, so the limit is
       # honest: an output that fits comes back whole, every time.
@@ -130,6 +130,9 @@ services:
     environment:
       - SANDBOX_URL=http://sandbox-agent:8082
       - OPENAPI_PROXY_TOKEN=${AGENT_STACK_TOKEN:?AGENT_STACK_TOKEN must be set}
+      # The token the proxy uses to call sandbox-agent. Empty = the same
+      # token as above, which is the usual single-trust-boundary case.
+      - OPENAPI_PROXY_UPSTREAM_TOKEN=${OPENAPI_PROXY_UPSTREAM_TOKEN:-}
       - OPENAPI_PROXY_RATE_LIMIT_RPM=${OPENAPI_PROXY_RATE_LIMIT_RPM:-120}
       - OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS=${OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS:-10000}
       - OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT=${OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT:-300}

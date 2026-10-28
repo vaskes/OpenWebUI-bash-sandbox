@@ -49,6 +49,11 @@ COPY --chown=1000:1000 proxy_core.py    /app/proxy_core.py
 COPY --chown=1000:1000 openapi_proxy.py /app/openapi_proxy.py
 COPY --chown=1000:1000 json_logging.py   /app/json_logging.py
 COPY --chown=1000:1000 metrics.py         /app/metrics.py
+#
+# ``token_rules.py`` holds the rule about the bearer token that both
+# services share — in particular that the template's placeholder is a
+# published string, not a secret.
+COPY --chown=1000:1000 token_rules.py     /app/token_rules.py
 
 USER 1000:1000
 EXPOSE 8090

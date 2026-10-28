@@ -157,6 +157,13 @@ COPY --chown=1000:1000 agent_api.py   /home/agent/agent_api.py
 COPY --chown=1000:1000 json_logging.py /home/agent/json_logging.py
 COPY --chown=1000:1000 metrics.py       /home/agent/metrics.py
 #
+# ``token_rules.py`` holds the rule about the bearer token that both
+# services share — in particular that the template's placeholder is a
+# published string, not a secret. It must be in the image: the agent
+# imports it at startup, and a missing module would fail the container
+# on the first request instead of the build.
+COPY --chown=1000:1000 token_rules.py  /home/agent/token_rules.py
+#
 # ``mcp_server.py`` is the MCP face of the sandbox: the same tools, in
 # the protocol an MCP caller speaks. The agent imports it at startup to
 # mount the endpoint, so leaving it out does not fail the build — it
