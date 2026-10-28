@@ -13,6 +13,14 @@ SSH_PREFIX = "ssh "
 DEFAULT_SESSION_ID = "openwebui"
 #: The default exec limit the proxy asks the sandbox-agent for, in
 #: seconds. A deployment overrides it with ``AGENT_EXEC_TIMEOUT``.
+#:
+#: 60 s is the number the operator's v2.14.0 kept on purpose: the range
+#: is what says how far a deployment may raise the limit, and the default
+#: is what a deployment that never touched the knob gets.  It is also the
+#: number that bites when a start path does not pass the deployment's
+#: env file — the compose interpolates ``${AGENT_EXEC_TIMEOUT:-60}``, so
+#: a proxy started without that file silently falls back to a minute
+#: while the caller still believes it may run for an hour.
 EXEC_TIMEOUT_SECONDS = 60.0
 #: How much longer the proxy waits for the agent than the exec limit it
 #: asked for.
