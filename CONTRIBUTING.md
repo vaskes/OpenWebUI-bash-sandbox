@@ -150,10 +150,12 @@ rather than by good intentions:
 The checks are the gate, so a PR that is green is mergeable — there is
 no separate human approval to wait for. The maintainer merges.
 
-The maintainer's own releases do not go through a PR: they are pushed
-to `main` directly and tagged there, because the tag has to land on
-the commit that carries the release's changelog section, and the
-release commit is the one the checks ran on.
+The maintainer's own releases go through the same door: the wave lands
+on a branch, the branch becomes a PR, the thirteen checks run on it,
+and the PR is rebased into `main` — which is why the history stays
+linear. The release's tag then lands on the merged commit that carries
+the release's changelog section, and that commit is the one the
+deployment runs.
 
 ## Reporting bugs
 
