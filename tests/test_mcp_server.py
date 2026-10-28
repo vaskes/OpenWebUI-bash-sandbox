@@ -182,6 +182,7 @@ class TestTheDoorIsLocked(_Base):
         self.assertEqual(response.status_code, 200)
 
 
+@requires_tmux
 class TestTheHostCheckWhenItIsOn(unittest.TestCase):
     """The DNS-rebinding protection, when the operator turns it on.
 
