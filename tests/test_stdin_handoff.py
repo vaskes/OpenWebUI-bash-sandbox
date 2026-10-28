@@ -31,6 +31,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent_core import (  # noqa: E402
+    CONTINUATION_PROMPT,
     build_exec_block,
     command_can_be_grouped,
     unquoted_standalone_braces,
@@ -99,11 +100,15 @@ class TestTheCommandCannotEatTheProtocol(unittest.TestCase):
 
     def test_the_fallback_keeps_the_old_shape(self) -> None:
         # A command that cannot be grouped runs exactly as it did before:
-        # the command, then the bookkeeping, then the marker.
+        # the command, then the bookkeeping, then the marker.  The
+        # continuation prompt is installed on the first line — the
+        # shell must know it *before* it reads the command, or a
+        # command that leaves it waiting would show the default `>`
+        # instead of the marker.
         block, grouped = build_exec_block("echo }", BEGIN, EC, DONE)
         self.assertFalse(grouped)
         lines = block.splitlines()
-        self.assertEqual(lines[0], f"printf '\\n{BEGIN}\\n'")
+        self.assertEqual(lines[0], f"printf '\\n{BEGIN}\\n'; PS2=\"{CONTINUATION_PROMPT} \"")
         self.assertEqual(lines[1], "echo }")
         self.assertEqual(lines[2], f"{EC}=$?")
         self.assertIn(DONE, lines[3])

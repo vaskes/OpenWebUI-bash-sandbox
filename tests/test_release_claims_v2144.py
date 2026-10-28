@@ -103,19 +103,32 @@ class TestTheStuckShellIsTheClaim(unittest.TestCase):
         self.assertIn('_tmux("send-keys", "-t", name, "C-c")', source)
 
     def test_a_busy_session_is_not_interrupted(self) -> None:
-        """The interrupt is only safe when nothing is running.
+        """The interrupt is only safe when the shell is *waiting*.
 
         The check comes first: the shell must be the foreground process
-        and the pane must end with nothing but a prompt.
+        and the pane must end with the shell's continuation prompt --
+        the marker the protocol installs, not "a line that looks like a
+        prompt" (a program's output satisfies that, and a working
+        command was interrupted because of it).
         """
         source = _source("agent_api.py")
         block = source.split("async def _reset_a_stuck_shell", 1)[1].split("\nasync def ", 1)[0]
-        self.assertIn("_pane_is_at_a_prompt", block)
+        self.assertIn("_pane_is_waiting_for_input", block)
         self.assertLess(
-            block.index("_pane_is_at_a_prompt"),
+            block.index("_pane_is_waiting_for_input"),
             block.index('"send-keys"'),
             "the shell is interrupted before it is checked",
         )
+
+    def test_the_waiting_state_is_observable(self) -> None:
+        """The protocol installs a marker nothing else can print.
+
+        That is what makes "the shell is waiting" something one can look
+        at instead of something one guesses from the shape of a line.
+        """
+        core = _source("agent_core.py")
+        self.assertIn('CONTINUATION_PROMPT = "__AGENT_CONT__"', core)
+        self.assertIn('PS2=\\"{CONTINUATION_PROMPT} \\"', core)
 
     def test_the_answer_says_the_shell_was_reset(self) -> None:
         source = " ".join(_source("agent_api.py").split())
@@ -157,5 +170,5 @@ class TestTheTripwiresAreTheClaim(unittest.TestCase):
     def test_the_mutation_check_watches_the_code_it_claims(self) -> None:
         source = _source("tools/mutation-check-v2144.sh")
         self.assertIn("command_would_stick", source)
-        self.assertIn("_pane_is_at_a_prompt", source)
+        self.assertIn("_pane_is_waiting_for_input", source)
         self.assertIn("COMPOSE_ENV_FILE", source)
