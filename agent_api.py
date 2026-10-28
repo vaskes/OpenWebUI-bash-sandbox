@@ -1733,9 +1733,28 @@ async def download_file(
     on instead of a promise of N bytes followed by silence.
     """
     target = _safe_file(path)
-    size = os.stat(target).st_size
+
+    # The size has to come from the *descriptor* the bytes come from.
+    #
+    # Taking it from the path means the answer can describe a file that
+    # is not the one being served: the path is measured once and opened
+    # once, and anything that changes the file in between — a writer, a
+    # rename, a swap — leaves the answer promising N bytes and the body
+    # carrying M.  The MCP door takes the size from the descriptor
+    # already; this is the same rule on the HTTP door.
+    #
+    # The open happens first, then the measurement, and both are before
+    # any header goes out: a file the agent cannot read is still a 403
+    # the client can act on.
+    handle = _open_for_download(target)
+    try:
+        size = os.fstat(handle.fileno()).st_size
+    except OSError:
+        handle.close()
+        raise
 
     if BINARY_LIMIT_BYTES and size > BINARY_LIMIT_BYTES:
+        handle.close()
         raise HTTPException(
             status_code=413,
             detail=(f"file is {size} bytes, over the binary limit of {BINARY_LIMIT_BYTES} bytes"),
@@ -1748,11 +1767,6 @@ async def download_file(
     if range_header:
         start, length = _parse_byte_range(range_header, size)
         status_code = 206
-
-    # Open the file before the response starts. Everything above can fail
-    # with a status code; this is the one failure that must not happen
-    # after the headers are out.
-    handle = _open_for_download(target)
 
     file_name = os.path.basename(target)
     headers = {
