@@ -4,7 +4,7 @@
 SHELL := /usr/bin/env bash
 COMPOSE := docker compose
 
-.PHONY: help build up down logs ps restart test test-cov lint format clean health check-env
+.PHONY: help build up down logs ps restart test test-cov mutation lint format clean health check-env
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*##"; printf "Targets:\n"} /^[a-zA-Z_-]+:.*##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -42,6 +42,17 @@ test: ## Run the unit test suite (stdlib unittest runner; needs requirements-dev
 
 test-cov: ## Run tests with coverage (requires pytest + pytest-cov)
 	@pytest --cov=. --cov-report=term-missing tests/
+
+# Every mutation check breaks one property of the code on purpose and
+# expects the named test to go red. A check that cannot be made red is
+# decoration, and decoration rots: the patterns drift away from the
+# code, the mutation stops applying, and the script writes SKIP into a
+# line nobody reads. They run in CI too (the "Mutation checks" job).
+mutation: ## Run the mutation checks (each tripwire must be able to go red)
+	@for script in tools/mutation-check-*.sh; do \
+		echo "== $$script"; \
+		PY="$$(command -v python3)" bash "$$script" || exit 1; \
+	done
 
 lint: ## Lint with ruff (requires `pip install ruff`)
 	@ruff check .

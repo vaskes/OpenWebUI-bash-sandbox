@@ -131,6 +131,43 @@ mutate agent_api.py \
     "$RULE::TestThePrivilegeWarning::test_nothing_is_said_without_sudo" \
     "nothing is said without sudo"
 
+CI="tests/test_ci_runs_the_mutation_checks.py"
+
+echo "== the mutation checks stop running in CI =="
+mutate .github/workflows/ci.yml \
+    'for script in tools/mutation-check-*.sh; do' \
+    'for script in tools/mutation-check-none.sh; do' \
+    "$CI::TestTheMutationChecksRunInCI::test_the_workflow_runs_the_whole_family" \
+    "the mutation checks run in CI"
+
+echo "== the privilege warning is no longer checked in the log =="
+mutate .github/workflows/ci.yml \
+    "grep -q 'the privilege mode is ON'" \
+    "grep -q 'nothing at all'" \
+    "$CI::TestThePrivilegeWarningIsCheckedLive::test_the_workflow_looks_for_the_warning_in_the_log" \
+    "the privilege warning is checked in the log"
+
+echo "== the make target is gone =="
+mutate Makefile \
+    'mutation: ## Run the mutation checks' \
+    'mutations: ## Run the mutation checks' \
+    "$CI::TestTheMutationChecksRunInCI::test_the_makefile_runs_them_too" \
+    "there is a make target for the mutation checks"
+
+echo "== the contribution guide stops mentioning them =="
+mutate CONTRIBUTING.md \
+    '## Mutation checks' \
+    '## Something else entirely' \
+    "$CI::TestTheMutationChecksRunInCI::test_contributing_says_how_to_run_them" \
+    "the contribution guide says how to run them"
+
+echo "== the contribution guide stops saying how =="
+mutate CONTRIBUTING.md \
+    'make mutation     # or:  for s in tools/mutation-check-*.sh; do bash "$s"; done' \
+    'make something-else' \
+    "$CI::TestTheMutationChecksRunInCI::test_contributing_says_how_to_run_them" \
+    "the contribution guide says how to run them"
+
 echo
 echo "mutations: $PASS went red as expected, $FAIL did not"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -28,6 +28,28 @@ make lint         # or:  ruff check .
 make format       # or:  ruff format .
 ```
 
+## Mutation checks
+
+Some of the strongest tripwires in this repository are the mutation
+checks in `tools/`. Each script breaks **one** property of the code on
+purpose and expects the **named** test to go red:
+
+```bash
+make mutation     # or:  for s in tools/mutation-check-*.sh; do bash "$s"; done
+```
+
+The point is not the mutation but the *counter-test*: a check that
+cannot be made red is decoration, and decoration rots silently. Four
+of these patterns had drifted away from the code, so their mutations
+stopped applying, and the scripts were not run anywhere at all — the
+only way to find out was to run them by hand.
+
+They run in CI (the **Mutation checks** job) on every push, and a test
+(`tests/test_mutation_scripts_v2141.py`) checks that every pattern in
+every script is still in the code. When you move code around, run
+`make mutation` before you push: a script that reports `SKIP … pattern
+not found` is a broken tripwire, and it fails the same way in CI.
+
 ## Project layout
 
 ```

@@ -550,6 +550,26 @@ jobs:
             || { echo "::error::the install came back without its output"; exit 1; }
           echo "the install answers with its output"
 
+      - name: The privilege mode is announced at start-up
+        env:
+          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
+          AGENT_ALLOW_SUDO: "1"
+          AGENT_NO_NEW_PRIVILEGES: "false"
+          AGENT_CAP_DROP: SYS_ADMIN
+        run: |
+          set -euo pipefail
+          # The documentation promises a warning at start-up when sudo
+          # is present (docs/SECURITY.md §9). The unit tests cover the
+          # function; this covers the claim about the *shipped image* —
+          # the warning has to reach the log of a container that really
+          # has sudo in it, and the hollow root has to be named with it.
+          logs=$(docker compose -f docker-compose.ci.yml logs sandbox-agent)
+          echo "$logs" | grep -q 'the privilege mode is ON' \
+            || { echo "::error::the privilege mode was not announced"; echo "$logs" | tail -20; exit 1; }
+          echo "$logs" | grep -q 'the root filesystem is READ-ONLY' \
+            || { echo "::error::the hollow root was not announced"; exit 1; }
+          echo "the privilege mode is announced at start-up"
+
       - name: Dump logs on failure
         if: failure()
         env:
@@ -562,6 +582,37 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose -f docker-compose.ci.yml down -v || true
+
+  mutation-checks:
+    name: Mutation checks (the tripwires can still go red)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: Install tmux
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+      - name: Every mutation check must catch its mutation
+        run: |
+          set -uo pipefail
+          # Each script breaks one property of the code on purpose and
+          # expects the named test to go red. A check that cannot be
+          # made red is not a check — and it rots silently: four of
+          # these patterns had drifted away from the code, so their
+          # mutations did not even apply, and the scripts were not run
+          # anywhere at all. They run here now, on every push.
+          for script in tools/mutation-check-*.sh; do
+            echo "::group::${script}"
+            if ! PY="$(command -v python3)" bash "${script}"; then
+              echo "::error::${script} did not hold — a tripwire that cannot be made red is decoration"
+              exit 1
+            fi
+            echo "::endgroup::"
+          done
 
   secrets:
     name: Secret scan (gitleaks)
