@@ -88,7 +88,10 @@ to the next, so a caller that wants two conversations apart passes a
 different `session_id` — a telegram harness wants one session per chat.
 `cwd` is used when the session is created; a session that already
 exists keeps the directory it was created with, and the answer says
-which one that was (`cwd` in the result).
+which one that was (`cwd` in the result). A session whose pane has
+died — the container was restarted — comes back in the directory it
+had: the registry remembers it, and the directory it was created with
+is not silently replaced by the workspace root.
 
 **The command's own text is the point.** `exit 3` ends the shell, the
 pane dies with it, and the call waits out its timeout. Use
