@@ -494,6 +494,26 @@ jobs:
           echo "$out" | grep -qi 'read-only file system' \
             || { echo "::error::apt-get wrote to a read-only rootfs"; exit 1; }
 
+      - name: The privilege mode is announced at start-up
+        env:
+          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
+          AGENT_ALLOW_SUDO: "1"
+          AGENT_NO_NEW_PRIVILEGES: "false"
+          AGENT_CAP_DROP: SYS_ADMIN
+        run: |
+          set -euo pipefail
+          # The documentation promises a warning at start-up when sudo
+          # is present (docs/SECURITY.md §9). The unit tests cover the
+          # function; this covers the claim about the *shipped image* —
+          # the warning has to reach the log of a container that really
+          # has sudo in it, and the hollow root has to be named with it.
+          logs=$(docker compose -f docker-compose.ci.yml logs sandbox-agent)
+          echo "$logs" | grep -q 'the privilege mode is ON' \
+            || { echo "::error::the privilege mode was not announced"; echo "$logs" | tail -20; exit 1; }
+          echo "$logs" | grep -q 'the root filesystem is READ-ONLY' \
+            || { echo "::error::the hollow root was not announced"; exit 1; }
+          echo "the privilege mode is announced at start-up"
+
       - name: AGENT_READ_ONLY=false gives the root a filesystem it can write
         env:
           OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
@@ -549,26 +569,6 @@ jobs:
           echo "$out" | grep -qi 'bc' \
             || { echo "::error::the install came back without its output"; exit 1; }
           echo "the install answers with its output"
-
-      - name: The privilege mode is announced at start-up
-        env:
-          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
-          AGENT_ALLOW_SUDO: "1"
-          AGENT_NO_NEW_PRIVILEGES: "false"
-          AGENT_CAP_DROP: SYS_ADMIN
-        run: |
-          set -euo pipefail
-          # The documentation promises a warning at start-up when sudo
-          # is present (docs/SECURITY.md §9). The unit tests cover the
-          # function; this covers the claim about the *shipped image* —
-          # the warning has to reach the log of a container that really
-          # has sudo in it, and the hollow root has to be named with it.
-          logs=$(docker compose -f docker-compose.ci.yml logs sandbox-agent)
-          echo "$logs" | grep -q 'the privilege mode is ON' \
-            || { echo "::error::the privilege mode was not announced"; echo "$logs" | tail -20; exit 1; }
-          echo "$logs" | grep -q 'the root filesystem is READ-ONLY' \
-            || { echo "::error::the hollow root was not announced"; exit 1; }
-          echo "the privilege mode is announced at start-up"
 
       - name: Dump logs on failure
         if: failure()
