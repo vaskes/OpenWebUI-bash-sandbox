@@ -82,8 +82,15 @@ cd OpenWebUI-bash-sandbox
 cp .env.example .env
 # Edit .env — at minimum set OPENAPI_PROXY_TOKEN and WEBUI_SECRET_KEY.
 # Suggested: openssl rand -hex 32 and openssl rand -base64 48
-docker compose up -d --build
+make up
 ```
+
+`make up` runs `check-env` first, and `check-env` refuses a `.env` that
+still carries a `CHANGE_ME` placeholder — with the offending keys
+listed. The services refuse the same placeholder on their own, so a
+stack started any other way comes up and then answers `503 proxy not
+configured`: the token in the template is a published string, and a
+deployment that still carries it has no secret at all.
 
 Wait for `docker compose ps` to show all three containers `(healthy)`. Then
 open <http://localhost:3001>, start a new chat, click the **🔧 Tools**
@@ -93,9 +100,8 @@ button, enable **SandboxTools**, and type:
 pwd && ls /workspace
 ```
 
-> The published ports bind to the **loopback** by default — the address is
-> the operator's choice and is not written into the compose file. A
-> deployment that needs another machine to reach the stack sets
+> The published ports bind to the **loopback** by default. The address is
+> the operator's choice, and the compose file spells it out as a parameter:
 > `SANDBOX_BIND_HOST` (`0.0.0.0` publishes on every interface; then the
 > bearer token is the only thing between that network and a shell).
 
@@ -533,7 +539,8 @@ re-running the command in smaller pieces is the fix.
 1. `git clone https://github.com/vaskes/OpenWebUI-bash-sandbox.git`
 2. `cd OpenWebUI-bash-sandbox`
 3. `cp .env.example .env` and fill in the secrets.
-4. `docker compose up -d --build`
+4. `make up` (it checks `.env` for placeholders first; `docker compose up -d --build`
+   works too, but a placeholder token then shows up as `503 proxy not configured`)
 5. Wait for `docker compose ps` to show all three containers `(healthy)`
 6. Add External Tool Server in Open WebUI: URL `http://openapi-proxy:8090`,
    path `openapi.json`, type `openapi`, auth `bearer`, key = `OPENAPI_PROXY_TOKEN`

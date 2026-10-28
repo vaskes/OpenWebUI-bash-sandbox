@@ -142,7 +142,7 @@ Runs every 10 s; container is marked unhealthy after 3 consecutive failures.
 | `OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS`     | `10000`                          | LRU cap on the in-memory rate-limit dict. Past this, oldest key evicted. |
 | `OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT` | `300`                            | Close `/ws` connections idle this long (sec). `0` = disabled. New in v2.4.0. |
 | `OPENAPI_PROXY_LOG_LEVEL`              | `INFO`                           | uvicorn log level.                                                      |
-| `AGENT_EXEC_TIMEOUT`                   | `3600`                           | Longest a single command may run, in seconds (5..3600). The proxy asks the agent for exactly this limit and then waits longer. New in v2.10.2; the range's ceiling raised to an hour in v2.14.0; the default raised to the ceiling in v2.14.4 — see below. |
+| `AGENT_EXEC_TIMEOUT`                   | `60`                             | Longest a single command may run, in seconds (5..3600). The proxy asks the agent for exactly this limit and then waits longer. New in v2.10.2; the range's ceiling raised to an hour in v2.14.0. The **shipped default is still 60** — the number is the deployment's to raise (see below). |
 | `OPENAPI_PROXY_PORT`                   | `8090`                           | uvicorn listen port.                                                    |
 | `SANDBOX_URL`                          | `http://127.0.0.1:8082`          | Upstream sandbox-agent URL.                                             |
 
@@ -245,6 +245,13 @@ curl -fsS http://127.0.0.1:8090/openapi.json
 | `SANDBOX_URL`                 | `http://sandbox-agent:8082` | (optional, used by some integrations)        |
 | `TOOL_SERVER_CONNECTIONS`     | (JSON list)          | Pre-wires the OpenAPI tool connection             |
 
+`WEBUI_SECRET_KEY` is **required** — the compose file refuses to start
+without it (`${WEBUI_SECRET_KEY:?WEBUI_SECRET_KEY must be set}`), and
+the template ships a `CHANGE_ME` placeholder for it. It is the key
+Open WebUI signs its sessions with, so a deployment that leaves the
+placeholder has an admin session anyone can forge. Generate one with
+`openssl rand -base64 48`.
+
 ### `TOOL_SERVER_CONNECTIONS` format
 
 ```json
@@ -292,6 +299,8 @@ having.
 | `sandbox_proxy_upstream_errors_total` | proxy   | upstream calls that failed otherwise |
 | `sandbox_agent_exec_total`            | agent   | commands executed                   |
 | `sandbox_agent_exec_timeouts_total`   | agent   | commands that ran out of time       |
+| `sandbox_agent_exec_refused_total`    | agent   | commands refused before they were typed, because they would stick the shell |
+| `sandbox_agent_exec_stuck_resets_total` | agent | shells freed after they waited for the rest of an unfinished command |
 | `sandbox_agent_active_sessions`       | agent   | sessions held right now             |
 
 The counters live in the process, so they reset when the container
@@ -341,9 +350,8 @@ Delete these with `docker volume rm <name>` to start fresh.
 | `127.0.0.1:3001`   | open-webui     | Web UI                                |
 | `127.0.0.1:8090`   | openapi-proxy  | OpenAPI + WS                           |
 
-The address the stack is published on is **not written into the compose
-file** — it is the operator's choice, and the file's default is the
-loopback:
+The address the stack is published on is the operator's choice, and the
+compose file spells it out as a parameter whose default is the loopback:
 
 | Variable            | Default        | Notes                                 |
 |---------------------|----------------|---------------------------------------|
@@ -376,3 +384,30 @@ Both `ExecStart` and `ExecReload` pass `--build`: neither service pins
 an image, so `up -d` reuses whatever tag is present and serves the
 previous code. A unit that starts at boot would then serve yesterday's
 build forever.
+
+## The production stack (`docker-compose.production.yml`)
+
+The production compose file is the two-service stack the telegram bot
+talks to: `sandbox-agent` and `openapi-proxy`, no Open WebUI. It is a
+different file with a different set of variables, and it is the one the
+operator's own deployment path uses.
+
+| Variable | Required | What it does |
+|----------|----------|--------------|
+| `AGENT_STACK_TOKEN` | **yes** | The bearer token, shared by both services. The compose file refuses to start without it (`${AGENT_STACK_TOKEN:?...}`). |
+
+`AGENT_STACK_TOKEN` is the production stack's name for the token the
+development stack calls `OPENAPI_PROXY_TOKEN`: the proxy validates
+incoming callers against it and forwards it to the agent as
+`AGENT_TOKEN`. One value, two names, one file.
+
+```bash
+export AGENT_STACK_TOKEN="$(openssl rand -hex 32)"
+docker compose -f docker-compose.production.yml up -d --build
+```
+
+The production file hardcodes the loopback for the published proxy port
+(`127.0.0.1:8090`) and uses its own network (`tb-net`) and project name
+(`telegrambot-sandbox`) — it is not the development stack with different
+values. `--build` is not optional here either: neither service pins an
+image, so a plain `up -d` serves the previous build without a word.

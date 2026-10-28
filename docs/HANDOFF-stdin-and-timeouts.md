@@ -4,12 +4,17 @@ This is the sidecar half of the "stdin eats the marker / timeout race"
 handoff. The bot side has its own half; this document is everything the
 bot side needs to know about **this** repository.
 
-- **Tag:** `v2.10.2`
-- **Agent version (`agent_core.__version__`):** `2.10.2`
-- **Proxy version (`proxy_core.__version__`):** `2.10.2`
+- **Tag:** `v2.14.8` (this contract was written against `v2.10.2`; the
+  behaviour it describes has not changed since — see the note below)
+- **Agent version (`agent_core.__version__`):** `2.14.8`
+- **Proxy version (`proxy_core.__version__`):** `2.14.8`
 - **The API surface did not change.** No route was added, removed or
-  renamed. `POST /sessions/{id}/exec` and the authorization contract are
-  exactly as before.
+  renamed *by the work this document describes*.
+  `POST /sessions/{id}/exec` and the authorization contract are
+  exactly as before. Later releases added two things that are not part
+  of this contract: the MCP door (`POST /mcp`, see
+  `docs/HANDOFF-mcp.md`) and the metrics endpoint (`GET /metrics`, added
+  in v2.12.1 on both services). Neither touches the exec contract.
 
 ---
 
