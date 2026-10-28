@@ -270,9 +270,9 @@ mutate agent_config.py \
 
 echo "== the terminal dies when the reader is cancelled =="
 mutate openapi_proxy.py \
-    '        except (asyncio.CancelledError, Exception):  # noqa: BLE001' \
-    '        except Exception:  # noqa: BLE001' \
-    "tests/test_wave2_fixes.py::TestWebSocketNoTokenInQuery::test_websocket_protocol_header_accepted" \
+    '    except (asyncio.CancelledError, Exception):  # noqa: BLE001' \
+    '    except Exception:  # noqa: BLE001' \
+    "tests/test_wave2_fixes.py::TestTheCancelledReader::test_the_cancellation_does_not_escape" \
     "the terminal survives the cancellation it causes"
 
 echo

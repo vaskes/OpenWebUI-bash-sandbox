@@ -1051,6 +1051,33 @@ async def delete_file(
 # shell per poll, which leaks file descriptors and burns CPU).
 
 
+async def _stop_the_reader(reader: asyncio.Task) -> None:
+    """Cancel the reader task and wait for it — without letting go of the cancellation.
+
+    The websocket handler has a reader task; when the connection ends,
+    the reader is cancelled and awaited. Awaiting a cancelled task
+    raises ``CancelledError``, and ``CancelledError`` is **not** an
+    ``Exception`` (it is a ``BaseException`` since Python 3.8) — so the
+    bare ``except Exception`` would not catch it, it would walk out of
+    the handler's ``finally`` and kill the terminal instead of closing
+    it.
+
+    The tuple looks redundant and is not. A linter that calls it
+    redundant is wrong about this Python, and the review that called it
+    redundant was wrong about it too: the change was made, and the
+    terminal died.
+
+    This lives in its own function so that the property can be *tested*
+    — the inline version could only be caught by a race, and a race
+    catches a mutation only when the wind blows the right way.
+    """
+    reader.cancel()
+    try:
+        await reader
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        pass
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """Bidirectional terminal. Per-connection session_id prevents cross-user
@@ -1150,22 +1177,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         pass
     finally:
         stop.set()
-        reader.cancel()
-        try:
-            await reader
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            # Both, and the order does not matter: CancelledError is
-            # **not** an Exception (it is a BaseException since 3.8), so
-            # the bare `except Exception` would not catch the task that
-            # was just cancelled — the CancelledError would walk out of
-            # this `finally` and kill the websocket handler, and the
-            # terminal would die instead of closing.
-            #
-            # The tuple looks redundant and is not. A linter that calls
-            # it redundant is wrong about this Python, and the review
-            # that called it redundant was wrong about it: the change
-            # was made, and the test that opens a websocket went red.
-            pass
+        await _stop_the_reader(reader)
         # Best-effort cleanup of the per-connection tmux session.
         try:
             await client.delete(
