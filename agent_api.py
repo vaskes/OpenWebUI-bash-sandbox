@@ -71,7 +71,6 @@ import shutil
 import time
 import urllib.parse
 import uuid
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -298,8 +297,10 @@ async def tmux_session_exists(name: str) -> bool:
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
-@asynccontextmanager
-def _warn_about_the_privilege_mode() -> None:
+def _warn_about_the_privilege_mode(
+    status: str | None = None,
+    mountinfo: str | None = None,
+) -> None:
     """Say something when sudo is installed — whether or not it works.
 
     The privilege mode (docs/SECURITY.md) has two halves: the image
@@ -310,17 +311,30 @@ def _warn_about_the_privilege_mode() -> None:
 
     A warning at startup is the difference between "the deployment is
     misconfigured" and "the sandbox is flaky".
+
+    This is a plain function and it is called as one. It used to carry
+    ``@asynccontextmanager``, which was wrong twice over: the decorator
+    makes the *call* hand back a context manager, and the body only
+    ran because the decorator's constructor called the function on the
+    way there. ``async with`` on it raised ``TypeError: 'NoneType'
+    object is not an async iterator`` — a plain function is not an
+    async generator. The warning did print; it printed by accident, and
+    a reader of the old code could not tell that from "it never runs".
+
+    ``status`` and ``mountinfo`` are injectable for the tests; ``None``
+    means "read it from /proc".
     """
     if shutil.which("sudo") is None:
         return
-    try:
-        status = Path("/proc/self/status").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        logger.warning(
-            "sudo is installed but /proc/self/status could not be read, "
-            "so the privilege mode cannot be verified"
-        )
-        return
+    if status is None:
+        try:
+            status = Path("/proc/self/status").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            logger.warning(
+                "sudo is installed but /proc/self/status could not be read, "
+                "so the privilege mode cannot be verified"
+            )
+            return
     no_new_privs, cap_bnd = parse_capability_status(status)
     verdict = sudo_posture(no_new_privs, cap_bnd)
     if verdict != "ok":
@@ -336,7 +350,7 @@ def _warn_about_the_privilege_mode() -> None:
             "`sudo su` and become root inside the container. "
             "PRIVATE, SECURED DEPLOYMENTS ONLY."
         )
-    _warn_about_the_read_only_rootfs()
+    _warn_about_the_read_only_rootfs(mountinfo)
 
 
 def _warn_about_the_read_only_rootfs(mountinfo: str | None = None) -> None:
