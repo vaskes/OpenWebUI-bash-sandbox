@@ -4,6 +4,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.6] - 2026-10-28
+
+The third review of v2.14.5, and one correction to v2.14.5's own notes.
+
+### Fixed
+
+- **The CI job "the suite is green without tmux" now runs the suite
+  without tmux.** It gave the suite a PATH without tmux and then
+  *prepended* it to the original one, which still had `/usr/bin` — and
+  tmux in it. Measured the way CI runs it:
+
+      $ PATH=/tmp/no-tmux:$PATH command -v tmux
+      /usr/bin/tmux
+
+  So the job ran the ordinary suite, with tmux, and was green for the
+  wrong reason. The farm is now built from the whole PATH and the PATH
+  is *replaced*. The tripwire no longer checks that the workflow
+  contains the words "suite-without-tmux" — that is an existence
+  check, and an existence check cannot catch this. It runs the job's
+  own two steps and asks whether tmux is findable in the PATH the job
+  runs the suite with.
+- **The protocol's marker does not reach the caller's stdout.** Every
+  line of a multi-line command is a continuation, so every one of them
+  came back with the marker in front of it — the command the caller
+  had just sent, behind a token that means nothing outside the
+  protocol. The marker is cut now; the shell's redraw of the command
+  line stays, because that is the caller's own text and the stdout
+  contract includes it.
+- **The file door checks the limit before it opens the file.** A file
+  that was both unreadable and over the limit answered 403 ("no
+  permission") where the honest answer is 413 ("too big") — and 413
+  is the one a client can act on. The limit is a policy, so it is
+  checked first; the size the answer promises still comes from the
+  descriptor the bytes are read from. The descriptor is also closed on
+  every path that does not hand it to the response.
+
+### Added
+
+- **`docs/REVIEW-CHECKLIST.md`** — every finding of the three review
+  waves, what it was, and the check that would go red if it came back.
+  A checklist that lives in somebody's notes is a checklist that the
+  next wave rediscovers.
+
+### Correction to the v2.14.5 notes
+
+The v2.14.5 notes said: *"The mutation count on v2.14.4 was 101, not
+98."* **That is false.** The count on v2.14.4 is 98, and the operator's
+number was right.
+
+What went wrong is worth writing down, because the mistake had a shape:
+the fourteen mutations were counted on the **v2.14.5** tree, where the
+v2.14.4 script had grown three more, and the number was then attributed
+to v2.14.4. The measurement was real; the tree it was about was not the
+tree the claim was about. A number measured on the wrong tree is as
+wrong as a number nobody measured — and the rule is the same one the
+project already follows for the file door: *measure where the object
+lives*.
+
+The totals, measured by running the scripts:
+
+| | v2.14.4 | v2.14.5 | v2.14.6 |
+|---|---|---|---|
+| mutations, all red | 98 | 108 | 113 |
+| of which new in the wave | — | 10 | 5 |
+
+The count of 11 for `mutation-check-v2144.sh` on the v2.14.4 tree is
+also where the operator's recount found the standing "+1": that script
+has a second mutation function (`mutate_py`) besides `mutate`, and a
+static count of `^mutate` does not see it.
+
+One more number, for the record: the v2.14.5 notes said the suite
+showed "fifteen red and two errors" without tmux. That was measured on
+the **v2.14.5** tree, before the markers went in; on the v2.14.4 tree
+the same measurement is **eleven red and one error**. The property
+("red without tmux") was the same in both.
+
 ## [2.14.5] - 2026-10-28
 
 The second review of v2.14.4, and the checklist of the first one, kept
