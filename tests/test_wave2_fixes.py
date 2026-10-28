@@ -417,6 +417,56 @@ class TestLoggerFormatFix(_ProxyBase):
                 self.assertNotIn("sandbox", r, r)
 
 
+class TestTheCancelledReader(unittest.TestCase):
+    """The terminal must close, not die, when the reader is cancelled.
+
+    Awaiting a cancelled task raises ``CancelledError``, and
+    ``CancelledError`` is **not** an ``Exception`` (it is a
+    ``BaseException`` since Python 3.8). The cleanup has to catch it —
+    otherwise it walks out of the handler's ``finally`` and the
+    terminal dies instead of closing.
+
+    The property is tested here, on its own, because the inline
+    version could only be caught by a race: the mutation check caught
+    it once and missed it the next time, and a tripwire that catches a
+    mutation by luck is decoration.
+    """
+
+    def test_the_cancellation_does_not_escape(self) -> None:
+        import asyncio
+
+        from openapi_proxy import _stop_the_reader
+
+        async def scenario() -> None:
+            async def forever() -> None:
+                await asyncio.sleep(3600)
+
+            reader = asyncio.create_task(forever())
+            await asyncio.sleep(0)  # let the task start
+            await _stop_the_reader(reader)
+
+        try:
+            asyncio.run(scenario())
+        except asyncio.CancelledError as exc:
+            self.fail(f"the cancellation escaped the cleanup: {exc!r}")
+
+    def test_the_reader_is_really_cancelled(self) -> None:
+        import asyncio
+
+        from openapi_proxy import _stop_the_reader
+
+        async def scenario() -> bool:
+            async def forever() -> None:
+                await asyncio.sleep(3600)
+
+            reader = asyncio.create_task(forever())
+            await asyncio.sleep(0)
+            await _stop_the_reader(reader)
+            return reader.cancelled()
+
+        self.assertTrue(asyncio.run(scenario()), "the reader was left running")
+
+
 class TestWebSocketNoTokenInQuery(_ProxyBase):
     """#7: WebSocket token in query params leaks into access logs."""
 
