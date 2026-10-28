@@ -4,6 +4,93 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.8] - 2026-10-28
+
+The fourth review of v2.14.7. Three findings, and all three were about
+a check that looked like it was checking something.
+
+### Fixed
+
+- **A mutation script could count a catch for a test that never ran.**
+  Two of the ten scripts ran pytest through a hardcoded interpreter path
+  that does not exist in CI. The shell answered 127 ("command not
+  found"), the `if pytest; then FAIL; else PASS` shape read that as "the
+  test went red", and the scripts printed ten and eleven catches for
+  tests that never started. Twenty-one of the 113 mutations of v2.14.6
+  never ran a test — and the release notes counted them as caught.
+
+  The fingerprint was in the CI log of that release all along: a median
+  of 20.8 ms per mutation in those two scripts, against 248-1722 ms in
+  the other eight. The "No such file or directory" was swallowed into a
+  scratch file nobody reads.
+
+  The machinery now lives in one place (`tools/mutation-lib.sh`), and the
+  rule it enforces is one sentence: **a catch is a test that ran and
+  went red, and nothing else.** No interpreter with pytest means the
+  script exits 2 before it touches the code, instead of falling back to
+  a python that cannot run the suite and calling the "command not
+  found" a catch. A selector that matches no test is INVALID — a
+  failure, never a catch. No script may name the interpreter of a
+  machine any more.
+
+- **The shell's own `>` was read as a continuation prompt.** The agent's
+  protocol installs its own continuation prompt (`PS2=__AGENT_CONT__`)
+  as the first line of every command it types, and that marker is
+  printed by nothing else. Before that line runs, the shell's default
+  `PS2` is `>` — and a program is free to print `>` as well. A loop
+  built only from shell builtins (`while true; do echo '>'; done`) runs
+  in the shell itself, so tmux reports the shell as the foreground
+  process and the pane's last line is exactly `>`: the heal interrupted
+  a working command and told the caller the shell had been waiting.
+
+  The truth is narrower, and the agent now knows it: the shell's default
+  prompt means "waiting" only in a shell where the protocol has never
+  run. The agent records that the protocol ran (the begin marker is
+  printed by the protocol's first line, so seeing it is the proof), and
+  from then on a bare `>` is a program's output — the heal does not fire
+  on it, and the caller is told the truth, that the session is busy. The
+  legacy case is untouched: a shell that was waiting before the protocol
+  ever ran still shows `>`, and it is still healed.
+
+- **A correction did not live where the claim lives.** The v2.14.5 notes
+  claim *"The mutation count on v2.14.4 was 101, not 98."* That claim is
+  false — the count on v2.14.4 is 98 — and the correction was written
+  down a hundred lines further up, in the section of the *next* release.
+  A reader of the v2.14.5 section read the false claim and nothing else.
+
+  A correction that lives in another section is not a correction of
+  *this* sentence; it is a correction somewhere in the file. The claim's
+  own section now points at the correction. The old text is not
+  rewritten — history is not edited — but it may not stand alone.
+
+### Changed
+
+- **The ten mutation scripts share one library.** The interpreter
+  discovery, the verdict ("a catch is a test that ran and went red")
+  and the bytecode purge live in `tools/mutation-lib.sh`, so the rule
+  lives in one place instead of ten copies of it. Every script also
+  purges `__pycache__` before it runs the test, and a trap puts the
+  mutated file back if the script is killed in between — an interrupted
+  run must not leave a mutated tree for the next run to measure.
+- **The review checklist has three more rows**, and a row is closed
+  when something checks it: every row now names a check that has to
+  exist, and the release test says so.
+- **`CONTRIBUTING.md` documents the verdict** of a mutation script: only
+  `OK` is a catch; `INVALID` and `SKIP` are failures, and they fail the
+  run.
+
+### Notes for the operator
+
+- The mutation count, measured by running the scripts on the release
+  tree: **121**, all red — 10 + 11 + 10 + 9 + 12 + 24 + 11 + 14 + 7 + 5
+  + 8. The eight at the end are this release's own.
+
+  Two of the eleven scripts did not run a single test before this
+  release, and the number they printed was a lie. The count above is the
+  first one that means what it says.
+
+- The README test counter: 781 → 802.
+
 ## [2.14.7] - 2026-10-28
 
 ### Removed
