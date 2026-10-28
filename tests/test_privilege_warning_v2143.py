@@ -41,6 +41,19 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+
+def _has_tmux() -> bool:
+    """Is tmux on this machine?  The classes that drive a real tmux
+    session are skipped when it is not — a missing tool is an
+    environment, not a defect."""
+    import shutil  # noqa: PLC0415
+
+    return shutil.which("tmux") is not None
+
+
+requires_tmux = unittest.skipUnless(_has_tmux(), "tmux is not installed")
+
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -183,6 +196,7 @@ class TestTheFunctionIsAPlainFunction(unittest.TestCase):
         self.assertIsNone(returned)
 
 
+@requires_tmux
 class TestTheStartupAnnouncesIt(unittest.TestCase):
     """A warning that nobody calls prints nothing, however loud it is."""
 

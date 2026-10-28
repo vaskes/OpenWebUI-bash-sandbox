@@ -43,6 +43,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_agent_api_endpoints import _fresh_app  # noqa: E402
 
+
+def _has_tmux() -> bool:
+    """Is tmux on this machine?  The classes that drive a real tmux
+    session are skipped when it is not — a missing tool is an
+    environment, not a defect."""
+    import shutil  # noqa: PLC0415
+
+    return shutil.which("tmux") is not None
+
+
+requires_tmux = unittest.skipUnless(_has_tmux(), "tmux is not installed")
+
+
 #: The pane of a shell that waits for the rest of an unfinished command.
 #: The last line is the shell's *continuation prompt*: the marker the
 #: agent's protocol installs, and the one thing that cannot be printed
@@ -477,6 +490,7 @@ class TestTheProtocolIsTheClaim(unittest.TestCase):
         self.assertEqual(_strip_continuation_prompts(region), "before\nafter")
 
 
+@requires_tmux
 class TestTheStuckShellRecovers(unittest.TestCase):
     """Against a real tmux: a stuck shell is freed and the session works.
 
