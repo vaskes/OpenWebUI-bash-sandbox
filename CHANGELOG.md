@@ -4,6 +4,83 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.5] - 2026-10-28
+
+The second review of v2.14.4, and the checklist of the first one, kept
+alive. Six findings from the review of the incident wave, and six
+carried over from the review before it.
+
+### Fixed
+
+- **The heal can no longer kill a working command.** The sign the
+  interrupt used — "the pane's last line looks like a prompt" — is
+  satisfied by a program's own output: a loop that prints a line
+  ending in `$` was killed, and the caller was told the shell had been
+  waiting for the rest of an unfinished command. The state is now
+  observable instead of guessed: the protocol installs its own
+  continuation prompt, so a shell that waits for the rest of a line
+  shows exactly that and nothing else prints it.
+- **The refusal for an unfinished construct says what to do.** "is not
+  valid shell syntax" reads as "you have a typo", and the model tries
+  another line instead of sending the construct whole. A command whose
+  syntax is valid but which is not finished is now refused as
+  unfinished; a command with a real syntax error is still refused as
+  one; an unclosed quote is still refused as an unclosed quote.
+- **The HTTP file door's answer describes the bytes it serves.** The
+  size was taken from the path and the bytes from the descriptor, so
+  anything that changed the file in between left the answer promising
+  N bytes and the body carrying M. The size now comes from the
+  descriptor the bytes are read from — the rule the MCP door already
+  followed.
+- **A known session comes back in the directory it had.** The
+  auto-create path (the one that runs when a session's tmux backend
+  has died) started the session in the workspace root and wrote the
+  root into the registry, so the directory was silently gone. The
+  lifespan handler's docstring had promised otherwise.
+- **A bad command reaches the model as words.** The MCP tool built its
+  request outside the guard, so an empty command (or one over the size
+  cap) answered "Error executing tool bash" with the internals of a
+  framework in it. The timeout was already fixed this way; the command
+  was not.
+
+### Changed
+
+- **The MCP tool asks tmux only when tmux can change the answer.** It
+  opened or adopted the session on every call, which cost two tmux
+  processes for a question the session registry already held. The
+  refusal of a directory a running session cannot honour is untouched.
+- **The suite runs a tmux server of its own.** The fixture that keeps
+  the machine clean killed every session that *appeared* during a run —
+  and "appeared" is not "ours": the machine's tmux server belongs to
+  whoever runs on it. The suite now keeps its socket in a private
+  `$TMUX_TMPDIR`, so it can only see and only kill the sessions it
+  made.
+- **A test that drives tmux and does not say so is a red suite on a
+  machine without tmux.** Six classes were unmarked; with tmux hidden
+  the suite showed fifteen red and two errors. The classes are marked,
+  and a new CI job runs the whole suite without tmux, so the markers
+  are checked instead of trusted.
+
+### Notes for the operator
+
+- **The production posture did not change, and it is not the
+  composition's default.** The deployment reads
+  `/opt/telegrambot/.env.sandbox`, which sets
+  `AGENT_NO_NEW_PRIVILEGES=false`, `AGENT_CAP_DROP=SYS_ADMIN` and
+  `AGENT_READ_ONLY=false`: the agent runs with `sudo` available and a
+  writable root. This was already the case before v2.14.5 — the
+  deployment's own update script has always passed that file — but it
+  was never said out loud, and a reader of the compose files would
+  conclude the opposite. The verification script now compares the
+  running posture with the env file instead of with a hardcoded
+  `NoNewPrivs=1`.
+- **The mutation count on v2.14.4 was 101, not 98.** Measured by
+  running the eight scripts, not by summing the numbers somebody wrote
+  down: the v2.14.4 script carries **14** mutations, not 11, so the
+  sum is 10 + 11 + 10 + 9 + 12 + 24 + 11 + 14 = 101. A hand-written
+  sum of hand-written numbers is a number nobody recomputes. This
+  release carries 108 in total (101 + 7), measured the same way.
+
 ## [2.14.4] - 2026-10-28
 
 The session that stopped executing commands. Two different states were
