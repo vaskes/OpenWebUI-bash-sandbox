@@ -2,7 +2,7 @@ name: telegrambot-sandbox
 
 # Production sandbox side-car for the telegram bot on llmhost1.
 #
-# Upstream: github.com/vaskes/OpenWebUI-bash-sandbox @ v2.14.8
+# Upstream: github.com/vaskes/OpenWebUI-bash-sandbox @ v2.14.9
 # Cloned fresh into this directory — nothing is copied from llmhost2.
 #
 # The bot reaches this through the openapi-proxy's bearer-authenticated

@@ -4,6 +4,156 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.9] - 2026-10-29
+
+A documentation audit. The operator's words: *"the documentation keeps
+going stale and getting neglected"* — so this wave measured every claim
+the docs make about the code, and found eight of them false. The code
+was mostly right; the docs were the copy that rotted, and they rotted
+**unwatched**: a tripwire that checks a doc's *phrase* does not protect
+the number inside it.
+
+### Fixed
+
+- **The configuration table advertised an exec timeout the proxy does
+  not ship.** `docs/CONFIGURATION.md` said the default was `3600`
+  ("the default raised to the ceiling in v2.14.4"). The proxy ships
+  `60` — `proxy_core.EXEC_TIMEOUT_SECONDS = 60.0`, the compose file's
+  `${AGENT_EXEC_TIMEOUT:-60}`, and the same file's own prose two
+  paragraphs below the table ("The default is 60 seconds"), which is
+  what makes the table cell the odd one out. The change came with
+  v2.14.4, in the commit that raised the *ceiling* to an hour: the cell
+  was edited from 60 to 3600 and the code was not.
+
+  An operator who read the table would believe a command may run for an
+  hour, and would then watch it die at a minute.
+
+  The table now says 60, and a new tripwire reads the number out of
+  `proxy_core.py` and compares it with the table cell, with the compose
+  default and with the prose — so the three cannot drift apart again.
+
+- **The docs said the compose file does not contain the bind address.**
+  `README.md` and `docs/CONFIGURATION.md` both claimed the published
+  address "is not written into the compose file", while the compose file
+  has interpolated `${SANDBOX_BIND_HOST:-127.0.0.1}` since v2.14.2. The
+  sentence came in with the variable — it was false the day it was
+  written — and `CONFIGURATION.md` contradicted itself two paragraphs
+  later by printing the very table that holds the knob.
+
+- **The production stack's token was documented nowhere.**
+  `docker-compose.production.yml` refuses to start without
+  `AGENT_STACK_TOKEN` (`${AGENT_STACK_TOKEN:?...}`), and no document in
+  `docs/` named it: not in `CONFIGURATION.md`, not in `.env.example`.
+  A deployment of the production stack stopped with an error nobody
+  could look up. It is documented now, in a section that says what the
+  file is and how it differs from the development stack.
+
+- **The handoff contract was pinned to a version seven releases old.**
+  `docs/HANDOFF-binary-transport.md` told the bot's author to "code
+  against: sandbox tag v2.7.0", while the deployed side-car was
+  2.14.8. Worse, its status-code table did not mention **409** — the
+  answer the file door gives since v2.14.1, when the path was replaced
+  while it was being opened — so a client that coded against the
+  contract had no branch for it. The contract also described the old
+  symlink resolution ("resolved first"), which the door stopped doing
+  in the same release.
+
+  The contract now pins the shipped tag, names 409 and 416 alongside the
+  codes it already knew, and carries a new section listing what changed
+  since v2.7.0 — because a contract that is rewritten silently is a
+  contract the reader cannot check.
+
+- **The metrics table did not name two of the nine metrics the services
+  export.** `sandbox_agent_exec_refused_total` and
+  `sandbox_agent_exec_stuck_resets_total` — the counters for the
+  stuck-session incident of v2.14.4 — were in the code and in no
+  document. An operator watching a dashboard had no idea the numbers
+  existed. The table is now checked against the code in both directions:
+  a metric the code exports must be named, and a metric the table names
+  must be exported (an alert on a metric that does not exist never
+  fires).
+
+- **The template offered knobs the stack could not honour, and hid
+  knobs the stack could.** `.env.example` listed
+  `AGENT_WORKSPACE` and `AGENT_SESSIONS_FILE`, which the compose file
+  pins to literals, and `OPENAPI_PROXY_UPSTREAM_TOKEN`, which **no
+  compose file passed at all** — setting it in `.env` could not change
+  anything, while `docs/CONFIGURATION.md` described it as a knob to
+  set. The template no longer offers the two paths (they are the
+  compose file's business, and they have to agree with the
+  bind-mount), and the upstream token now reaches the proxy.
+
+  The other direction was broken too: `SANDBOX_BIND_HOST` — the
+  address the published ports bind to, the one knob that decides
+  whether the stack is reachable from the network — and
+  `AUDIO_STT_OPENAI_API_BASE_URL` were interpolated by the compose
+  file and documented in `CONFIGURATION.md`, but **not offered in the
+  template at all**. An operator looking for the knob could not find it.
+
+- **`AGENT_LOG_LEVEL` was pinned to a literal in both compose files.**
+  `- AGENT_LOG_LEVEL=INFO` means the value in `.env` is read by nobody:
+  the container always gets `INFO`. It is interpolated now, in the
+  development and the production stack alike.
+
+- **The review checklist counted three waves in a file that lists
+  four.** `docs/REVIEW-CHECKLIST.md` said "every finding of the three
+  review waves" above a table with four numbered waves (R, S, T, U) —
+  and the fifth wave, which found nothing, was not mentioned at all.
+
+### Changed
+
+- **The stack refuses a template placeholder as a token — on every
+  path, not only through `make`.** The template shipped
+  `OPENAPI_PROXY_TOKEN=CHANGE_ME_openssl_rand_hex_32` and promised
+  that "the stack refuses to start" if it was still there. That promise
+  held only for `make up` / `make build` / `make restart`, which run
+  `check-env` first. The README's own quick start said
+  `docker compose up -d --build`, which bypasses `check-env` — and the
+  compose file's `:?` guard rejects an **empty** value, not a
+  placeholder one. So the path the README teaches started the stack
+  with a token that is **published in this repository**.
+
+  The rule now lives in the code (`token_rules.py`, shared by both
+  services) and is enforced on every door they have: the proxy's HTTP
+  door, its WebSocket door and its MCP relay; the agent's HTTP door and
+  its MCP door. A deployment carrying the placeholder answers
+  `503 proxy not configured` instead of serving a shell to anyone who
+  has read the repository. `make check-env` still catches it earlier
+  and more legibly, and the README's quick start now says `make up`.
+
+  The rule is a *prefix* check (`CHANGE_ME`), so a real token that
+  merely contains the word is not refused — a false refusal is a defect
+  too.
+
+- **An empty `OPENAPI_PROXY_UPSTREAM_TOKEN` no longer drops the
+  Authorization header.** `os.environ.get(name, default)` does not fall
+  back on an **empty** value, so the compose file's
+  `${OPENAPI_PROXY_UPSTREAM_TOKEN:-}` (unset in the operator's env file)
+  would have forwarded **no** `Authorization` header at all — and the
+  agent would answer every call with a 401 that says nothing about the
+  cause. An empty setting now means "not set", exactly as it does in
+  the shell.
+
+### Added
+
+- **`tests/test_doc_drift_v2149.py`** — the drift tripwire. It compares
+  the docs with the code rather than with a checked-in expectation: the
+  knobs the template offers must be knobs a compose file interpolates
+  (in both directions), every variable a compose file *requires* must be
+  documented in prose, the documented timeout must be the shipped one,
+  the handoff contract must name every status the file door can answer
+  and pin the version that is deployed, and the metrics table must
+  match the metrics the services declare. It reads the code through
+  the AST, so a mention in a docstring is not a metric.
+
+- **`tests/test_placeholder_token_v2149.py`** — the placeholder
+  tripwire. The rule is in one place, both services use it, every door
+  refuses it, and the three cases — placeholder, empty, real — are told
+  apart.
+
+- **`tools/mutation-check-v2149.sh`** — 21 mutations that break each of
+  the properties above on purpose. All 21 are red.
+
 ## [2.14.8] - 2026-10-28
 
 The fourth review of v2.14.7. Three findings, and all three were about
