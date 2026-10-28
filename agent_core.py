@@ -203,6 +203,34 @@ def is_a_shell_name(name: str) -> bool:
     return name.strip().lstrip("-") in SHELL_NAMES
 
 
+#: The continuation prompt the protocol installs in the session's shell.
+#:
+#: A shell that waits for the rest of a line prints ``PS2`` and stops
+#: there.  The default continuation prompt is ``>``, which a program can
+#: print as well, and the session's own prompt (``PS1``) is worse: a
+#: command whose output ends with ``$`` looks exactly like it.  The
+#: agent's marker is printed by nothing else, so "the shell is waiting
+#: for the rest of the line" becomes something one can *look at*
+#: instead of something one guesses from the shape of a line.
+CONTINUATION_PROMPT = "__AGENT_CONT__"
+
+#: The shell's own continuation prompt — what a shell shows when it was
+#: waiting before the agent's protocol ever ran.
+DEFAULT_CONTINUATION_PROMPT = ">"
+
+
+def is_a_continuation_prompt(line: str) -> bool:
+    """Is *line* the shell's continuation prompt?
+
+    Two forms count: the marker the protocol installs, and the shell's
+    own default.  Nothing else does — in particular, a line that merely
+    *looks* like a prompt (it ends with ``$``, ``#`` or ``%``) is
+    output, not a prompt, and a program is free to print one.
+    """
+    stripped = line.rstrip()
+    return stripped in (CONTINUATION_PROMPT, DEFAULT_CONTINUATION_PROMPT)
+
+
 #: A line that is nothing but a shell prompt.  The pane of a session
 #: whose shell waits for input ends with one; the pane of a session that
 #: runs something ends with the command's echo or with its output.
@@ -218,14 +246,14 @@ def looks_like_a_bare_prompt(line: str) -> bool:
     and a command that is running is exactly what must not be
     interrupted.
 
-    The default continuation prompt (``>``) counts on its own.  It is
-    not what the agent's own protocol produces — the protocol sets
-    ``PS2="$PS1"``, so a continuation looks exactly like a normal prompt
-    — but a shell that was stuck before the protocol ever ran shows this
-    one.
+    This is the *loose* question — "does this line look like a prompt".
+    It answers "is the shell back at a prompt" after an interrupt.  It
+    must not be used to decide "is the shell waiting for input": a
+    program's output can satisfy it, and a working command was
+    interrupted because of it.
     """
     stripped = line.rstrip()
-    if stripped == ">":
+    if stripped == DEFAULT_CONTINUATION_PROMPT:
         return True
     return bool(_BARE_PROMPT_RE.match(stripped))
 
@@ -351,9 +379,11 @@ def build_exec_block(command: str, begin_marker: str, ec_var: str, marker: str) 
       The bookkeeping therefore sits on that closing line, and the
       output follows it.
     * A continuation line is redrawn with ``PS2`` instead of ``PS1``.
-      ``PS2="$PS1"`` makes the redraw look exactly like the one the
-      command had without the group, so the caller's stdout does not
-      change.
+      ``PS2`` carries the agent's own marker, so a shell that waits for
+      the rest of a line is *visible* — the caller can tell it from a
+      program's output, which is what the old ``PS2="$PS1"`` could
+      not do.  The marker is cut out of the caller's output, so the
+      stdout does not change.
 
     Returns ``(block, grouped)``. ``grouped`` is False when the command
     contains a brace that bash would read as a group delimiter; such a
@@ -362,7 +392,7 @@ def build_exec_block(command: str, begin_marker: str, ec_var: str, marker: str) 
     """
     if command_can_be_grouped(command):
         block = (
-            f"printf '\\n{begin_marker}\\n'; PS2=\"$PS1\"\n"
+            f"printf '\\n{begin_marker}\\n'; PS2=\"{CONTINUATION_PROMPT} \"\n"
             "{\n"
             + command
             + "\n"
@@ -370,7 +400,7 @@ def build_exec_block(command: str, begin_marker: str, ec_var: str, marker: str) 
         )
         return block, True
     block = (
-        f"printf '\\n{begin_marker}\\n'\n"
+        f"printf '\\n{begin_marker}\\n'; PS2=\"{CONTINUATION_PROMPT} \"\n"
         + command
         + "\n"
         + f"{ec_var}=$?\n"

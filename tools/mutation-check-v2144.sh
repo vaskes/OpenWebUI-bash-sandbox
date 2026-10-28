@@ -134,19 +134,33 @@ mutate agent_api.py \
 
 echo "== a busy session is interrupted too =="
 mutate agent_api.py \
-    '    if not await _pane_is_at_a_prompt(name):
+    '    if not await _pane_is_waiting_for_input(name):
         return False' \
     '    if False:
         return False' \
     "$RULE::TestTheStuckShellIsFreed::test_a_busy_session_is_not_interrupted" \
     "a busy session is not interrupted"
 
-echo "== every line looks like a prompt =="
-mutate agent_core.py \
-    '    return bool(_BARE_PROMPT_RE.match(stripped))' \
+echo "== any line counts as a continuation prompt =="
+mutate agent_api.py \
+    '    return is_a_continuation_prompt(tail[-1])' \
     '    return True' \
-    "$RULE::TestTheStuckShellIsFreed::test_a_shell_running_a_compound_command_is_not_interrupted" \
-    "a running command is not mistaken for a prompt"
+    "$RULE::TestTheStuckShellIsFreed::test_a_running_command_whose_output_ends_with_a_dollar_is_not_interrupted" \
+    "a running command is not mistaken for a waiting shell"
+
+echo "== the interrupt is never checked for having worked =="
+mutate agent_api.py \
+    '    return looks_like_a_bare_prompt(tail[-1])' \
+    '    return True' \
+    "$RULE::TestTheStuckShellIsFreed::test_an_interrupt_that_frees_nothing_is_not_reported_as_a_reset" \
+    "an interrupt that frees nothing is not reported as a reset"
+
+echo "== the protocol stops installing the marker =="
+mutate agent_core.py \
+    '; PS2=\"{CONTINUATION_PROMPT} \"' \
+    '; PS2=\"$PS1\"' \
+    "$RULE::TestTheProtocolIsTheClaim::test_the_protocol_installs_the_marker" \
+    "the protocol installs the marker"
 
 echo "== the unit stops naming the env file =="
 mutate agent-stack.service.example \
