@@ -4,6 +4,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.3] - 2026-10-28
+
+The last two findings of the v2.14.2 review, closed on their own: the
+warning that tells the operator the privilege mode is on, and the
+mutation checks that nobody ran.
+
+### Fixed
+
+- **The warning about the privilege mode was a function in costume.**
+  It carried `@asynccontextmanager` and was called as a plain
+  function. The decorator makes a call hand back a context manager, and
+  the body ran only because the decorator's constructor called the
+  function on the way there — so the warning *did* print, but
+  `async with` on it raised `TypeError`, and a reader of the code could
+  not tell "it runs by accident" from "it never runs". The review
+  reported the opposite ("the warning is never printed"), on the
+  strength of a measurement taken on a machine without `sudo`: the
+  function returns early when there is no `sudo` to escalate to. The
+  decorator is gone, the function is a plain function, and it takes an
+  injectable status and mountinfo.
+
+### Added
+
+- **Tests for a promise that had none.** The documentation promises a
+  warning at start-up when `sudo` is present (`docs/SECURITY.md` §9,
+  `docs/CONFIGURATION.md`). No test covered it: the sibling function
+  was tested directly, so the path from the start-up to the log was
+  unpinned. The tests now pin the announcement, the setting that
+  blocks the escalation, the hollow root, the silence without `sudo`,
+  and the start-up's own call — the last one is what makes the rest
+  reachable.
+
+- **A CI job that runs the mutation checks.** They were run nowhere:
+  no CI job, no make target, not a word in the documentation. Four of
+  their patterns had already drifted away from the code, so their
+  mutations stopped applying, and the only way to find out was to run
+  the scripts by hand. They run in CI now — the family is named by a
+  glob, so a new script joins the job on its own — and `make mutation`
+  runs the same family locally.
+
+- **The privilege warning is checked against the shipped image.** The
+  CI already builds the agent with `sudo` in it and boots it, so the
+  job now looks for the announcement in the log of that container.
+
+### Verified
+
+- 11 mutations of the new tripwires, 11 red, 0 escaped.
+- 670 tests; the coverage gate measures the sources.
+- Live: an image built with `AGENT_ALLOW_SUDO=1` announces the mode
+  and the hollow root at start-up, and names the setting that blocks
+  the escalation when the kernel ignores the setuid bit.
+- The CI job caught a rotten tripwire on its first run — the
+  cancellation check had been catching its mutation by luck (the
+  mutation killed the handler *after* the test had made its
+  assertions). The cleanup is a function of its own now, and the
+  property is tested directly: three runs in a row, 24 of 24
+  mutations red.
+
 ## [2.14.2] - 2026-10-28
 
 A second review of the whole repository, checked against the code one
