@@ -248,3 +248,117 @@ class TestTheGate(_Base):
                 self.assertIsNone(command_would_stick("echo hello"))
             finally:
                 os.chdir(previous)
+
+
+class TestTheStuckShellIsFreed(_Base):
+    """A shell that waits for the rest of a command is interrupted."""
+
+    def test_a_stuck_shell_is_interrupted_and_the_answer_says_so(self) -> None:
+        double = _Double(pane=STUCK_PANE, runs=False)
+        result = self._exec("echo hi", timeout=1, double=double)
+        self.assertEqual(double.interrupts, 1, "the shell was not interrupted")
+        self.assertIn("waiting for the rest of an unfinished command", result["stderr"])
+        self.assertIn("has been reset", result["stderr"])
+        self.assertEqual(result["stdout"], "")
+
+    def test_a_busy_session_is_not_interrupted(self) -> None:
+        """A running command must not be killed by the heal."""
+        double = _Double(pane=BUSY_PANE, command="sleep", runs=False)
+        result = self._exec("echo hi", timeout=1, double=double)
+        self.assertEqual(double.interrupts, 0, "a running command was interrupted")
+        self.assertIn("the session is busy", result["stderr"])
+
+    def test_a_shell_running_a_compound_command_is_not_interrupted(self) -> None:
+        """tmux reports the shell for a compound command — the pane's last
+        line is what tells the two apart."""
+        pane = "ubuntu@host:/workspace$ while true; do sleep 1; done\nstill running"
+        double = _Double(pane=pane, command="bash", runs=False)
+        result = self._exec("echo hi", timeout=1, double=double)
+        self.assertEqual(double.interrupts, 0)
+        self.assertIn("the session is busy", result["stderr"])
+
+    def test_the_busy_refusal_names_the_way_out(self) -> None:
+        double = _Double(pane=BUSY_PANE, command="sleep", runs=False)
+        result = self._exec("echo hi", timeout=1, double=double)
+        self.assertIn("session_id", result["stderr"])
+        self.assertIn("the command did not start", result["stderr"])
+
+
+class TestTheStuckShellRecovers(unittest.TestCase):
+    """Against a real tmux: a stuck shell is freed and the session works.
+
+    The poison here is typed the way the agent's own protocol types it —
+    raw text into the pane — because the gate now refuses such a command
+    before it is typed.  The heal has to work for a shell that got stuck
+    by any other route, and this is the only way to have one.
+    """
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.mkdtemp(prefix="agent-stuck-")
+        self._tmux_tmpdir = os.environ.get("TMUX_TMPDIR")
+        private = os.path.join(self.tmpdir, "tmux")
+        os.makedirs(private, exist_ok=True)
+        os.environ["TMUX_TMPDIR"] = private
+        os.environ["AGENT_SESSIONS_FILE"] = os.path.join(self.tmpdir, "sessions.json")
+        os.environ["AGENT_WORKSPACE"] = self.tmpdir
+        os.environ["AGENT_TOKEN"] = "test-agent-token-xyz"
+        if "agent_api" in sys.modules:
+            del sys.modules["agent_api"]
+        import agent_api
+
+        self.agent_api = agent_api
+
+    def tearDown(self) -> None:
+        # The private server — and only the private server. tmux keeps its
+        # socket in $TMUX_TMPDIR, so a private directory is a private
+        # server.
+        subprocess.run(["tmux", "kill-server"], capture_output=True, check=False)
+        if self._tmux_tmpdir is None:
+            os.environ.pop("TMUX_TMPDIR", None)
+        else:
+            os.environ["TMUX_TMPDIR"] = self._tmux_tmpdir
+
+    def _exec(self, sid: str, command: str, timeout: int = 3) -> dict:
+        import asyncio
+
+        return asyncio.run(
+            self.agent_api.exec_cmd(
+                sid,
+                self.agent_api.ExecRequest(command=command, timeout=timeout),
+            )
+        )
+
+    def test_a_stuck_shell_is_freed_and_the_session_works_again(self) -> None:
+        sid = f"stuck-{uuid.uuid4().hex[:8]}"
+        import asyncio
+
+        asyncio.run(
+            self.agent_api.create_session(
+                self.agent_api.CreateSession(session_id=sid, cwd=self.tmpdir)
+            )
+        )
+        name = self.agent_api.tmux_name(sid)
+
+        # Make the shell wait for the rest of a command. The protocol sets
+        # PS2="$PS1", so a continuation looks exactly like a normal
+        # prompt — that is what the heal looks for.
+        for text in ('PS2="$PS1"', 'echo "unterminated'):
+            subprocess.run(["tmux", "send-keys", "-t", name, "-l", text], check=False)
+            subprocess.run(["tmux", "send-keys", "-t", name, "Enter"], check=False)
+        import time
+
+        time.sleep(0.5)
+
+        result = self._exec(sid, "echo alive", timeout=2)
+        self.assertIn("unfinished command", result["stderr"])
+        self.assertEqual(result["stdout"], "")
+
+        # And the session is usable again.
+        again = self._exec(sid, "echo alive", timeout=5)
+        self.assertFalse(again.get("timed_out"), again)
+        self.assertIn("alive", again["stdout"])
+        self.assertEqual(again["exit_code"], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
