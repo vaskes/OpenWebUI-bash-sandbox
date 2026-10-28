@@ -174,6 +174,9 @@ carried over from the review before it.
   sum is 10 + 11 + 10 + 9 + 12 + 24 + 11 + 14 = 101. A hand-written
   sum of hand-written numbers is a number nobody recomputes. This
   release carries 108 in total (101 + 7), measured the same way.
+  **Corrected in [2.14.6]: the count on v2.14.4 is 98, not 101.** The
+  fourteen mutations were counted on the v2.14.5 tree, where the
+  v2.14.4 script had already grown three more.
 
 ## [2.14.4] - 2026-10-28
 
