@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.7] - 2026-10-28
+
+### Removed
+
+- **`CODE_OF_CONDUCT.md`.** The repository carried a generic
+  community-conduct template, brought in with the initial scaffold
+  commit (`42ab676`). It was never part of this project's own
+  documentation, and it is gone.
+
+  Nothing is lost with it: `CONTRIBUTING.md` already states the
+  development setup, the mutation checks, the coding style, the commit
+  conventions, the pull-request flow, how to report a bug and where
+  security issues go, and `docs/SECURITY.md` carries the threat model.
+  That is what this project needs from a document like this, and it
+  was already there.
+
+  The GitHub tab that read the file disappears with it.
+
 ## [2.14.6] - 2026-10-28
 
 The third review of v2.14.5, and one correction to v2.14.5's own notes.
