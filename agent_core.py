@@ -220,15 +220,32 @@ DEFAULT_CONTINUATION_PROMPT = ">"
 
 
 def is_a_continuation_prompt(line: str) -> bool:
-    """Is *line* the shell's continuation prompt?
+    """Is *line* the continuation prompt the agent's protocol installs?
 
-    Two forms count: the marker the protocol installs, and the shell's
-    own default.  Nothing else does — in particular, a line that merely
-    *looks* like a prompt (it ends with ``$``, ``#`` or ``%``) is
-    output, not a prompt, and a program is free to print one.
+    Only the marker counts.  It is printed by nothing else, so "the
+    shell is waiting for the rest of the line" becomes something one can
+    *look at* instead of something one guesses from the shape of a line.
+
+    The shell's own default (``>``) is a different question, and it is
+    answered by :func:`is_a_default_continuation_prompt` — because a
+    program is free to print it.
     """
-    stripped = line.rstrip()
-    return stripped in (CONTINUATION_PROMPT, DEFAULT_CONTINUATION_PROMPT)
+    return line.rstrip() == CONTINUATION_PROMPT
+
+
+def is_a_default_continuation_prompt(line: str) -> bool:
+    """Is *line* the shell's *own* continuation prompt?
+
+    The default ``PS2`` of bash is ``>``, and a program can print it as
+    well.  So this only means "the shell is waiting for the rest of a
+    line" in a shell where the agent's protocol has never installed its
+    own marker: from that moment on, ``PS2`` is the agent's marker and a
+    bare ``>`` in the pane is a program's output.
+
+    The caller has to know which of the two shells it is looking at;
+    :func:`agent_api._note_the_protocol_ran` is what records it.
+    """
+    return line.rstrip() == DEFAULT_CONTINUATION_PROMPT
 
 
 #: A line that is nothing but a shell prompt.  The pane of a session

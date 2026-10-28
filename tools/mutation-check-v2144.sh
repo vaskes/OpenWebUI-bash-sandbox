@@ -79,7 +79,7 @@ mutate agent_api.py \
 
 echo "== a busy session is interrupted too =="
 mutate agent_api.py \
-    '    if not await _pane_is_waiting_for_input(name):
+    '    if not await _pane_is_waiting_for_input(name, protocol_ran=protocol_ran):
         return False' \
     '    if False:
         return False' \
@@ -88,8 +88,10 @@ mutate agent_api.py \
 
 echo "== any line counts as a continuation prompt =="
 mutate agent_api.py \
-    '    return is_a_continuation_prompt(tail[-1])' \
-    '    return True' \
+    '    if is_a_continuation_prompt(tail[-1]):
+        return True' \
+    '    if True:
+        return True' \
     "$RULE::TestTheStuckShellIsFreed::test_a_running_command_whose_output_ends_with_a_dollar_is_not_interrupted" \
     "a running command is not mistaken for a waiting shell"
 
