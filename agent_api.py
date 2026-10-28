@@ -95,6 +95,8 @@ from agent_core import (
     __version__,
     build_exec_block,
     command_would_stick,
+    is_a_shell_name,
+    looks_like_a_bare_prompt,
     new_marker_token,
     parse_capability_status,
     redact_secrets,
@@ -160,6 +162,10 @@ METRICS.counter("exec_timeouts_total", "Commands that ran out of time.")
 METRICS.counter(
     "exec_refused_total",
     "Commands refused before they were typed because they would stick the shell.",
+)
+METRICS.counter(
+    "exec_stuck_resets_total",
+    "Shells freed after they waited for the rest of an unfinished command.",
 )
 METRICS.gauge(
     "active_sessions",
@@ -946,6 +952,40 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
                 # The marker was never printed and the history did not
                 # overflow: the shell never got to the command. The pane
                 # belongs to whoever ran before — do not hand it over.
+                #
+                # Two states look exactly the same from here, and they
+                # need different answers:
+                #
+                #   * the shell is running another command — the session
+                #     is busy, and this command waits in the terminal's
+                #     input buffer;
+                #   * the shell is waiting for the rest of an unfinished
+                #     command — the session is stuck, and it stays stuck
+                #     until somebody interrupts the shell.
+                #
+                # A pane whose last line is nothing but a prompt is the
+                # second case: the shell is at a prompt, so nothing is
+                # running, and interrupting it cannot kill anybody's
+                # work. The first case shows the command's echo or its
+                # output as the last line, and is left alone.
+                if await _reset_a_stuck_shell(name):
+                    duration_ms = int((time.time() - start) * 1000)
+                    METRICS.inc("exec_timeouts_total")
+                    METRICS.inc("exec_stuck_resets_total")
+                    logger.warning(
+                        "exec.stuck_reset sid=%s duration_ms=%d cmd_len=%d cmd=%r",
+                        sid,
+                        duration_ms,
+                        len(body.command),
+                        cmd_preview,
+                    )
+                    return {
+                        "stdout": "",
+                        "stderr": _STUCK_NOTICE,
+                        "exit_code": None,
+                        "timed_out": True,
+                        "duration_ms": duration_ms,
+                    }
                 duration_ms = int((time.time() - start) * 1000)
                 METRICS.inc("exec_timeouts_total")
                 logger.warning(
@@ -1054,9 +1094,24 @@ _HEAD_LOST_NOTICE = (
 #: this command's stdout is a lie the caller cannot detect. A model that
 #: reads it quotes the other command's output as if it were its own.
 #:
+#: The notice names the way out. "The session is busy" on its own leaves
+#: the caller (a model, most of the time) with nothing to do but guess,
+#: and the guess it usually makes — retry the same session — lands on the
+#: same refusal.
 _BUSY_NOTICE = (
-    "the command did not start: the session is busy running another "
-    "command, so this one is queued and will run once the session is free"
+    "the command did not start: the session is busy running another command, "
+    "so this one is queued and will run once the session is free. To run it "
+    "now, use a different session_id."
+)
+
+#: Returned in ``stderr`` when the shell was waiting for the rest of an
+#: unfinished command and has been interrupted. The command did not run
+#: and cannot run: the shell had swallowed it.
+_STUCK_NOTICE = (
+    "the command did not start: the shell was waiting for the rest of an "
+    "unfinished command (an unterminated quote, an unclosed brace or an "
+    "unclosed here-document) and has been reset. The command was not run "
+    "— send it again."
 )
 
 
@@ -1144,6 +1199,58 @@ async def _capture_full_pane(name: str) -> str:
     """
     _, out, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", "-")
     return out
+
+
+async def _pane_tail(name: str, lines: int = 20) -> list[str]:
+    """The last non-empty lines of a pane.
+
+    Bounded on purpose: the question this answers — "is the shell at a
+    prompt?" — is about the end of the pane, and the whole scrollback is
+    a needless copy.
+    """
+    rc, out, _ = await _tmux("capture-pane", "-t", name, "-p", "-S", f"-{lines}")
+    if rc != 0:
+        return []
+    return [line for line in out.splitlines() if line.strip()]
+
+
+async def _pane_is_at_a_prompt(name: str) -> bool:
+    """Is the shell sitting at a prompt, with nothing running?
+
+    Two things have to hold.  tmux must report the *shell* as the
+    foreground process — anything else means a command is running, and an
+    interrupt would kill it.  And the pane must end with nothing but a
+    prompt — the pane of a session that runs something ends with the
+    command's echo or with its output.
+
+    The two together are what makes it safe to interrupt the shell: a
+    running command must not be killed by accident.
+    """
+    rc, current, _ = await _tmux("display-message", "-p", "-t", name, "#{pane_current_command}")
+    if rc != 0 or not is_a_shell_name(current or ""):
+        return False
+    tail = await _pane_tail(name)
+    if not tail:
+        return False
+    return looks_like_a_bare_prompt(tail[-1])
+
+
+async def _reset_a_stuck_shell(name: str) -> bool:
+    """Free a shell that waits for the rest of an unfinished command.
+
+    The shell is interrupted, which makes it forget the line it is
+    reading. That is only safe when nothing is running, and the caller
+    checks that first — the pane must end with nothing but a prompt.
+
+    Returns True when the shell is at a prompt afterwards: the session
+    is usable again. Returns False when the shell was busy after all, and
+    nothing was touched.
+    """
+    if not await _pane_is_at_a_prompt(name):
+        return False
+    await _tmux("send-keys", "-t", name, "C-c")
+    await asyncio.sleep(0.2)
+    return await _pane_is_at_a_prompt(name)
 
 
 async def _scrollback_is_full(name: str) -> bool:
