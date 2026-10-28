@@ -86,7 +86,7 @@ services:
     environment:
       - AGENT_WORKSPACE=/workspace
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
-      - AGENT_LOG_LEVEL=INFO
+      - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-INFO}
       # How much text one command may return. 32k..1024k.
       # The pane scrollback is derived from it, so the limit is
       # honest: an output that fits comes back whole, every time.
@@ -129,6 +129,9 @@ services:
     environment:
       - SANDBOX_URL=http://sandbox-agent:8082
       - OPENAPI_PROXY_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
+      # The token the proxy uses to call sandbox-agent. Empty = the same
+      # token as above, which is the usual single-trust-boundary case.
+      - OPENAPI_PROXY_UPSTREAM_TOKEN=${OPENAPI_PROXY_UPSTREAM_TOKEN:-}
       - OPENAPI_PROXY_CORS_ORIGINS=${OPENAPI_PROXY_CORS_ORIGINS:-}
       - OPENAPI_PROXY_SSH_ALLOWLIST=${OPENAPI_PROXY_SSH_ALLOWLIST:-}
       - OPENAPI_PROXY_RATE_LIMIT_RPM=${OPENAPI_PROXY_RATE_LIMIT_RPM:-120}
