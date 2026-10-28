@@ -17,57 +17,11 @@
 set -u
 cd "$(dirname "$0")/.."
 
-PY="${PY:-}"
-if [ -z "$PY" ]; then
-    for candidate in /workspace/.venv-owbs/bin/python3 python3; do
-        if command -v "$candidate" >/dev/null 2>&1 \
-            && "$candidate" -c "import pytest" >/dev/null 2>&1; then
-            PY="$candidate"
-            break
-        fi
-    done
-fi
-if [ -z "$PY" ]; then
-    echo "no python with pytest found — set PY=/path/to/python" >&2
-    exit 2
-fi
+. "$(dirname "$0")/mutation-lib.sh"
+mutation_require_python
 
 PASS=0
 FAIL=0
-
-mutate() {
-    # mutate <file> <python-expr-old> <python-expr-new> <test-selector> <label>
-    local file="$1" old="$2" new="$3" selector="$4" label="$5"
-    local backup
-    backup="$(mktemp -p /tmp mut.XXXXXX)"
-    cp "$file" "$backup"
-    python3 - "$file" "$old" "$new" <<'PY'
-import sys
-path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
-text = open(path, encoding="utf-8").read()
-if old not in text:
-    sys.exit(f"PATTERN NOT FOUND in {path}: {old!r}")
-open(path, "w", encoding="utf-8").write(text.replace(old, new, 1))
-PY
-    if [ $? -ne 0 ]; then
-        echo "SKIP  $label (pattern not found — mutation did not apply)"
-        cp "$backup" "$file"
-        rm -f "$backup"
-        FAIL=$((FAIL+1))
-        return
-    fi
-    if $PY -m pytest "$selector" -q >/tmp/mut.out 2>&1; then
-        echo "FAIL  $label — the test stayed GREEN under the mutation"
-        cp "$backup" "$file"
-        rm -f "$backup"
-        FAIL=$((FAIL+1))
-    else
-        echo "OK    $label — the test went red"
-        cp "$backup" "$file"
-        rm -f "$backup"
-        PASS=$((PASS+1))
-    fi
-}
 
 BUSY="tests/test_busy_session_v2131.py::TestTheBusySessionLeak"
 
