@@ -80,15 +80,33 @@ jobs:
       # A PATH without tmux, built from the runner's own binaries: the
       # tests ask for tmux by name, and a missing binary is what a
       # machine without tmux looks like.
+      #
+      # The farm is built from **the whole PATH** and the PATH is then
+      # **replaced**, not prepended.  The first version of this job
+      # built the farm out of /usr/bin and ran the suite as
+      # `PATH=/tmp/no-tmux:$PATH` — and a prepended PATH keeps the
+      # original one, /usr/bin included, tmux included.  Measured the
+      # way CI runs it:
+      #
+      #     $ PATH=/tmp/no-tmux:$PATH command -v tmux
+      #     /usr/bin/tmux
+      #
+      # So the job ran the ordinary suite, with tmux, and was green for
+      # the wrong reason: a check that cannot be made red is a
+      # decoration, and this one looked like a green job.
       - name: Build a PATH without tmux
         run: |
           mkdir -p /tmp/no-tmux
-          for f in /usr/bin/*; do
-            [ "$(basename "$f")" = "tmux" ] && continue
-            ln -sf "$f" /tmp/no-tmux/
+          for d in $(echo "$PATH" | tr ':' ' '); do
+            [ -d "$d" ] || continue
+            for f in "$d"/*; do
+              b=$(basename "$f")
+              [ "$b" = "tmux" ] && continue
+              [ -e "/tmp/no-tmux/$b" ] || ln -sf "$f" "/tmp/no-tmux/$b"
+            done
           done
       - name: Run the suite without tmux
-        run: PATH=/tmp/no-tmux:$PATH pytest -q tests/
+        run: PATH=/tmp/no-tmux pytest -q tests/
 
   sast:
     name: SAST (ruff B-rules)
