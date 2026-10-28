@@ -24,6 +24,7 @@ would go red if the finding came back.
 | 3 (v2.14.5) | T1 | the CI job "without tmux" ran the suite *with* tmux | v2.14.6 | `tests/test_ci_without_tmux_v2146.py` |
 | 3 | T2 | the protocol's marker reached the caller's stdout | v2.14.6 | `tests/test_stdout_marker_v2146.py` |
 | 3 | T3 | the limit was checked after the file was opened | v2.14.6 | `tests/test_file_door_order_v2146.py` |
+| 4 (v2.14.7) | U1 | a mutation script counted a catch for a test that never ran | v2.14.8 | `tests/test_mutation_scripts_run_v2148.py` |
 
 ## How to use it
 
