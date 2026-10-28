@@ -1418,11 +1418,37 @@ def _strip_continuation_prompts(region: str) -> str:
     marker is there to make the waiting state *visible*; it is still
     the shell's output, and the caller never saw it before, so it is
     cut away like the rest of the protocol's bookkeeping.
+
+    Two shapes reach the caller:
+
+    * the **bare** marker — the shell is waiting for the rest of a line
+      and has printed nothing else.  This is the case the marker was
+      installed for, and the line is cut;
+    * the marker **in front of the redrawn line** — every line of a
+      multi-line command is a continuation, so every one of them comes
+      back with the marker in front of it.  The line carries the text
+      of the command the caller has just sent, and the caller knows it
+      already; keeping the line would put a protocol token in front of
+      the caller's own command in the model's context.
+
+    So the marker is cut and the **redraw stays**: the stdout contract
+    includes the shell's echo of the command line, and the echo is the
+    caller's own text.  What the caller does not get is the protocol's
+    token in front of it.
     """
     if CONTINUATION_PROMPT not in region:
         return region
     lines = region.split("\n")
-    kept = [line for line in lines if line.rstrip() != CONTINUATION_PROMPT]
+    kept: list[str] = []
+    for line in lines:
+        if line.startswith(CONTINUATION_PROMPT):
+            rest = line[len(CONTINUATION_PROMPT) :]
+            if not rest.strip():
+                # The bare marker: the shell is waiting, and the line
+                # is nothing but protocol.
+                continue
+            line = rest
+        kept.append(line)
     return "\n".join(kept)
 
 
@@ -1647,6 +1673,19 @@ def _open_inside_workspace(resolved: str) -> int:
         os.close(dir_fd)
 
 
+def _path_size(name: str) -> int | None:
+    """The size the *path* reports, or ``None`` when it cannot be read.
+
+    Used for the policy check only.  The size the answer promises
+    always comes from the descriptor the bytes are read from — that is
+    what makes the answer and the body agree.
+    """
+    try:
+        return os.stat(name).st_size
+    except OSError:
+        return None
+
+
 def _open_for_download(name: str):
     """Open the file for reading, turning a refusal into a status code.
 
@@ -1773,6 +1812,22 @@ async def download_file(
     # The open happens first, then the measurement, and both are before
     # any header goes out: a file the agent cannot read is still a 403
     # the client can act on.
+    # The limit is a *policy*, and a policy is checked before the file
+    # is opened: a file over the limit is refused with 413 whether or
+    # not the agent could read it.  The size here is the one the path
+    # reports — a policy does not have to be exact to the byte, and
+    # checking it first is what keeps "no permission" and "too big"
+    # from being confused for one another.
+    policy_size = _path_size(target)
+    if BINARY_LIMIT_BYTES and policy_size is not None and policy_size > BINARY_LIMIT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"file is {policy_size} bytes, over the binary limit of "
+                f"{BINARY_LIMIT_BYTES} bytes"
+            ),
+        )
+
     handle = _open_for_download(target)
     try:
         size = os.fstat(handle.fileno()).st_size
@@ -1781,19 +1836,31 @@ async def download_file(
         raise
 
     if BINARY_LIMIT_BYTES and size > BINARY_LIMIT_BYTES:
+        # The file grew past the limit between the policy check and the
+        # open. The limit still applies, and the answer names the size
+        # the bytes would have had.
         handle.close()
         raise HTTPException(
             status_code=413,
             detail=(f"file is {size} bytes, over the binary limit of {BINARY_LIMIT_BYTES} bytes"),
         )
 
-    start = 0
-    length = size
-    status_code = 200
-    range_header = request.headers.get("range")
-    if range_header:
-        start, length = _parse_byte_range(range_header, size)
-        status_code = 206
+    try:
+        start = 0
+        length = size
+        status_code = 200
+        range_header = request.headers.get("range")
+        if range_header:
+            start, length = _parse_byte_range(range_header, size)
+            status_code = 206
+    except Exception:
+        # An unsatisfiable range is a 416, and the descriptor opened
+        # above is not handed to the response — so it has to be closed
+        # here.  CPython would close it when the frame unwound, but
+        # "the file is closed on every path" is a property, not a
+        # detail of the garbage collector.
+        handle.close()
+        raise
 
     file_name = os.path.basename(target)
     headers = {
