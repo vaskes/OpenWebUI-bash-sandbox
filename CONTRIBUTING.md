@@ -131,7 +131,29 @@ chore(deps): bump fastapi to 0.118
 2. Make your change, add tests for any new pure-function logic.
 3. `make test lint format` locally — all three must pass.
 4. Open a PR with a one-line summary and link to any issue it closes.
-5. Wait for a review. The maintainer merges on approval.
+5. Wait for the checks. The maintainer merges when they are green.
+
+### `main` is protected
+
+`main` is a **protected branch**, and the rules are enforced by GitHub
+rather than by good intentions:
+
+| rule | what it means |
+|------|---------------|
+| force pushes are refused | history on `main` cannot be rewritten |
+| deletion is refused | `main` cannot be deleted |
+| the history must be linear | no merge commits |
+| thirteen checks must be green before a merge | the four Python versions, the linters, the mutation checks, the deploy, the privilege mode, the secret scan and the two CodeQL analyses |
+| the branch must be up to date before merging | `strict` — a green run on an old commit is not enough |
+| conversations must be resolved | no merging over an open review thread |
+
+The checks are the gate, so a PR that is green is mergeable — there is
+no separate human approval to wait for. The maintainer merges.
+
+The maintainer's own releases do not go through a PR: they are pushed
+to `main` directly and tagged there, because the tag has to land on
+the commit that carries the release's changelog section, and the
+release commit is the one the checks ran on.
 
 ## Reporting bugs
 
