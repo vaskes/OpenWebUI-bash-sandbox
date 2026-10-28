@@ -255,6 +255,31 @@ WORKSPACE_REAL = _resolve_workspace_root()
 WORKSPACE_PREFIX = WORKSPACE_REAL if WORKSPACE_REAL.endswith(os.sep) else WORKSPACE_REAL + os.sep
 
 
+def _persisted_cwd(sid: str) -> str | None:
+    """The directory a known session had, if it is still usable.
+
+    A session that is known but not alive — the container restarted, or
+    the pane died — comes back in the directory it had.  The lifespan
+    handler promises exactly that ("the auto-create path recreates a
+    tmux backend ... using the persisted cwd"), and the promise was not
+    kept: the session came back in the workspace root, and the registry
+    recorded the root as if that were where the session had always
+    been.  A caller that had ``cd``-ed somewhere and came back to a
+    dead session found its working directory silently changed.
+
+    A directory that is gone (or is not inside the workspace any more)
+    is not a directory to come back to: the session starts in the
+    workspace root instead.
+    """
+    remembered = SESSIONS.get(sid, {}).get("cwd")
+    if not remembered:
+        return None
+    try:
+        return _safe_cwd(remembered)
+    except HTTPException:
+        return None
+
+
 def _safe_cwd(candidate: str) -> str:
     """Resolve symlinks and confirm the path is rooted at the workspace.
 
@@ -709,7 +734,7 @@ async def create_session(body: CreateSession) -> dict[str, Any]:
             "existed": True,
             "cwd": SESSIONS.get(sid, {}).get("cwd"),
         }
-    cwd = requested or WORKSPACE_REAL
+    cwd = requested or _persisted_cwd(sid) or WORKSPACE_REAL
     rc, _, err = 0, "", ""
     for _attempt in range(3):
         rc, _, err = await _tmux(
@@ -856,8 +881,11 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
 
     if not await tmux_session_exists(name):
         # Auto-create — this is what makes the API forgiving for clients that
-        # don't explicitly create a session first.
-        await create_session(CreateSession(session_id=sid, cwd=WORKSPACE_REAL))
+        # don't explicitly create a session first.  No directory is named
+        # here: a session that is known comes back in the directory it
+        # had, and a session that is not known starts in the workspace
+        # root.
+        await create_session(CreateSession(session_id=sid))
 
     marker = f"__AGENT_DONE_{new_marker_token()}__"
     # A second marker, printed BEFORE the command runs. It is the proof
