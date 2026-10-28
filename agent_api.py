@@ -1823,8 +1823,7 @@ async def download_file(
         raise HTTPException(
             status_code=413,
             detail=(
-                f"file is {policy_size} bytes, over the binary limit of "
-                f"{BINARY_LIMIT_BYTES} bytes"
+                f"file is {policy_size} bytes, over the binary limit of {BINARY_LIMIT_BYTES} bytes"
             ),
         )
 
