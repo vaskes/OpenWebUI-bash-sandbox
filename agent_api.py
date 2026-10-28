@@ -1428,8 +1428,8 @@ def _strip_continuation_prompts(region: str) -> str:
       multi-line command is a continuation, so every one of them comes
       back with the marker in front of it.  The line carries the text
       of the command the caller has just sent, and the caller knows it
-      already; keeping the line would put a protocol token in front of
-      the caller's own command in the model's context.
+      already; keeping the marker would put a protocol token in front
+      of the caller's own command in the model's context.
 
     So the marker is cut and the **redraw stays**: the stdout contract
     includes the shell's echo of the command line, and the echo is the
