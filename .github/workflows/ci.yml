@@ -8,8 +8,13 @@ permissions:
   contents: read
 
 on:
+  # Every branch, not only `main`. The pull request is where the runs are
+  # usually collected, but it is not what makes them binding: the gate is
+  # the checks themselves. A branch that runs the whole gate on its own
+  # push can be landed as a fast-forward once they are green — without a
+  # pull request to carry them, and without the GitHub API to open one.
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
 
