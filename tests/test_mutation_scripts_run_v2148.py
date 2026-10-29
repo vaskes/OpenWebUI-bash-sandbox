@@ -224,5 +224,84 @@ class TestTheMutationScriptsDoNotLie(unittest.TestCase):
                 )
 
 
+class TestTheVerdictComesFromTheExitCode(unittest.TestCase):
+    """A run that failed is a catch, whatever its output happens to say.
+
+    Measured on 2026-10-29: the library decided whether a test had run by
+    grepping pytest's whole output for "no tests ran", "ERROR: not found"
+    and friends. A failing test prints the assertion's message, and that
+    message may quote a file that contains one of those phrases. The
+    library quotes itself — so the mutation that renamed a function made
+    the test print the library's own source, with "ERROR: not found"
+    inside it, and the script called a caught mutation INVALID. The three
+    real failures in that run were reported as "the test did not run".
+
+    pytest's exit code is not quotable: 0 means everything passed, 1 means
+    a test ran and failed, and every other code means it did not run.
+    """
+
+    def _run_the_library(self, body: str) -> str:
+        """Run the library's verdict function over a fake pytest."""
+        import tempfile  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "case.sh"
+            script.write_text(body, encoding="utf-8")
+            result = subprocess.run(
+                ["bash", str(script)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def _case(self, exit_code: int, output: str = "") -> str:
+        return (
+            "set -u\n"
+            f'. "{LIB}"\n'
+            "PASS=0\n"
+            "FAIL=0\n"
+            f"rc={exit_code}\n"
+            f"out=$(mktemp)\n"
+            f"printf '%s' {output!r} > \"$out\"\n"
+            'if mutation_run_was_invalid "$rc"; then\n'
+            "  echo INVALID\n"
+            'elif [ "$rc" -eq 1 ]; then\n'
+            "  echo CAUGHT\n"
+            "else\n"
+            "  echo GREEN\n"
+            "fi\n"
+        )
+
+    def test_a_failure_is_a_catch(self) -> None:
+        self.assertEqual(self._run_the_library(self._case(1)), "CAUGHT")
+
+    def test_a_failure_whose_output_quotes_the_phrase_is_still_a_catch(self) -> None:
+        """The exact case that was measured: the output says "ERROR: not found"."""
+        verdict = self._run_the_library(self._case(1, "ERROR: not found\nno tests ran in 0.01s\n"))
+        self.assertEqual(
+            verdict,
+            "CAUGHT",
+            "a run that failed was called INVALID because its output quoted a phrase",
+        )
+
+    def test_a_pass_is_green(self) -> None:
+        self.assertEqual(self._run_the_library(self._case(0)), "GREEN")
+
+    def test_nothing_collected_is_invalid(self) -> None:
+        self.assertEqual(self._run_the_library(self._case(5)), "INVALID")
+
+    def test_a_usage_error_is_invalid(self) -> None:
+        self.assertEqual(self._run_the_library(self._case(4)), "INVALID")
+
+    def test_a_collection_error_is_invalid(self) -> None:
+        self.assertEqual(self._run_the_library(self._case(2)), "INVALID")
+
+    def test_an_internal_error_is_invalid(self) -> None:
+        self.assertEqual(self._run_the_library(self._case(3)), "INVALID")
+
+
 if __name__ == "__main__":
     unittest.main()
