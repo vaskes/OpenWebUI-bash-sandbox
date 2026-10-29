@@ -10,7 +10,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 901](https://img.shields.io/badge/tests-901_total-brightgreen)](tests/)
+[![Tests: 926](https://img.shields.io/badge/tests-926_total-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -71,7 +71,7 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 - ✅ **Singleton HTTP client** — no per-request TCP handshake
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **901 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **926 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -238,6 +238,7 @@ Install them with `pip install -r requirements-dev.txt`. See
 | GET    | `/sessions/{id}/output?lines=N`   | Alias of `/capture`                    |
 | GET    | `/files/meta?path=P`              | Size/mtime/name of a workspace file   |
 | GET    | `/files?path=P`                   | The file's **raw bytes** (no base64)   |
+| POST   | `/files?path=P`                   | **Put a file INTO the sandbox** (raw body) |
 | DELETE | `/files?path=P`                   | Remove a delivered file from the sandbox |
 | GET    | `/metrics`                        | Prometheus exposition (bearer token)   |
 | POST   | `/mcp`                            | **MCP endpoint** — the same tools in the MCP protocol |
@@ -255,6 +256,7 @@ Install them with `pip install -r requirements-dev.txt`. See
 | POST   | `/shell_exec`    | Alias of `/bash`                                        |
 | GET    | `/files/meta?path=P` | Size/mtime/name of a workspace file (streamed)       |
 | GET    | `/files?path=P`  | The file's **raw bytes** (streamed, no base64)          |
+| POST   | `/files?path=P`  | **Put a file INTO the sandbox** (raw body)             |
 | DELETE | `/files?path=P`  | Remove a delivered file from the sandbox               |
 | GET    | `/metrics`       | Prometheus exposition (auth required)                   |
 | WS     | `/ws` (token via `Sec-WebSocket-Protocol: bearer.<token>` header) | Experimental terminal (per-connection session) |

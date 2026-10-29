@@ -2,11 +2,11 @@
 
 **For:** the agent that maintains the bot (`vaskes/llama.cpp_telegram`).
 **From:** the sandbox side (`vaskes/OpenWebUI-bash-sandbox`).
-**Code against:** sandbox tag **`v2.14.11`** (the contract below was written
+**Code against:** sandbox tag **`v2.15.0`** (the contract below was written
 against `v2.7.0`; §6 lists what changed since, and the status-code table
 in §3 is the current one).
 **Written:** 2026-10-25. **Status codes last verified:** 2026-10-29 against
-`v2.14.11`.
+`v2.15.0`.
 
 This is the contract between the two halves of the system. Everything in
 it is measured or verified — the numbers are not aspirations, they are
@@ -113,6 +113,7 @@ stack), bearer token required (`OPENAPI_PROXY_TOKEN` / `AGENT_TOKEN`):
 | `GET` | `/files/meta?path=P` | JSON: `name`, `path`, `size`, `mtime`, `mime`, `limit` |
 | `GET` | `/files?path=P` | the file's **raw bytes**; honours a single `Range` header (206 + `Content-Range`) |
 | `DELETE` | `/files?path=P` | remove the file from the sandbox (204; 404 if there was nothing to remove) |
+| `POST` | `/files?path=P` | **put a file INTO the sandbox**: the body is the file's raw bytes |
 
 The path is resolved inside the sandbox workspace. A path outside the
 workspace is a 400, a directory is a 400. Since **v2.14.1** the door no
@@ -302,7 +303,7 @@ Then, in the bot:
 The sandbox side has its own checks; you can lean on them:
 
 ```bash
-git clone --branch v2.14.11 https://github.com/vaskes/OpenWebUI-bash-sandbox.git
+git clone --branch v2.15.0 https://github.com/vaskes/OpenWebUI-bash-sandbox.git
 cd OpenWebUI-bash-sandbox && python3 -m unittest discover -s tests
 ```
 
@@ -317,7 +318,7 @@ purges the file and checks that it is really gone from the workspace.
 
 | Question | Answer |
 |----------|--------|
-| Which sandbox version | tag **`v2.14.11`** (`git checkout v2.14.11`) |
+| Which sandbox version | tag **`v2.15.0`** (`git checkout v2.15.0`) |
 | Endpoint list | `README.md` → "API quick reference" (kept honest by a tripwire) |
 | The delivery contract | `README.md` → "Moving files out of the sandbox" |
 | The stdout contract | `README.md` → "Reading command output"; `agent_api.py` docstring |
