@@ -39,8 +39,9 @@ services:
     # No host port — reachable only from openapi-proxy on the bridge.
     expose:
       - "8082"
-    # Non-root with an explicit UID so bind-mount ownership on the host
-    # is predictable. The host workspace must be writable by uid 1000.
+    # Non-root with an explicit UID. The workspace is a tmpfs owned by
+    # root with mode 1777, so uid 1000 writes into it without any host
+    # directory having to be chowned for it.
     user: "1000:1000"
     working_dir: /workspace
     mem_limit: 4g
@@ -74,8 +75,34 @@ services:
     tmpfs:
       - /tmp:size=512m,mode=1777
       - /run:size=64m,mode=755
+      # THE WORKSPACE IS A TMPFS INSIDE THE CONTAINER, WITH A CEILING.
+      #
+      # It used to be a bind of /opt/telegrambot/sandbox-workspace, and
+      # that made the host's own partition the sandbox's scratchpad. The
+      # agent reached it with `dd` and ate the operator's disk: the
+      # partition it filled was the one the whole host lives on
+      # (measured 2026-10-29: nvme0n1p4, 1.8 T, 94 % used, 106 G free).
+      # A bind is the one writable surface that reaches past the
+      # container, and an unbounded one is a disk-filler with a shell in
+      # front of it.
+      #
+      # AGENT_WORKSPACE_SIZE is the whole ceiling — the number of bytes
+      # the sandbox may occupy. When it is reached the write fails with
+      # ENOSPC inside the container, and the host's disk is none the
+      # wiser. The cost is honest and worth naming: the workspace is
+      # RAM, and it does not survive a container recreate.
+      - /workspace:size=${AGENT_WORKSPACE_SIZE:-2g},mode=1777
+      # The download caches are tmpfs for the same reason. A named volume
+      # is a directory on the host's disk, and a writable one is a hole
+      # in exactly the bound this stack claims to have.
+      - /var/cache/apt:size=256m,mode=1777
+      - /home/agent/.cache/pip:size=128m,mode=1777
     volumes:
-      - /opt/telegrambot/sandbox-workspace:/workspace
+      # The only host path the agent sees is the SSH key directory, and
+      # it is read-only — and empty on purpose. A read-only bind stays
+      # read-only even for a root command inside the container:
+      # remounting it needs a capability (CAP_SYS_ADMIN) the container
+      # does not have.
       - /opt/telegrambot/ssh-keys:/home/agent/.ssh:ro
       # NOTE: there is deliberately NO volume mounted at /home/agent.
       # The application code lives there (WORKDIR is /home/agent so the
@@ -86,8 +113,6 @@ services:
       # mounted, a redeploy after any code change serves the old module.
       # The writable paths the agent actually needs are mounted separately
       # below, so nothing is lost by leaving /home/agent image-owned.
-      - tb-sandbox-apt:/var/cache/apt:rw
-      - tb-sandbox-pip:/home/agent/.cache/pip:rw
     environment:
       - AGENT_WORKSPACE=/workspace
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
@@ -183,10 +208,6 @@ services:
       timeout: 3s
       retries: 3
       start_period: 15s
-
-volumes:
-  tb-sandbox-apt:
-  tb-sandbox-pip:
 
 networks:
   tb-net:

@@ -45,9 +45,13 @@ services:
     tmpfs:
       - /tmp:size=256m,mode=1777
       - /run:size=64m,mode=755
-    # Named volume, not a host bind-mount: CI has no host workspace to own.
-    # This is the only writable path the agent needs.
-    #
+      # The workspace is a tmpfs with a ceiling, exactly as in the
+      # shipped stacks: a named volume is a directory on the host's
+      # disk, and a writable one is a hole in the bound this stack
+      # claims to have.
+      - /workspace:size=${AGENT_WORKSPACE_SIZE:-1g},mode=1777
+      - /var/cache/apt:size=128m,mode=1777
+      - /home/agent/.cache/pip:size=64m,mode=1777
     # NOTE: there is deliberately NO volume mounted at /home/agent. The
     # application code lives there (WORKDIR is /home/agent so the import
     # path resolves), and Docker seeds a named volume from the image on
@@ -55,8 +59,11 @@ services:
     # shadows the code with the copy from the first run: on a fresh CI
     # volume the two coincide and nobody notices, but any stack that is
     # rebuilt and restarted keeps running its first-deploy code.
-    volumes:
-      - ci-agent-workspace:/workspace
+    #
+    # There are no volumes at all here: every path the CI agent may
+    # write is a tmpfs with a ceiling, and the CI job needs no host
+    # directory and no SSH key.
+    volumes: []
     environment:
       - AGENT_WORKSPACE=/workspace
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
@@ -124,9 +131,6 @@ services:
       timeout: 3s
       retries: 12
       start_period: 10s
-
-volumes:
-  ci-agent-workspace:
 
 networks:
   ci-net:
