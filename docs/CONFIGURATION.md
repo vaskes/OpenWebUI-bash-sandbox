@@ -112,14 +112,54 @@ The budget is **not** a context-overflow guard. How much of a tool result
 fits into the model's context is the client's business — the bot that talks
 to this agent already caps tool results far lower than 512k.
 
+### `AGENT_WORKSPACE_SIZE`
+
+The ceiling on the sandbox's own storage. It is the size of the tmpfs
+that carries `/workspace`, and it is the whole bound: the sandbox cannot
+write more than this, and when it tries, the write fails with `ENOSPC`
+*inside the container*.
+
+Default: `1g` (`2g` in the production stack).
+
+**The workspace is a tmpfs inside the container, not a directory on the
+host.** That is not a preference, it is the difference between a
+scratchpad and a disk-filler with a shell in front of it. The workspace
+used to be a bind-mount of `/opt/agent-workspace`, which made the host's
+own partition the sandbox's scratchpad: `dd if=/dev/zero of=/workspace/x`
+filled the operator's disk, not the container's. Measured on the
+production host before the change: the bind pointed at the same ext4
+partition the whole host lives on (`nvme0n1p4`, 1.8 T, 94 % used, 106 G
+free) — the one class of damage that a container reset cannot undo.
+
+Two rules come with the number:
+
+* **Keep it at or above `AGENT_BINARY_LIMIT`.** The file door accepts a
+  file up to the binary limit and writes it into the workspace; a
+  workspace smaller than the policy would refuse a file the door had
+  already promised to accept.
+* **The tmpfs is RAM, so the size is charged against `mem_limit`.** The
+  sum of all the tmpfs mounts has to stay below the container's memory
+  limit, or the container is killed by the OOM killer before its own
+  ceiling is reached. The shipped stacks are sized to fit: 1.75 GiB of
+  tmpfs against a 2 GiB limit in the default stack, 3 GiB against 4 GiB
+  in the production stack.
+
+The price of the bound is honest and worth naming: the workspace is
+RAM, and it does not survive a container recreate. A file the model
+wrote is gone when the container is replaced, and so is the session
+registry (`/workspace/.agent-sessions.json`) — a fresh container starts
+with no remembered sessions, which is the same state a first deploy
+has. If a file has to outlive the container, it has to leave through the
+file door, not through the workspace.
+
 ### Filesystem layout inside the container
 
 | Path                | Source                                  | Writable? |
 |---------------------|-----------------------------------------|-----------|
-| `/workspace`        | bind-mount `/opt/agent-workspace`       | yes       |
+| `/workspace`        | tmpfs inside the container, size `AGENT_WORKSPACE_SIZE` | yes (and capped) |
 | `/home/agent`       | the image itself (the code lives there)  | no — the root filesystem is read-only; **never** mount a volume here either |
-| `/var/cache/apt`    | named volume `sandbox-agent-apt`        | yes (the download cache only) |
-| `/home/agent/.cache/pip`  | named volume `sandbox-agent-pip` | yes       |
+| `/var/cache/apt`    | tmpfs (`128m` / `256m`)                 | yes (the download cache only) |
+| `/home/agent/.cache/pip`  | tmpfs (`64m` / `128m`)           | yes       |
 | `/opt/sandbox/`     | baked into image                        | no        |
 | `/home/agent/.ssh`  | bind-mount `/opt/agent-workspace/.ssh` (read-only) | no |
 | `/tmp`              | container tmpfs                         | yes (ephemeral) |
@@ -321,9 +361,13 @@ lands on — are in the README, under "Monitoring".
 
 | Name                  | Mounted at                   | Purpose                              |
 |-----------------------|------------------------------|--------------------------------------|
-| `sandbox-agent-apt`   | `/var/cache/apt`             | apt download cache                   |
-| `sandbox-agent-pip`   | `/home/agent/.cache/pip`     | pip download cache                   |
 | `open-webui-data`     | `/app/backend/data`          | Open WebUI's SQLite DB (chats, users, settings) |
+
+The **agent has no named volume at all**. Every path the sandbox may
+write is a tmpfs mount with a ceiling, and that is deliberate: a named
+volume is a directory on the host's disk, and a writable one is a hole
+in exactly the bound the sandbox claims to have. The apt and pip
+caches were volumes until v2.16.0; they are tmpfs now.
 
 The Open WebUI DB **must not** be bind-mounted into `/workspace` — that
 would let the LLM do `rm -rf /workspace/.open-webui-data` and wipe the
@@ -335,8 +379,7 @@ resolves), and Docker seeds a named volume from the image on first use
 and never re-syncs it. A volume at that path therefore shadows the code
 with the copy from the first run: every later image rebuild becomes a
 no-op, the repository moves and the container does not. That is exactly
-what the production stack did until v2.5.0. Mount a sub-path if you need
-to persist something — `/home/agent/.cache/pip` is the one that matters.
+what the production stack did until v2.5.0.
 
 Delete these with `docker volume rm <name>` to start fresh.
 
@@ -344,8 +387,13 @@ Delete these with `docker volume rm <name>` to start fresh.
 
 | Host path                              | Container path        | Mode  | Purpose                        |
 |----------------------------------------|-----------------------|-------|--------------------------------|
-| `/opt/agent-workspace`                 | `/workspace`          | rw    | Main working dir               |
 | `/opt/agent-workspace/.ssh`            | `/home/agent/.ssh`    | ro    | SSH keys for outbound ssh      |
+
+The workspace is **not** in this table: it is a tmpfs inside the
+container (`AGENT_WORKSPACE_SIZE`), and the only host path the agent
+sees is the read-only SSH key directory. A read-only bind stays
+read-only even for a root command inside the container — remounting it
+needs `CAP_SYS_ADMIN`, which the container does not have.
 
 ## Ports (host → container)
 

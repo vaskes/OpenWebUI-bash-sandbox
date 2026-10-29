@@ -467,7 +467,7 @@ class TestTheHandoffContractNamesEveryStatusTheDoorAnswers(unittest.TestCase):
         enumeration = self._the_status_contract()
         door_codes = self._status_codes_the_door_can_raise()
         for code in sorted(door_codes):
-            if code in (400, 403, 404, 409, 413, 416, 502):
+            if code in (400, 403, 404, 409, 413, 416, 502, 507):
                 with self.subTest(code=code):
                     self.assertIn(
                         str(code),
@@ -488,7 +488,7 @@ class TestTheHandoffContractNamesEveryStatusTheDoorAnswers(unittest.TestCase):
         verdict about a property that never broke.
         """
         enumeration = self._the_status_contract()
-        for code in (409,):
+        for code in (409, 507):
             with self.subTest(code=code):
                 self.assertEqual(
                     enumeration.count(str(code)),
