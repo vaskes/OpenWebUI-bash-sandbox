@@ -2,11 +2,11 @@
 
 **For:** the agent that maintains the bot (`vaskes/llama.cpp_telegram`).
 **From:** the sandbox side (`vaskes/OpenWebUI-bash-sandbox`).
-**Code against:** sandbox tag **`v2.14.10`** (the contract below was written
+**Code against:** sandbox tag **`v2.14.11`** (the contract below was written
 against `v2.7.0`; §6 lists what changed since, and the status-code table
 in §3 is the current one).
 **Written:** 2026-10-25. **Status codes last verified:** 2026-10-29 against
-`v2.14.10`.
+`v2.14.11`.
 
 This is the contract between the two halves of the system. Everything in
 it is measured or verified — the numbers are not aspirations, they are
@@ -302,7 +302,7 @@ Then, in the bot:
 The sandbox side has its own checks; you can lean on them:
 
 ```bash
-git clone --branch v2.14.10 https://github.com/vaskes/OpenWebUI-bash-sandbox.git
+git clone --branch v2.14.11 https://github.com/vaskes/OpenWebUI-bash-sandbox.git
 cd OpenWebUI-bash-sandbox && python3 -m unittest discover -s tests
 ```
 
@@ -317,7 +317,7 @@ purges the file and checks that it is really gone from the workspace.
 
 | Question | Answer |
 |----------|--------|
-| Which sandbox version | tag **`v2.14.10`** (`git checkout v2.14.10`) |
+| Which sandbox version | tag **`v2.14.11`** (`git checkout v2.14.11`) |
 | Endpoint list | `README.md` → "API quick reference" (kept honest by a tripwire) |
 | The delivery contract | `README.md` → "Moving files out of the sandbox" |
 | The stdout contract | `README.md` → "Reading command output"; `agent_api.py` docstring |
