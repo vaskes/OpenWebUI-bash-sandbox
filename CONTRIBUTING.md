@@ -167,6 +167,21 @@ linear. The release's tag then lands on the merged commit that carries
 the release's changelog section, and that commit is the one the
 deployment runs.
 
+### The gate also runs on a branch
+
+The workflow's `push:` trigger listens to **every** branch, not only to
+`main`. That is what lets a release land when the GitHub API is not
+reachable: a branch push produces the same check runs a pull request
+would, and once they are green the branch can be pushed into `main` as a
+fast-forward — the same checks, on the same commit, with no pull request
+to carry them and no API to open one.
+
+The gate is the checks, not the pull request: a pull request is where
+the runs are usually collected, not what makes them binding. The
+branch-protection rules stay exactly as they are — every check in the
+canonical list must be green on the commit that enters `main`, the
+history must be linear, and administrators are gated too.
+
 ## Reporting bugs
 
 Open a GitHub issue with:
