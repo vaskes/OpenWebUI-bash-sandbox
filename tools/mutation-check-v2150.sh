@@ -18,6 +18,7 @@ cd "$(dirname "$0")/.."
 mutation_require_python
 
 RULE_DOOR="tests/test_file_door_upload_v2150.py"
+RULE_LIMITS="tests/test_upload_door_limits_v2150.py"
 
 echo "== the upload overwrites the file that is already there =="
 mutate agent_api.py \
@@ -49,6 +50,62 @@ mutate agent_api.py \
   '        tmp_path = None' \
   "$RULE_DOOR" \
   "the bytes land and nothing is left behind"
+
+echo "== the upload door has no ceiling of its own =="
+mutate agent_api.py \
+  'app.add_middleware(
+    BodySizeLimit,
+    limit=MAX_BODY_BYTES,
+    overrides={"/files": UPLOAD_MAX_BYTES},
+)' \
+  'app.add_middleware(
+    BodySizeLimit,
+    limit=MAX_BODY_BYTES,
+)' \
+  "$RULE_LIMITS" \
+  "a body over two megabytes reaches the upload door"
+
+echo "== the guard answers one ceiling for every path =="
+mutate body_limit.py \
+  '        return self.limit if best is None else self.overrides[best]' \
+  '        return self.limit' \
+  "$RULE_LIMITS" \
+  "the path decides which ceiling applies"
+
+echo "== the proxy has no way in =="
+mutate openapi_proxy.py \
+  '@app.post("/files", operation_id="file_upload")' \
+  '@app.post("/files-nope", operation_id="file_upload")' \
+  "$RULE_LIMITS" \
+  "the published door has an upload"
+
+echo "== the proxy buffers the body instead of streaming it =="
+mutate openapi_proxy.py \
+  '                content=_body_stream(request),' \
+  '                content=b"",' \
+  "$RULE_LIMITS" \
+  "the bytes arrive at the agent unchanged"
+
+echo "== the proxy has no ceiling of its own =="
+mutate openapi_proxy.py \
+  'app.add_middleware(
+    BodySizeLimit,
+    limit=MAX_BODY_BYTES,
+    overrides={"/files": UPLOAD_MAX_BYTES},
+)' \
+  'app.add_middleware(
+    BodySizeLimit,
+    limit=MAX_BODY_BYTES,
+)' \
+  "$RULE_LIMITS" \
+  "a body over two megabytes reaches the agent"
+
+echo "== the refusal changes its wording =="
+mutate agent_api.py \
+  'detail=f"path outside the workspace: {candidate}"' \
+  'detail=f"path outside workspace: {candidate}"' \
+  "$RULE_LIMITS" \
+  "the documented refusal is the refusal the code produces"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

@@ -509,7 +509,28 @@ MAX_BODY_BYTES = 2 * 1024 * 1024
 # client declared: a chunked body has no length to read, and reading
 # only the header leaves the case the limit exists for open. The proxy
 # is the published surface, so it is the one that has to hold the line.
-app.add_middleware(BodySizeLimit, limit=MAX_BODY_BYTES)
+#
+# The upload door (``POST /files``) is the one exception, and it is an
+# exception on purpose: it carries a *file*, not a command, and the file
+# it exists to deliver is tens of megabytes. Its own ceiling is
+# ``OPENAPI_PROXY_UPLOAD_MAX_BYTES``; every other door keeps the 2 MB
+# guard.
+#
+# This is a plain byte count, like the proxy's other numbers (the rate
+# limit, the timeouts): the proxy has no size-string convention of its
+# own, and a second one would be a second rule to get wrong. It is the
+# *transport* ceiling - the file policy belongs to the agent
+# (``AGENT_BINARY_LIMIT``), and the proxy only has to be able to carry a
+# body the agent will accept. A transport ceiling below the agent's file
+# policy refuses an upload the agent itself would have taken, so the
+# default (64 MiB) sits above the production file policy (50 MiB).
+UPLOAD_MAX_BYTES = int(os.environ.get("OPENAPI_PROXY_UPLOAD_MAX_BYTES", str(64 * 1024 * 1024)))
+
+app.add_middleware(
+    BodySizeLimit,
+    limit=MAX_BODY_BYTES,
+    overrides={"/files": UPLOAD_MAX_BYTES},
+)
 
 
 @app.middleware("http")
@@ -1026,6 +1047,73 @@ async def download_file(
         status_code=upstream.status_code,
         headers=headers,
         media_type=upstream.headers.get("content-type", "application/octet-stream"),
+    )
+
+
+async def _body_stream(request: Request):
+    """The client's body, chunk by chunk, as it arrives.
+
+    The upload is the one request whose body is *the payload*: the file
+    itself. Handing it to the upstream as a stream is what keeps the
+    proxy's memory use independent of the file's size - the same reason
+    the download is streamed back.
+    """
+    async for chunk in request.stream():
+        yield chunk
+
+
+@app.post("/files", operation_id="file_upload")
+async def upload_file(
+    request: Request,
+    path: str = Query(..., description="File to write in the sandbox"),
+    _: str = Depends(_require_token),
+) -> Response:
+    """Relay an upload into the sandbox.
+
+    The other half of the file door: the body is the file's raw bytes,
+    and they are carried to the agent as they arrive. The proxy never
+    holds the whole file - the body is streamed upstream - so its memory
+    use does not depend on the file's size.
+
+    The upstream status is relayed as it is, exactly as ``/files`` and
+    ``DELETE /files`` do: a name that is already taken stays a 409, a
+    body over the limit stays a 413, a parent directory that is not
+    there stays a 404, and an unreachable agent is a 502. Flattening
+    those into a 200 with an ``error`` key would be a lie to the client.
+    """
+    client = _client(request)
+    try:
+        upstream = await client.send(
+            client.build_request(
+                "POST",
+                f"{SANDBOX_URL}/files",
+                params={"path": path},
+                headers=_upstream_headers(),
+                content=_body_stream(request),
+            ),
+            stream=True,
+        )
+    except httpx.TimeoutException as exc:
+        METRICS.inc("upstream_errors_total")
+        raise HTTPException(status_code=502, detail=_file_relay_timeout_reason(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"sandbox-agent request failed: {exc!r}"
+        ) from exc
+
+    if upstream.status_code >= 400:
+        body = await upstream.aread()
+        await upstream.aclose()
+        raise HTTPException(
+            status_code=upstream.status_code, detail=_upstream_detail(body)
+        ) from None
+
+    body = await upstream.aread()
+    await upstream.aclose()
+    return Response(
+        content=body,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/json"),
     )
 
 
