@@ -23,7 +23,7 @@ tools**, and the exec limit is an **hour**.
 | `import re` in agent_api.py | ❌ missing | ✅ present | v1 would crash on every successful command |
 | Path-traversal protection in `cwd` | ❌ none | ✅ `os.path.realpath` + workspace whitelist | blocks `..` and symlinks |
 | Bearer-token auth on proxy | ❌ none | ✅ `OPENAPI_PROXY_TOKEN` (constant-time compare) | required, proxy 503s if unset |
-| Bearer-token auth on sandbox-agent | ❌ none | ✅ `AGENT_TOKEN` (mirrored from `OPENAPI_PROXY_TOKEN`) | required, agent 503s if unset |
+| Bearer-token auth on sandbox-agent | ❌ none | ✅ `AGENT_TOKEN` (the proxy's token, or `AGENT_INBOUND_TOKEN`) | required, agent 503s if unset |
 | CORS allowlist | ❌ `["*"]` | ✅ opt-in via `OPENAPI_PROXY_CORS_ORIGINS` | off by default |
 | Container runs as non-root | ❌ `user: root` | ✅ `user: 1000:1000` | |
 | `read_only` root filesystem | ❌ `false` | ✅ `true` + tmpfs for `/tmp`, `/run` | |
@@ -468,6 +468,76 @@ what a caller that can talk HTTP can do — no more.
 call succeeds and the result carries `isError: true` with the reason
 in the text, because that text is what the model reads. A caller that
 wants to react to a refusal has to read it.
+
+## The sandbox is not a boundary against the model
+
+This is the section to read before you put a credential anywhere near
+this stack. It is not new in v2.14.11 — the facts were always true —
+but they were measured on 2026-10-29, and the measurement changed what
+this document claims.
+
+**The measured facts.** On the production deployment:
+
+* a session's `env` printed `AGENT_TOKEN` in plaintext, and
+  `tmux show-environment -g` printed it too;
+* the same token was readable out of `/proc/<pid>/environ` of the
+  agent's own process;
+* the sandbox has unrestricted outbound network access (section 1), so
+  a token in the model's hands is a token that can leave the host;
+* the model could write the token into the persistent workspace.
+
+**Why it was there.** The agent needs its own token to authenticate the
+calls that arrive at its doors, and the model's shell inherits the
+agent's environment through the tmux server: tmux starts its server
+from the first client, and the server's environment is what every
+session's shell gets.
+
+**What this release changes.**
+
+* The tmux client — and therefore the tmux server — gets an environment
+  without the credentials, and the server's own global environment has
+  them unset. A session's `env` no longer shows the token.
+* The agent's inbound token can be **separated** from the operator's
+  stack token. Set `AGENT_INBOUND_TOKEN` to a different value and the
+  agent accepts that one, while the proxy keeps the operator's token for
+  its public door. The default is unchanged — one token for the whole
+  stack — so nothing breaks unless you ask for it.
+
+  ```bash
+  # .env.sandbox — the operator's stack token, unchanged
+  AGENT_STACK_TOKEN=<the token the bot uses>
+
+  # a different, internal-only credential for the agent's own doors
+  AGENT_INBOUND_TOKEN=$(openssl rand -hex 32)
+  ```
+
+  With that set, the token the model can read opens only the agent's
+  internal doors, which have no published port; the operator's stack
+  token is not in that container at all.
+
+**What it does not change — read this before you rely on it.**
+
+* The model and the agent run as the **same uid**. So the token is
+  still readable out of `/proc/<pid>/environ` of the agent's process.
+  Hiding it from the shell is not the same as hiding it from the model.
+  Closing that needs the service and the model's shell to run as
+  different uids, which is a redesign of the privilege mode, not a
+  patch.
+* The model has unrestricted egress and can write the persistent
+  workspace (sections 1 and 4). Anything the sandbox can read, the
+  model can read and send.
+* **All chats in one deployment share one tmux server.** A model can
+  list the other sessions and read their panes — with `tmux
+  list-sessions` and `tmux capture-pane`, *without* any token. That is
+  the "no user-level isolation" note below, stated here because it is
+  the thing most often mistaken for a token problem. It is not a token
+  problem: the token is not what grants it.
+
+**So the rule is:** the sandbox holds the operator's credentials the way
+a shell holds the ones you exported in it. Treat every secret inside it
+as compromised by the model, keep the operator's *other* credentials
+out of it, and separate the tokens when the stack has more than one
+role to play.
 
 ## What's intentionally not implemented
 
