@@ -21,8 +21,10 @@ RULE_CHANGELOG="tests/test_changelog_correction_v2148.py"
 
 echo "== a run that collected nothing counts as a catch again =="
 mutate tools/mutation-lib.sh \
-  '    if [ "$rc" -eq 1 ] && ! mutation_collected_nothing "$out"; then' \
-  '    if [ "$rc" -ne 0 ]; then' \
+  'mutation_run_was_invalid() {' \
+  'mutation_run_was_invalid() {
+    return 1
+}' \
   "$RULE_MUTATION" \
   "a run that collected nothing is not a catch"
 
