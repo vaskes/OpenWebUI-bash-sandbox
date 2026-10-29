@@ -506,6 +506,70 @@ call succeeds and the result carries `isError: true` with the reason
 in the text, because that text is what the model reads. A caller that
 wants to react to a refusal has to read it.
 
+### 13. What an agent can destroy
+
+This section answers a question that was asked the hard way: an
+operator told a privileged agent to shoot itself in the foot as hard as
+it could, and the answer it produced was measured, not guessed.
+
+**The default deployment has no damage surface.** An agent without
+sudo cannot delete anything outside the scratchpad, and not because a
+policy says so:
+
+* the image ships **no `sudo` binary at all** unless the privilege mode
+  asks for it (`AGENT_ALLOW_SUDO=0` is the default), so there is no
+  setuid binary to talk into;
+* the container's **root filesystem is read-only**
+  (`AGENT_READ_ONLY=true` is the default), so even a root command
+  cannot write to `/etc`;
+* the agent runs as **uid 1000**, not root;
+* the container has **no capabilities** (`cap_drop: ALL`), is not
+  privileged, and has **no docker socket**.
+
+Measured on a running default deployment: `rm -f /etc/hostname` and
+`touch /usr/local/x` both answer *Read-only file system*, and the only
+writable places are `/workspace` (the scratchpad — a bind on the host,
+by design) and `/tmp` (a tmpfs).
+
+**The privilege mode is a different deployment, and the container is
+its blast radius.** With `AGENT_ALLOW_SUDO=1` and
+`AGENT_READ_ONLY=false`, a root command *can* wipe `/etc`, and the
+damage is not only the files: `/etc/passwd` and the
+`/etc/alternatives` layer go with it, so `sudo` stops working
+("you do not exist in the passwd database"), the CA bundle goes (HTTPS
+dies), and the container **cannot be repaired from inside** — root
+cannot restore what root deleted, and the read-only host binds cannot
+be remounted writable because the container has no `CAP_SYS_ADMIN`.
+
+The mitigation is not a policy but a fact about the architecture: **the
+container is disposable**. Recreating it from the same image brings
+`/etc` and the home directory back clean, and it takes seconds:
+
+```bash
+# the same image, a fresh container, the workspace and the caches intact
+docker compose --env-file <the deployment's env file> \
+  -f docker-compose.production.yml up -d --force-recreate
+```
+
+**The host is outside the blast radius.** The container has no device
+nodes (`/dev/nvme*` and `/dev/sd*` do not exist in it), no host root
+and no docker socket, so `dd` and `mkfs` cannot reach the operator's
+disks even with root inside. The only host path a privileged agent can
+destroy is the workspace bind — the scratchpad, which exists to be
+scratch. **A privileged deployment therefore gets no other host bind**:
+the SSH-key mount in the production stack is read-only *and* empty,
+and it stays read-only even for root inside the container, because
+remounting it needs a capability the container does not have.
+
+**One class is the caller's to close.** The command policy in front of
+the sandbox refused `rm -rf /` and `dd of=/dev/nvme0n1p4`, and it had
+no class for `sudo rm -rf /etc` — the one that actually does the
+damage. That policy lives on the calling side, and the class it needs
+is "the system directories" (`/etc`, `/usr`, `/bin`, `/sbin`, `/lib`,
+`/var`, `/home`), refused with the reason. The sandbox side cannot
+enforce it: a shell command that runs as root is, by construction, a
+root command, and a wrapper around `rm` is not a boundary.
+
 ## The sandbox is not a boundary against the model
 
 This is the section to read before you put a credential anywhere near

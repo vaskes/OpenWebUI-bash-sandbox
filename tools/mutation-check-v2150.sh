@@ -19,6 +19,7 @@ mutation_require_python
 
 RULE_DOOR="tests/test_file_door_upload_v2150.py"
 RULE_LIMITS="tests/test_upload_door_limits_v2150.py"
+RULE_DAMAGE="tests/test_damage_surface_v2150.py"
 
 echo "== the upload overwrites the file that is already there =="
 mutate agent_api.py \
@@ -106,6 +107,27 @@ mutate agent_api.py \
   'detail=f"path outside workspace: {candidate}"' \
   "$RULE_LIMITS" \
   "the documented refusal is the refusal the code produces"
+
+echo "== the root filesystem stops being read-only =="
+mutate docker-compose.yml \
+  'read_only: "${AGENT_READ_ONLY:-true}"' \
+  'read_only: "${AGENT_READ_ONLY:-false}"' \
+  "$RULE_DAMAGE" \
+  "the root filesystem is read-only by default"
+
+echo "== the privilege mode is on by default =="
+mutate docker-compose.yml \
+  'AGENT_ALLOW_SUDO: "${AGENT_ALLOW_SUDO:-0}"' \
+  'AGENT_ALLOW_SUDO: "${AGENT_ALLOW_SUDO:-1}"' \
+  "$RULE_DAMAGE" \
+  "sudo is off by default"
+
+echo "== the image ships sudo unconditionally =="
+mutate Dockerfile.sandbox \
+  '$( [ "$AGENT_ALLOW_SUDO" = "1" ] && echo sudo )' \
+  'sudo' \
+  "$RULE_DAMAGE" \
+  "sudo is in the image only when the privilege mode asks"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"
