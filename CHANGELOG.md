@@ -4,6 +4,133 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.10] - 2026-10-29
+
+`main` is protected, and the protection is now pinned by the tree. The
+operator's words: *"make it so there is no warning and you push there
+without my involvement"* — so the branch settings were measured, not
+assumed, and the list of required checks moved into the repository where
+a change to it can be reviewed.
+
+### Added
+
+- **`docs/required-status-checks.txt` — the canonical list of required
+  status checks.** The list lives in GitHub's branch settings, where the
+  repository cannot see it. That makes it invisible to review and
+  invisible to CI, and a required check that no run ever reports is not a
+  slow gate but a **permanently closed** one.
+
+  Measured on 2026-10-29, on a throwaway branch with `main`'s rules: a
+  required context that CI never reports ("A Job That Was Renamed Last
+  Year") left every pull request at `mergeable_state: blocked`, the merge
+  refused with HTTP 405 and `13 of 13 required status checks are queued`
+  — and no way out of it from the repository side. Only a human in the
+  branch settings could remove the stale context. The same trap waits for
+  `main` the moment somebody renames a CI job, and the repository would
+  look perfectly healthy while every release was stuck.
+
+  The list is in the tree now, one required check per line, exactly as
+  GitHub spells it. `tests/test_branch_protection.py` compares it with the
+  job names the workflow really produces — in **both** directions: a
+  renamed job (the silent brick) and a new job nobody requires (a check
+  that is not a gate) are both caught. The two CodeQL analyses are
+  reported by GitHub itself rather than by the repository's workflow, and
+  the tripwire knows the difference.
+
+- **`tests/test_branch_protection.py` — 14 tests.** The offline half
+  always runs: the list exists, is not empty, has no duplicates and no
+  prose lines; it matches the workflow; the contribution guide points at
+  it and does not keep a copy of the count. The live half reads the
+  branch protection settings where a token exists and skips where it does
+  not — it checks that the tree and GitHub name the same checks, that
+  force pushes and deletion stay refused, that the history stays linear,
+  that administrators are gated too, and that no review is required.
+
+- **`tools/mutation-check-branch-protection.sh` — 12 mutations.** Each one
+  breaks the comparison on purpose, and the named test must go red: a
+  check in the list that the workflow never reports, a renamed CI job, a
+  CI job nobody requires, a check the workflow produces dropped from the
+  list, an emptied list, a guide that stops pointing at the list, and a
+  guide that counts the checks in prose again — plus the four that break
+  this release's own fixes: the list removed from the tree, the guide
+  that stops naming it, the library that loses its all-copies helper, and
+  the library that goes back to grepping pytest's output. Twelve caught,
+  none escaped.
+
+### Fixed
+
+- **`tools/mutation-lib.sh` — a mutation that breaks one copy of a fact
+  in two places was a no-op with a verdict attached.** The old
+  `mutation_apply()` replaced the **first** occurrence of the pattern.
+  When the property under test lives in two places, breaking one of them
+  left the other intact, the property survived, and the script reported
+  "the test stayed GREEN" about a tree that had really been broken. The
+  mutation script for this wave hit exactly that case: the guide names
+  the canonical list four times.
+
+  `mutation_apply_all()` replaces every occurrence and prints the count;
+  `mutate_all()` is the matching wrapper. The first-occurrence
+  `mutation_apply()` stays for the facts that live in one place.
+
+- **`tools/mutation-lib.sh` — the verdict came from grepping pytest's
+  output, and a failing test can quote the phrase the grep was looking
+  for.** The library decided whether a test had run by grepping the whole
+  output for `no tests ran`, `ERROR: not found` and friends. A failing
+  test prints its assertion's message, and that message may quote a file
+  containing one of those phrases. The library quotes itself: the
+  mutation that renamed a function made the test print the library's own
+  source — with `ERROR: not found` inside it — and the script then
+  reported three real failures as "the test did not run" (INVALID).
+
+  pytest's exit code cannot be quoted: 0 means everything passed, 1 means
+  a test ran and failed, and every other code (2 interrupted, 3 internal
+  error, 4 usage error, 5 nothing collected) means it did not run. The
+  library now reads the exit code. The old rule — "a catch is a test that
+  ran and went red, and nothing else" — is now true by construction
+  rather than by a heuristic that a quoted string could break.
+
+  Measured: with the old heuristic the mutation that renames
+  `mutation_apply_all()` was reported INVALID; with the exit code it is a
+  catch, and the seven-case verdict table is pinned by
+  `tests/test_mutation_scripts_run_v2148.py`.
+
+- **`tests/test_release_claims_v2149.py` pinned the version as a
+  literal.** It asserted `agent_core.__version__ == "2.14.9"`, so the
+  release that follows v2.14.9 had to edit the test — and a test that
+  has to be edited on every release says nothing on any of them. It now
+  compares the shipped version with the version of the changelog's
+  **newest** section, which is the property the claim is actually about.
+
+- **`CONTRIBUTING.md` counted the checks in prose.** "thirteen checks must
+  be green before a merge" is a number that rots silently — the moment a
+  fourteenth check is added, the sentence is a lie and nothing says so.
+  The guide now points at
+  [`docs/required-status-checks.txt`](docs/required-status-checks.txt)
+  and the tripwire fails if a count creeps back into the prose.
+
+### Measured
+
+- **The protection settings were measured, not guessed.** With
+  `enforce_admins` off, an administrator merged a pull request with
+  **zero** green checks and pushed a merge commit into a protected
+  branch: the gate existed on paper and nowhere else. With it on, the
+  same merge attempt was refused with `405 — 13 of 13 required status
+  checks have not succeeded`, and a push carrying a merge commit was
+  refused by the protected-branch hook. `enforce_admins` stays on.
+
+- **No human approval is required anywhere.** GitHub normalizes
+  `required_approving_reviewings: 0` to 1, and the repository has a
+  single writer who cannot approve his own pull request — so an approval
+  requirement would mean nobody could merge anything, including the
+  release. The gate is the checks, and the whole flow — branch, pull
+  request, wait for the checks, rebase-merge — is done without a human
+  in the loop.
+
+- **The GitHub warning is gone because the protection exists.** The
+  branch reports `protected: true` and the repository page no longer
+  renders the "protect this branch" banner. It was a pre-protection UI
+  state, not a setting to chase.
+
 ## [2.14.9] - 2026-10-29
 
 A documentation audit. The operator's words: *"the documentation keeps
