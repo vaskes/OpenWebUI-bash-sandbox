@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 import pytest
+from _tmux_isolation import ensure_private_tmux_server, kill_private_tmux_server
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -50,21 +51,18 @@ def _the_suite_has_a_tmux_server_of_its_own(tmp_path_factory):
     session, another repository's suite, a probe.  The review's probe
     was killed by a suite run — live, not hypothetically.
     """
-    if shutil.which("tmux") is None:
+    # The rule itself lives in tests/_tmux_isolation.py, because it has
+    # to hold under every runner and a plain `python -m unittest
+    # discover` does not load a pytest fixture.
+    private = ensure_private_tmux_server()
+    if private is None:
         yield
         return
-    private = tmp_path_factory.mktemp("tmux")
-    previous = os.environ.get("TMUX_TMPDIR")
-    os.environ["TMUX_TMPDIR"] = str(private)
     try:
         yield
     finally:
         # Only our own server: tmux reads $TMUX_TMPDIR for the socket.
-        subprocess.run(["tmux", "kill-server"], capture_output=True, check=False)
-        if previous is None:
-            os.environ.pop("TMUX_TMPDIR", None)
-        else:
-            os.environ["TMUX_TMPDIR"] = previous
+        kill_private_tmux_server()
 
 
 @pytest.fixture(scope="session")

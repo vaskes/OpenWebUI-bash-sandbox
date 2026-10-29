@@ -29,6 +29,22 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# The suite's tmux server must be its own -- under every runner.  A
+# pytest fixture is not loaded by `python -m unittest discover`, and the
+# README promises that path works, so the isolation is set up here as
+# well: at import time, which is before any test of this module runs.
+#
+# The rule's own module sits next to this one; the path is made
+# explicit so that the import does not depend on what the runner
+# happened to put on sys.path.
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from _tmux_isolation import ensure_private_tmux_server  # noqa: E402
+
+ensure_private_tmux_server()
+
 
 def _sessions(env: dict[str, str] | None = None) -> set[str]:
     """The sessions of a tmux server (the default one, without an env)."""
