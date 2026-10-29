@@ -4,6 +4,83 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.11] - 2026-10-29
+
+The agent's token reached the model's shell. A finding from an internal
+penthest of the sandbox from the inside, measured on the production
+deployment before anything was changed.
+
+### Fixed
+
+- **The agent's bearer token was in the model's shell environment.** The
+  agent needs its own token to authenticate the calls that arrive at its
+  doors, and the model's shell inherits the agent's environment through
+  the tmux server: tmux starts its server from the first client, and the
+  server's environment is what every session's shell gets.
+
+  Measured on the production deployment: a session's `env` printed
+  `AGENT_TOKEN` in plaintext, `tmux show-environment -g` printed it too,
+  and the sandbox has unrestricted outbound network access — so a token
+  in the model's hands is a token that can leave the host. The model
+  could also write it into the persistent workspace.
+
+  The tmux client — and therefore the tmux server — now gets an
+  environment without the credentials, and the server's own global
+  environment has them unset before the first pane is created. A
+  session's `env` no longer shows the token.
+
+- **The agent's token can now be separated from the operator's stack
+  token.** Measured: one value played three roles — the operator's
+  `AGENT_STACK_TOKEN`, the proxy's public `OPENAPI_PROXY_TOKEN`, and the
+  agent's inbound `AGENT_TOKEN` — so the leak above was the operator's
+  own credential, and the bot used the same value.
+
+  `AGENT_INBOUND_TOKEN` gives the agent its own inbound token. The proxy
+  keeps the operator's token for its public door and forwards the
+  agent's own token upstream. The default is unchanged — one token for
+  the whole stack — so nothing breaks unless a deployment asks for it.
+
+### Documented
+
+- **docs/SECURITY.md — "The sandbox is not a boundary against the
+  model".** The facts above were always true; they were measured on
+  2026-10-29, and the measurement changed what the document claims. The
+  new section states them plainly, including the parts this release does
+  **not** fix:
+
+  * the model and the agent run as the same uid, so the token is still
+    readable out of `/proc/<pid>/environ`. Hiding it from the shell is
+    not the same as hiding it from the model; closing that needs the
+    service and the model's shell to run as different uids, which is a
+    redesign of the privilege mode, not a patch;
+  * the model has unrestricted egress and can write the persistent
+    workspace — anything the sandbox can read, the model can read and
+    send;
+  * **all chats in one deployment share one tmux server**, so a model can
+    list the other sessions and read their panes — with `tmux
+    list-sessions` and `tmux capture-pane`, *without* any token. That
+    is the "no user-level isolation" note, stated here because it is the
+    thing most often mistaken for a token problem. It is not a token
+    problem: the token is not what grants it.
+
+### Verification
+
+- `tests/test_agent_token_v21411.py` — 11 tests. The live ones start a
+  real tmux server **through the agent's own `_tmux`** — a hand-rolled
+  subprocess would measure the test's idea of the environment, not the
+  agent's — create a session in it, and read the pane's `env` output.
+  One of them starts a server the dirty way (with the token in the
+  client's environment) and asserts the agent cleans it up.
+- `tools/mutation-check-v21411.sh` — 8 mutations, all caught: the tmux
+  client gets the full environment again, the environment builder stops
+  dropping the credentials, the server is not cleaned up, the tokens
+  cannot be separated in either compose file, the proxy stops forwarding
+  the agent's own token, and the security document stops saying what
+  the sandbox is.
+- Measured: 900 passed, 1 skipped (901 tests); `ruff format --check` and
+  `ruff check` clean; all fifteen mutation scripts catch all of their
+  mutations, none escaped.
+
 ## [2.14.10] - 2026-10-29
 
 `main` is protected, and the protection is now pinned by the tree. The
