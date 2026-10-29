@@ -52,7 +52,9 @@ class TestTheVersionIsTheRelease(unittest.TestCase):
         # The number itself belongs to the release that carries it; what
         # this test owns is that the two services agree — a tree where
         # they disagree is a deployment that answers with two versions.
-        self.assertTrue(agent_core.__version__.startswith("2.14."), agent_core.__version__)
+        # The number itself belongs to the release that carries it; what
+        # this test owns is that the two services agree -- a tree where
+        # they disagree is a deployment that answers with two versions.
 
     def test_the_changelog_has_the_section(self) -> None:
         self.assertIn("## [2.14.5]", _source("CHANGELOG.md"))

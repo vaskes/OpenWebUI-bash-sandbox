@@ -45,6 +45,10 @@ GET  /files?path=P
 DELETE /files?path=P
     Remove a file from the workspace. The sandbox is a scratchpad, not
     storage: once a file has been delivered, the client can remove it.
+POST /files?path=P
+    The other half of the door: the file's **raw bytes** go IN. The
+    body is written into the workspace, streamed, and never overwrites
+    a file that is already there.
 GET  /metrics
     Prometheus exposition (requests, refusals, active sessions).
 POST /mcp
@@ -68,6 +72,7 @@ import mimetypes
 import os
 import re
 import shutil
+import tempfile
 import time
 import urllib.parse
 import uuid
@@ -282,11 +287,15 @@ def _persisted_cwd(sid: str) -> str | None:
         return None
 
 
-def _safe_cwd(candidate: str) -> str:
-    """Resolve symlinks and confirm the path is rooted at the workspace.
+def _inside_workspace(candidate: str) -> str:
+    """Resolve a path and confirm it is inside the workspace.
 
-    Raises :class:`HTTPException` (400) for any path that is not a directory
-    inside :data:`WORKSPACE_REAL`. This blocks:
+    The perimeter is the real workspace root: a path that resolves
+    outside it is refused, symlinks included. What the path *is* -- a
+    directory, a regular file -- is not this function's question; the
+    caller knows what it is asking for, and says so in its own words.
+
+    This blocks:
 
     * absolute paths outside the workspace (e.g. ``/etc``),
     * ``..`` traversal (e.g. ``/workspace/../etc``),
@@ -298,15 +307,46 @@ def _safe_cwd(candidate: str) -> str:
         # supplied travels with it.
         return WORKSPACE_REAL
     if real.startswith(WORKSPACE_PREFIX):
-        # The check on the filesystem comes *after* the containment
-        # check, and inside it: the path is already known to be inside
-        # the workspace, so the question that is left is only whether it
-        # is a directory. (It also keeps the flow of the data obvious:
-        # resolve, confirm the containment, then touch the file.)
-        if not os.path.isdir(real):
-            raise HTTPException(status_code=400, detail=f"cwd is not a directory: {candidate}")
         return real
-    raise HTTPException(status_code=400, detail=f"cwd outside workspace: {candidate}")
+    raise HTTPException(status_code=400, detail=f"path outside workspace: {candidate}")
+
+
+def _safe_cwd(candidate: str) -> str:
+    """Resolve symlinks and confirm the path is rooted at the workspace.
+
+    Raises :class:`HTTPException` (400) for any path that is not a directory
+    inside :data:`WORKSPACE_REAL`. This blocks:
+
+    * absolute paths outside the workspace (e.g. ``/etc``),
+    * ``..`` traversal (e.g. ``/workspace/../etc``),
+    * symlinks pointing outside the workspace.
+    """
+    real = _inside_workspace(candidate)
+    # The check on the filesystem comes *after* the containment check,
+    # and inside it: the path is already known to be inside the
+    # workspace, so the question that is left is only whether it is a
+    # directory. (It also keeps the flow of the data obvious: resolve,
+    # confirm the containment, then touch the file.)
+    if not os.path.isdir(real):
+        raise HTTPException(status_code=400, detail=f"cwd is not a directory: {candidate}")
+    return real
+
+
+def _safe_parent(candidate: str) -> str:
+    """The directory an upload lands in, checked against the perimeter.
+
+    The rule is the shell door's own: resolve the path, confirm it is
+    inside the workspace, and only then ask what it is. Two things
+    differ from the shell door, and both are about what the caller
+    reads: the words say *directory* rather than *cwd*, and a
+    directory that is not there is a 404 and not a 400 -- the client
+    asked to put a file somewhere that does not exist, and that is a
+    fact about the sandbox, not a malformed request.
+    """
+    real = _inside_workspace(candidate)
+    if not os.path.isdir(real):
+        raise HTTPException(status_code=404, detail=f"no such directory: {candidate}")
+    return real
 
 
 # ---------------------------------------------------------------------------
@@ -1609,6 +1649,43 @@ async def tail_output(
 _BINARY_CHUNK = 64 * 1024
 
 
+def _anchor(candidate: str, *, allow_root: bool = False) -> str:
+    """A client-supplied path, anchored on the real workspace root.
+
+    The model knows the *logical* workspace path (``/workspace/out.bin``),
+    while the real root may be somewhere else — the workspace is a bind
+    mount, and the container's view of it is symlinked. So a logical
+    absolute path is re-anchored on the real root, and a path that is
+    already absolute is checked against the perimeter as it stands.
+
+    An absolute path outside the logical workspace is joined as it is:
+    ``os.path.join`` keeps an absolute second argument as it is, so
+    "/etc/passwd" stays "/etc/passwd" and is refused by the containment
+    check that follows instead of being quietly re-anchored inside the
+    workspace.
+
+    ``allow_root`` is for the upload half of the door: the root is a
+    fine *directory* to write into and a wrong answer for a *file*, so
+    the refusal of the root belongs to the caller that knows which of
+    the two it is asking for.
+    """
+    raw = str(candidate or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="path is required")
+
+    logical = os.path.abspath(WORKSPACE)
+    if os.path.isabs(raw):
+        if raw == logical:
+            if not allow_root:
+                raise HTTPException(status_code=400, detail="path is a directory, not a file")
+            return WORKSPACE_REAL
+        if raw.startswith(logical + os.sep):
+            # A logical path inside the workspace: re-anchor it on the
+            # real root, which may live somewhere else entirely.
+            raw = raw[len(logical) + 1 :]
+    return os.path.join(WORKSPACE_REAL, raw)
+
+
 def _safe_file(candidate: str) -> str:
     """Resolve a client-supplied path to a regular file inside the workspace.
 
@@ -1629,24 +1706,10 @@ def _safe_file(candidate: str) -> str:
     itself is written against, which is the form a reviewer (and a static
     analyser) can read.
     """
-    raw = str(candidate or "").strip()
-    if not raw:
-        raise HTTPException(status_code=400, detail="path is required")
-
-    logical = os.path.abspath(WORKSPACE)
-    if os.path.isabs(raw):
-        if raw == logical:
-            raise HTTPException(status_code=400, detail="path is a directory, not a file")
-        if raw.startswith(logical + os.sep):
-            # A logical path inside the workspace: re-anchor it on the
-            # real root, which may live somewhere else entirely.
-            raw = raw[len(logical) + 1 :]
-    # A relative path, or an absolute one outside the logical workspace:
-    # both are joined onto the real root. ``os.path.join`` keeps an
-    # absolute second argument as it is, so "/etc/passwd" stays
-    # "/etc/passwd" and is refused by the check below instead of being
-    # quietly re-anchored inside the workspace.
-    raw = os.path.join(WORKSPACE_REAL, raw)
+    # The anchoring rule lives in one place (``_anchor``): the upload
+    # half of the door needs the same one, and two copies of a
+    # containment rule are two chances to get it wrong.
+    raw = _anchor(candidate)
 
     try:
         resolved = os.path.realpath(raw, strict=True)
@@ -1662,7 +1725,7 @@ def _safe_file(candidate: str) -> str:
         if not os.path.isfile(resolved):
             raise HTTPException(status_code=400, detail=f"not a regular file: {candidate}")
         return resolved
-    raise HTTPException(status_code=400, detail=f"path outside the workspace: {candidate}")
+    raise HTTPException(status_code=400, detail=f"path outside workspace: {candidate}")
 
 
 def _content_disposition(name: str) -> str:
@@ -1720,7 +1783,7 @@ def _open_inside_workspace(resolved: str) -> int:
     guard. Every platform this container runs on has them.
     """
     if not resolved.startswith(WORKSPACE_PREFIX):
-        raise HTTPException(status_code=400, detail=f"path outside the workspace: {resolved}")
+        raise HTTPException(status_code=400, detail=f"path outside workspace: {resolved}")
     relative = resolved[len(WORKSPACE_PREFIX) :]
     parts = [part for part in relative.split(os.sep) if part]
     if not parts:
@@ -1983,6 +2046,126 @@ async def delete_file(
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"could not delete {path}: {exc}") from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _refuse_if_taken(target: str, name: str) -> None:
+    """Refuse to overwrite a file that is already there.
+
+    Delivery does not remove: if a file with that name already lies in
+    the sandbox, the upload is refused and the file that is there stays
+    exactly as it was. The caller has to pick another name.
+
+    The check happens twice -- once before the bytes are read and once
+    after they land -- because the workspace is writable by the agent:
+    a file can appear while the upload is in flight. Both calls come
+    here, so there is one rule and not two.
+    """
+    if os.path.exists(target):
+        raise HTTPException(status_code=409, detail=f"file already exists: {name}")
+
+
+@app.post("/files", dependencies=[Depends(_require_token)])
+async def upload_file(
+    request: Request,
+    path: str = Query(..., description="Path of the file to write in the sandbox"),
+) -> dict[str, Any]:
+    """Put a file INTO the sandbox.
+
+    The door used to open outwards only: ``GET /files`` handed bytes
+    out, ``DELETE /files`` threw them away, and nothing ever came in.
+    This is the other half of it, and it exists because the other half
+    of the world exists: a file that arrives in a chat has to be able
+    to reach the sandbox, or the chat is a one-way street that ends at
+    a refusal.
+
+    The bytes arrive the way they leave -- a raw body, never base64,
+    never multipart -- so the client and the sandbox keep speaking one
+    binary transport instead of two.
+
+    The body is streamed to disk and the size limit is enforced while
+    the bytes arrive: the moment the upload goes past
+    ``BINARY_LIMIT_BYTES`` the reading stops and the upload is refused,
+    so an oversized body never becomes fifty megabytes of garbage on
+    the disk.
+
+    The write is atomic. The bytes land in a temporary file in the
+    very same directory as the target, and only a complete file is
+    moved onto the target name with ``os.replace``, so a client can
+    never catch a half-written file under the target name.
+
+    This endpoint never deletes anything and never overwrites anything.
+    Delivery does not remove: if a file with that name already lies in
+    the sandbox, the upload is refused with 409 and the file that is
+    already there stays exactly as it was. The caller has to pick
+    another name.
+
+    Status codes:
+
+    * 200 -- the file is in the sandbox. The body is
+      ``{"name": ..., "path": ..., "size": ...}``.
+    * 400 -- the path is not a file path, or the body was empty.
+    * 401 -- no bearer token, or the wrong one.
+    * 404 -- the parent directory of ``path`` does not exist.
+    * 409 -- a file with that name already exists. Nothing was
+      overwritten.
+    * 413 -- the body is larger than ``BINARY_LIMIT_BYTES``.
+    """
+    raw = str(path or "").strip()
+    name = os.path.basename(raw)
+    if not name or name in (".", ".."):
+        raise HTTPException(status_code=400, detail=f"invalid file name: {path!r}")
+
+    parent = _safe_parent(_anchor(os.path.dirname(raw) or ".", allow_root=True))
+    target = os.path.join(parent, name)
+    _refuse_if_taken(target, name)
+
+    # A body that says it is too big is refused before a byte of it is
+    # read. The limit is checked again while the bytes arrive, because
+    # a header is a claim and the stream is the truth.
+    declared = request.headers.get("content-length")
+    if (declared and declared.isdigit()
+            and BINARY_LIMIT_BYTES and int(declared) > BINARY_LIMIT_BYTES):
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"file is {declared} bytes, over the binary limit of "
+                f"{BINARY_LIMIT_BYTES} bytes"
+            ),
+        )
+
+    # The temporary file is in the same directory as the target, so the
+    # rename onto it is atomic: same filesystem, same directory.
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=f".{name}.", suffix=".upload")
+    written = 0
+    try:
+        with os.fdopen(tmp_fd, "wb") as tmp:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                written += len(chunk)
+                if BINARY_LIMIT_BYTES and written > BINARY_LIMIT_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"file is {written} bytes, over the binary limit of "
+                            f"{BINARY_LIMIT_BYTES} bytes"
+                        ),
+                    )
+                tmp.write(chunk)
+        if written == 0:
+            raise HTTPException(status_code=400, detail="the body is empty")
+        # Somebody may have put a file here while the bytes were arriving.
+        _refuse_if_taken(target, name)
+        os.replace(tmp_path, target)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    return {"name": name, "path": target, "size": written}
 
 
 if __name__ == "__main__":

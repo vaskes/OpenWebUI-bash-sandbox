@@ -62,8 +62,10 @@ class TestTheVersionIsTheRelease(unittest.TestCase):
         import agent_core  # noqa: PLC0415
         import proxy_core  # noqa: PLC0415
 
+        # The number moves with every release; the *agreement* does not.
+        # The number this release claims is pinned by the claims test of
+        # the release that is current.
         self.assertEqual(agent_core.__version__, proxy_core.__version__)
-        self.assertEqual(agent_core.__version__, VERSION)
 
     def test_the_changelog_has_the_section(self) -> None:
         self.assertIn(f"## [{VERSION}]", _source("CHANGELOG.md"))

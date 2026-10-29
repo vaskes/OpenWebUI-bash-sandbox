@@ -4,6 +4,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.0] - 2026-10-29
+
+The door grows its other half.
+
+The file door only opened outwards: `GET /files` handed bytes out,
+`DELETE /files` threw them away, and nothing ever came in. That was
+enough while files only had to leave the sandbox -- and it stopped
+being enough the moment a file had to come the other way. The
+operator's case: a 47.6 MiB binary uploaded to the chat with the
+instruction to put it in the sandbox, and a bot that could only say
+the file was too large.
+
+### Added
+
+- **`POST /files` -- the door takes files in, not only out.** The body
+  is the file's raw bytes: no base64, no multipart, the same binary
+  transport the download already uses. The body is streamed to disk,
+  and the limit (`BINARY_LIMIT_BYTES`, `AGENT_BINARY_LIMIT`) is
+  enforced *while the bytes arrive* -- the reading stops the moment the
+  upload goes over the limit, so an oversized body never becomes fifty
+  megabytes of garbage on the disk. The write is atomic: the bytes
+  land in a temporary file in the target's own directory and only a
+  complete file is moved onto the target name, so a client can never
+  catch a half-written file under that name.
+
+  **The upload never deletes and never overwrites.** If a file with
+  that name is already in the sandbox, the upload is refused with
+  `409` and the file that is there stays exactly as it was: a delivery
+  that removes what it was not told to remove is a surprise, and the
+  surprise is what the user has to undo.
+
+  Statuses: `200` (the body is `{"name", "path", "size"}`), `400` (the
+  path is not a file path, or the body was empty), `401` (no token),
+  `404` (the parent directory does not exist), `409` (the name is
+  taken), `413` (over the limit).
+
+### Changed
+
+- **The path rules live in one place.** The download door and the new
+  upload door used to have their own copies of "a logical
+  `/workspace/...` path is re-anchored on the real root". They share
+  it now: `_anchor` does the anchoring, `_inside_workspace` does the
+  containment, and `_safe_cwd` says what a directory has to be for the
+  shell door. Two copies of a containment rule are two chances to get
+  it wrong.
+
 ## [2.14.9] - 2026-10-29
 
 A documentation audit. The operator's words: *"the documentation keeps
