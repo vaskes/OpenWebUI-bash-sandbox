@@ -71,6 +71,47 @@ class TestTheTreeHasNoUnreachableOperators(unittest.TestCase):
         self.assertEqual(dead, [3])
 
 
+class TestTheStdlibPathIsWalked(unittest.TestCase):
+    """A promise about a path nobody walks is a promise nobody checks.
+
+    The README offers the suite on the stdlib ("no pytest required"),
+    and the CI has a fallback for the case where pytest is missing.  A
+    fallback only runs when something is broken -- so the promise was
+    broken for two releases before anybody measured it: the tmux
+    isolation lived in a pytest fixture, and a plain
+    ``python -m unittest discover`` failed two of the suite's own
+    tests.
+
+    The check that matters is the CI step itself: it runs the stdlib
+    path on every build.  This tripwire is the guard against the step
+    being deleted -- the promise is in the workflow, and a workflow
+    without the step is a README that lies.
+    """
+
+    def _workflow(self) -> str:
+        self.assertTrue(CI_WORKFLOW.is_file(), "the CI workflow is gone")
+        return CI_WORKFLOW.read_text(encoding="utf-8")
+
+    def test_the_ci_runs_the_suite_on_the_stdlib(self) -> None:
+        self.assertIn(
+            "python -m unittest discover -s tests",
+            self._workflow(),
+            "the CI does not run the suite on the stdlib -- the README's "
+            "claim is only walked when pytest is missing, which is exactly "
+            "when nobody is looking",
+        )
+
+    def test_the_stdlib_run_is_a_step_of_its_own(self) -> None:
+        """Not a fallback: a step that runs on every build."""
+        workflow = self._workflow()
+        self.assertRegex(
+            workflow,
+            r"- name: The suite also runs on the stdlib\n(?:\s*#.*\n)*\s*run: python -m unittest discover -s tests",
+            "the stdlib run is not a step of its own -- it is a fallback, "
+            "and a fallback runs only when something else is broken",
+        )
+
+
 class TestTheSuiteIsCheckedWithoutTmux(unittest.TestCase):
     """The markers are only worth what the check behind them is worth."""
 

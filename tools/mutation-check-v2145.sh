@@ -25,9 +25,13 @@ FAIL=0
 RULE="tests/test_suite_hygiene_v2145.py"
 
 echo "== the suite stops using a tmux server of its own =="
-mutate tests/conftest.py \
-    '    os.environ["TMUX_TMPDIR"] = str(private)' \
-    '    pass  # the suite uses the machine'"'"'s default server' \
+# The rule lives in tests/_tmux_isolation.py, and it is set in two
+# places there (the first call and the re-assert), so BOTH have to go:
+# breaking one leaves the other, the suite keeps its private server, and
+# the mutation would report a verdict about a tree nobody broke.
+mutate_all tests/_tmux_isolation.py \
+    'os.environ["TMUX_TMPDIR"] = private' \
+    'pass  # the suite uses the machine'"'"'s default server' \
     "$RULE::TestTheSuiteHasATmuxServerOfItsOwn::test_a_session_of_another_server_is_not_ours" \
     "another server's session is not the suite's"
 
@@ -79,6 +83,13 @@ mutate .github/workflows/ci.yml \
     '  suite-tmux-removed:' \
     "tests/test_tree_hygiene_v2145.py::TestTheSuiteIsCheckedWithoutTmux::test_the_ci_runs_the_suite_without_tmux" \
     "the CI runs the suite without tmux"
+
+echo "== the CI forgets to walk the stdlib path =="
+mutate .github/workflows/ci.yml \
+    '        run: python -m unittest discover -s tests' \
+    '        run: echo "the stdlib path is not walked"' \
+    "tests/test_tree_hygiene_v2145.py::TestTheStdlibPathIsWalked::test_the_ci_runs_the_suite_on_the_stdlib" \
+    "the CI walks the stdlib path"
 
 echo "== the MCP tool asks tmux on every call again =="
 mutate mcp_server.py \
