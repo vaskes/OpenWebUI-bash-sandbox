@@ -170,11 +170,14 @@ COPY --chown=1000:1000 token_rules.py  /home/agent/token_rules.py
 # fails the container, on the first request that reaches the endpoint.
 COPY --chown=1000:1000 mcp_server.py  /home/agent/mcp_server.py
 
-# Workspace directory — created and chmod'd here so the bind-mount at
-# runtime overlays a populated tree. The sandbox agent treats this as its
-# read/write surface; it is owned by ``agent`` so the non-root user can
-# write to it without surprises.
-RUN mkdir -p /workspace && chown 1000:1000 /workspace
+# The writable mount points. All three are tmpfs mounts at runtime, and a
+# tmpfs mount point has to exist in the image: the container's root
+# filesystem is read-only by default, so Docker cannot create a missing
+# mount point inside it. The tmpfs itself carries mode 1777, so the
+# ownership here does not decide who may write — it only keeps the image
+# tidy for the case where the mount is absent.
+RUN mkdir -p /workspace /var/cache/apt /home/agent/.cache/pip \
+    && chown 1000:1000 /workspace /var/cache/apt /home/agent/.cache/pip
 WORKDIR /workspace
 
 USER 1000:1000

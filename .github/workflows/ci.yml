@@ -383,10 +383,14 @@ jobs:
           #
           # Two ways to make the file unreadable, because they are not the
           # same: mode 000 on a file the agent owns, and a root-owned
-          # 0600 file. The second one needs a container with the default
-          # capability set (the agent's own has an empty one, so even root
-          # cannot write into its workspace) — it borrows the volume and
-          # nothing else.
+          # 0600 file. The second one needs root (the agent's own
+          # capability set is empty, so even root cannot write into its
+          # workspace) — and the file has to land in the AGENT's own
+          # workspace. The workspace is a tmpfs, and `--volumes-from`
+          # copies volumes and binds, not tmpfs mounts: a helper
+          # container would write into its own filesystem and the agent
+          # would answer 404 instead of 403. `docker exec -u 0:0` runs
+          # inside the agent's container, where the tmpfs is.
           docker exec ci-sandbox-agent \
             sh -c 'printf secret > /workspace/noaccess.bin; chmod 000 /workspace/noaccess.bin'
           code=$(curl -s -o /tmp/denied.json -w '%{http_code}' --max-time 60 \
@@ -397,10 +401,8 @@ jobs:
           grep -qi 'permission denied' /tmp/denied.json \
             || { echo "::error::the 403 does not say it is a permission problem"; exit 1; }
 
-          AGENT_IMAGE=$(docker inspect -f '{{.Config.Image}}' ci-sandbox-agent)
-          docker run --rm --user 0:0 --volumes-from ci-sandbox-agent \
-            --entrypoint sh "$AGENT_IMAGE" \
-            -c 'umask 077; printf secret > /workspace/root-only.bin; ls -l /workspace/root-only.bin'
+          docker exec -u 0:0 ci-sandbox-agent \
+            sh -c 'umask 077; printf secret > /workspace/root-only.bin; ls -l /workspace/root-only.bin'
           code=$(curl -s -o /tmp/denied2.json -w '%{http_code}' --max-time 60 \
             -H "Authorization: Bearer $TOKEN" \
             'http://127.0.0.1:8099/files?path=root-only.bin')
@@ -408,7 +410,7 @@ jobs:
             || { echo "::error::a root-owned file answered $code, expected 403"; cat /tmp/denied2.json; exit 1; }
           # No cleanup: the agent container drops every capability, so even
           # root cannot unlink those files from the workspace — and the
-          # tear-down step deletes the volume anyway.
+          # workspace is a tmpfs, so it dies with the container.
 
       # The logs must be JSON — every line of them, the access log
       # included. uvicorn installs an access log of its own, in plain

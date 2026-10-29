@@ -2131,6 +2131,22 @@ def _refuse_if_taken(target: str, name: str) -> None:
         raise HTTPException(status_code=409, detail=f"file already exists: {name}")
 
 
+def _workspace_is_full_detail() -> str:
+    """The answer for a workspace that has no room left.
+
+    The workspace is a tmpfs with a ceiling (``AGENT_WORKSPACE_SIZE``),
+    so "no space left on device" is a normal event and not a crash. The
+    detail says what refused the file and what to do about it — a
+    refusal that does not name the cause is a refusal the caller has to
+    guess about.
+    """
+    return (
+        "the sandbox workspace is full — the file did not land. The "
+        "workspace has a size ceiling (AGENT_WORKSPACE_SIZE); free space "
+        "in it, or send a smaller file"
+    )
+
+
 @app.post("/files", dependencies=[Depends(_require_token)])
 async def upload_file(
     request: Request,
@@ -2176,6 +2192,9 @@ async def upload_file(
     * 409 -- a file with that name already exists. Nothing was
       overwritten.
     * 413 -- the body is larger than ``BINARY_LIMIT_BYTES``.
+    * 507 -- the workspace has no room left. The workspace is a tmpfs
+      with a ceiling (``AGENT_WORKSPACE_SIZE``), so this is a normal
+      event: the file did not land and nothing was left behind.
     """
     raw = str(path or "").strip()
     name = os.path.basename(raw)
@@ -2205,9 +2224,23 @@ async def upload_file(
 
     # The temporary file is in the same directory as the target, so the
     # rename onto it is atomic: same filesystem, same directory.
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=f".{name}.", suffix=".upload")
-    written = 0
+    #
+    # The workspace has a ceiling (AGENT_WORKSPACE_SIZE), and the answer
+    # to hitting it has to name the cause: a full workspace is a 507, not
+    # a 500 with a traceback in it. The client is told that the file did
+    # not land and that the workspace is what refused it.
+    tmp_path: str | None = None
     try:
+        try:
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=f".{name}.", suffix=".upload")
+        except OSError as exc:
+            if exc.errno == errno.ENOSPC:
+                raise HTTPException(
+                    status_code=507,
+                    detail=_workspace_is_full_detail(),
+                ) from exc
+            raise
+        written = 0
         with os.fdopen(tmp_fd, "wb") as tmp:
             async for chunk in request.stream():
                 if not chunk:
@@ -2228,6 +2261,13 @@ async def upload_file(
         _refuse_if_taken(target, name)
         os.replace(tmp_path, target)
         tmp_path = None
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            raise HTTPException(
+                status_code=507,
+                detail=_workspace_is_full_detail(),
+            ) from exc
+        raise
     finally:
         if tmp_path is not None:
             try:

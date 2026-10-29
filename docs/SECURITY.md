@@ -151,11 +151,43 @@ inside a real shell). Mitigations:
 
 ### 4. LLM fills the disk
 
-`mem_limit: 2g`, `pids_limit: 256`, and a `read_only` root filesystem
-mitigate most disk-fill attacks. The only writable surface is the
-`/workspace` bind-mount, which is on your host filesystem. If you
-want to bound it, put `/opt/agent-workspace` on its own filesystem
-with a quota.
+**The sandbox's storage is capped, and the host's disk is out of reach.**
+
+Every path the sandbox may write is a tmpfs mount with a ceiling, and
+the ceiling is a number: `AGENT_WORKSPACE_SIZE` for the workspace,
+fixed sizes for `/tmp`, `/run` and the two download caches. The sum of
+those ceilings is kept below the container's `mem_limit`, so the whole
+writable surface is bounded by RAM and by nothing else.
+
+Measured on the production host before v2.16.0: the workspace was a
+read-write bind of `/opt/telegrambot/sandbox-workspace`, and that
+directory was on the **same ext4 partition the whole host lives on**
+(`nvme0n1p4`, 1.8 T, 94 % used, 106 G free). A `dd` in the sandbox
+therefore filled the operator's disk — and unlike a wiped `/etc`, that
+damage does not die with the container: a reset brings `/etc` back and
+does not bring a disk back.
+
+The workspace is a tmpfs inside the container now. The same `dd` fails
+with `ENOSPC` inside the container, and the host's disk is none the
+wiser.
+
+Two things follow from the bound, and both are worth knowing:
+
+* **The workspace is RAM.** A file the model wrote is gone when the
+  container is replaced, and so is the session registry. A file that
+  has to outlive the container leaves through the file door.
+* **The tmpfs sizes are charged against `mem_limit`.** The sum of the
+  mounts has to stay below it, or the OOM killer stops the container
+  before its own ceiling is reached.
+
+One surface is still unbounded, and it is the privilege mode's fourth
+setting: `AGENT_READ_ONLY=false` makes the container's root filesystem
+writable, and the writable layer lives on the host's disk with no quota
+on it. Compose has no per-container storage quota, so a privileged
+deployment with a writable root **cannot** bound its own storage — the
+bound and the writable root are the same decision taken twice. If the
+disk has to stay out of reach, the root filesystem has to stay
+read-only, and `apt-get` inside the sandbox stops working.
 
 ### 5. LLM spawns long-running processes
 
@@ -528,8 +560,9 @@ policy says so:
 
 Measured on a running default deployment: `rm -f /etc/hostname` and
 `touch /usr/local/x` both answer *Read-only file system*, and the only
-writable places are `/workspace` (the scratchpad — a bind on the host,
-by design) and `/tmp` (a tmpfs).
+writable places are the tmpfs mounts — `/workspace` (the scratchpad,
+capped by `AGENT_WORKSPACE_SIZE`), `/tmp` and `/run`, plus the two
+download caches. None of them is a path on the host's disk.
 
 **The privilege mode is a different deployment, and the container is
 its blast radius.** With `AGENT_ALLOW_SUDO=1` and
@@ -551,15 +584,37 @@ docker compose --env-file <the deployment's env file> \
   -f docker-compose.production.yml up -d --force-recreate
 ```
 
-**The host is outside the blast radius.** The container has no device
-nodes (`/dev/nvme*` and `/dev/sd*` do not exist in it), no host root
-and no docker socket, so `dd` and `mkfs` cannot reach the operator's
-disks even with root inside. The only host path a privileged agent can
-destroy is the workspace bind — the scratchpad, which exists to be
-scratch. **A privileged deployment therefore gets no other host bind**:
-the SSH-key mount in the production stack is read-only *and* empty,
-and it stays read-only even for root inside the container, because
-remounting it needs a capability the container does not have.
+**The host is outside the blast radius — with one exception, and it is
+not the one everybody expects.** The container has no device nodes
+(`/dev/nvme*` and `/dev/sd*` do not exist in it), no host root and no
+docker socket, so `dd` and `mkfs` cannot reach the operator's disks
+even with root inside.
+
+The exception is **space**. A read-write bind of a host directory is a
+writable path on the host's filesystem, and it is the one damage a
+container reset cannot undo: a wiped `/etc` comes back with the
+container, a full disk does not. The production stack shipped such a
+bind until v2.16.0 — `/opt/telegrambot/sandbox-workspace` → `/workspace`,
+on the same ext4 partition the whole host lives on — and the agent
+found it before the operator did. It wrote into it with `dd`.
+
+So the rule is not "the scratchpad is allowed to be a host directory".
+It is:
+
+> **A privileged deployment gets no writable host bind at all.**
+
+The workspace is a tmpfs inside the container, the download caches are
+tmpfs, and the only host path the agent sees is the read-only SSH key
+directory — which stays read-only even for root inside the container,
+because remounting it needs a capability the container does not have.
+
+One surface remains, and it is the writable root filesystem: the
+container's writable layer is a directory on the host's disk, and
+compose has no per-container storage quota, so **a deployment with
+`AGENT_READ_ONLY=false` cannot bound its own storage**. That is the
+price of `apt-get` inside the sandbox, and the two cannot be had at the
+same time: the bound and the writable root are the same decision taken
+twice.
 
 **One class is the caller's to close.** The command policy in front of
 the sandbox refused `rm -rf /` and `dd of=/dev/nvme0n1p4`, and it had
@@ -697,7 +752,7 @@ This stack is designed for the **single-operator** deployment shape:
    │   • the Open WebUI instance                         │
    │   • the bearer token in TOOL_SERVER_CONNECTIONS     │
    │   • the AGENT_TOKEN env var on the sandbox-agent    │
-   │   • the /opt/agent-workspace directory               │
+   │   • the sandbox's workspace (a tmpfs, capped)       │
    │   • all SSH keys mounted into the sandbox            │
    └─────────────────────────────────────────────────────┘
                           │
@@ -727,7 +782,10 @@ or re-architect.
 - [ ] Set `OPENAPI_PROXY_CORS_ORIGINS` if you serve a browser UI
 - [ ] Set `OPENAPI_PROXY_SSH_ALLOWLIST` to your actual fleet
 - [ ] Add a periodic janitor for old tmux sessions
-- [ ] Put `/opt/agent-workspace` on a separate filesystem with a quota
+- [ ] Set `AGENT_WORKSPACE_SIZE` to the ceiling the sandbox may
+      occupy (default `1g`, `2g` in the production stack) — and
+      leave `AGENT_READ_ONLY=true`, or the writable root layer puts
+      the host's disk back in reach
 - [ ] Enable Docker user namespaces (`/etc/subuid` + `userns-remap`)
 - [ ] Run behind a reverse proxy (Caddy/Traefik) with TLS
 - [ ] Pipe JSON logs to your log aggregator
