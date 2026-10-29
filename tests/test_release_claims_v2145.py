@@ -134,8 +134,18 @@ class TestTheModelIsTheClaim(unittest.TestCase):
 
 class TestTheSuiteIsTheClaim(unittest.TestCase):
     def test_the_suite_has_a_tmux_server_of_its_own(self) -> None:
-        source = _source("tests/conftest.py")
-        self.assertIn('os.environ["TMUX_TMPDIR"] = str(private)', source)
+        """The rule, and the two runners that have to obey it.
+
+        The rule lives in one place (tests/_tmux_isolation.py) and the
+        runners call it: pytest through its fixture, a plain
+        ``python -m unittest discover`` through the import of the test
+        that checks it.  A claim checked in one place only is a claim
+        about half the suite.
+        """
+        rule = _source("tests/_tmux_isolation.py")
+        self.assertIn('os.environ["TMUX_TMPDIR"] = private', rule)
+        self.assertIn("ensure_private_tmux_server()", _source("tests/conftest.py"))
+        self.assertIn("ensure_private_tmux_server()", _source("tests/test_suite_hygiene_v2145.py"))
 
     def test_the_ci_checks_the_suite_without_tmux(self) -> None:
         workflow = _source(".github/workflows/ci.yml")
