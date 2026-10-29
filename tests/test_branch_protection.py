@@ -94,6 +94,41 @@ def _declared_contexts() -> list[str]:
     ]
 
 
+def _workflow_push_branches() -> list[str]:
+    """The branch patterns the workflow's `push:` trigger listens to.
+
+    A text parser, not a YAML one: the repository does not depend on
+    PyYAML, and a check that cannot run is a check that does not run.
+    The `on:` block ends at the next top-level key, so `jobs:` never
+    leaks into the answer.
+    """
+    lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+    in_on = False
+    in_push = False
+    branches: list[str] = []
+    for raw in lines:
+        line = _strip_comment(raw)
+        if not line.strip():
+            continue
+        if not in_on:
+            if re.match(r"^on:\s*$", line):
+                in_on = True
+            continue
+        if re.match(r"^\S", line):
+            break
+        if re.match(r"^  push:\s*$", line):
+            in_push = True
+            continue
+        if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):
+            in_push = False
+            continue
+        if in_push:
+            found = re.match(r"^    branches:\s*\[(.+?)\]\s*$", line)
+            if found:
+                branches = [p.strip().strip("'\"") for p in found.group(1).split(",")]
+    return branches
+
+
 def _workflow_jobs() -> dict[str, list[str]]:
     """The job names `ci.yml` produces, with the matrix expanded.
 
@@ -272,6 +307,39 @@ class TestTheContributionGuidePointsAtTheList(unittest.TestCase):
                     "the guide counts the required checks in prose — that "
                     "number goes stale silently. Point at the list instead.",
                 )
+
+
+class TestTheGateCanRunOnABranch(unittest.TestCase):
+    """The gate must be able to run on a branch, not only on a pull request.
+
+    The workflow's `push:` trigger used to listen to `main` alone, so a
+    branch push produced no check runs at all. The consequence was not
+    cosmetic: the required checks could only ever be collected by a pull
+    request, and opening one needs the GitHub API. With the API
+    unreachable, the release was pushed, tagged, deployed and verified —
+    and could not be landed, because the commits that carried it had no
+    green runs to show. The gate is the checks, not the pull request: a
+    branch that runs them on its own push can be landed as a
+    fast-forward once they are green.
+
+    So the trigger has to listen to every branch. If it stops, the
+    landing path silently disappears and the next release gets stuck at
+    "13 of 13 required status checks are expected" — with a green CI
+    badge on the branch to mock it.
+    """
+
+    def test_the_gate_runs_on_every_branch_push(self) -> None:
+        branches = _workflow_push_branches()
+        self.assertTrue(
+            branches,
+            "the workflow's `push:` trigger names no branch — nothing runs on a push",
+        )
+        self.assertIn(
+            "**",
+            branches,
+            "the gate listens to `main` only, so a branch push produces no check "
+            "runs and a release cannot be landed without the GitHub API",
+        )
 
 
 class TestTheLiveSettingsMatchTheTree(unittest.TestCase):
