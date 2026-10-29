@@ -4,6 +4,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.0] - 2026-10-29
+
+The sandbox's storage is capped, and the host's disk is out of reach.
+
+The last hole that reached past the container, found by the party that
+was looking for one: a privileged agent was told to shoot itself in the
+foot as hard as it could, and it reported a vector it had not used --
+`/workspace` is a read-write bind of a host directory, and that
+directory is on the same ext4 partition the whole host lives on. The
+report was right, and the vector was not theoretical: a `dd` in the
+sandbox fills the operator's disk.
+
+Every other class of damage the sandbox can do -- a wiped `/etc`, a
+deleted session, a fork-bomb -- dies with the container. A full disk
+does not, and a container reset does not bring a disk back. That is why
+this one was closed and not merely documented.
+
+### Fixed
+
+- **The workspace is a tmpfs inside the container, with a ceiling.** It
+  was a read-write bind of `/opt/agent-workspace` (the production stack:
+  `/opt/telegrambot/sandbox-workspace`), on the host's own partition --
+  measured on the production host before the change: `nvme0n1p4`, 1.8 T,
+  94 % used, 106 G free. The workspace is a tmpfs mount with a size now
+  (`AGENT_WORKSPACE_SIZE`, default `1g`, `2g` in the production stack),
+  and the same `dd` fails with `ENOSPC` inside the container.
+
+  The price is honest and named: the workspace is RAM, and it does not
+  survive a container recreate. A file that has to outlive the container
+  leaves through the file door, and the session registry
+  (`/workspace/.agent-sessions.json`) starts empty after a recreate --
+  the same state a first deploy has.
+
+- **The agent has no writable host path at all.** The apt and pip
+  download caches were named volumes, and a named volume is a directory
+  on the host's disk -- a writable one is a hole in exactly the bound
+  the sandbox claims to have. They are tmpfs with ceilings now. The
+  only host path the agent sees is the read-only SSH key directory, and
+  a read-only bind stays read-only even for a root command inside the
+  container.
+
+- **A full workspace answers 507.** The ceiling turned "no space left on
+  device" from an accident into an event, and the door now names the
+  cause: *the sandbox workspace is full -- the file did not land*. The
+  file is not there, nothing is left behind, and the wording is pinned
+  against `docs/HANDOFF-binary-transport.md`, which promises it.
+
+### Changed
+
+- **The tmpfs budget fits the memory ceiling, and the tripwires keep it
+  there.** A tmpfs is RAM, so its size is charged against the
+  container's `mem_limit`: the sum of the mounts has to stay below it,
+  or the OOM killer stops the container before its own ceiling is
+  reached. The shipped stacks are sized to fit (1.75 GiB of tmpfs
+  against a 2 GiB limit in the default stack, 3 GiB against 4 GiB in the
+  production stack), and the ceiling has to be at least the file policy
+  -- a file the door accepts has to fit somewhere.
+
+- **One privileged deployment decision, taken twice.** A writable root
+  filesystem (`AGENT_READ_ONLY=false`) puts the container's writable
+  layer -- a directory on the host's disk -- back in reach, and compose
+  has no per-container storage quota, so a privileged deployment with a
+  writable root cannot bound its own storage. The bound and the writable
+  root are the same decision taken twice: the disk stays out of reach
+  only while the root filesystem stays read-only, and `apt-get` inside
+  the sandbox stops working when it does not.
+
+### Added
+
+- **`AGENT_WORKSPACE_SIZE`** -- the ceiling on the sandbox's own
+  storage, in the same size syntax as the other limits.
+
 ## [2.15.0] - 2026-10-29
 
 The door grows its other half.
@@ -78,14 +150,6 @@ the file was too large.
   it wrong.
 
 ### Fixed
-
-- **The refusals changed their wording.** Unifying the path rules into
-  one helper also unified the *words* of the refusals, and those words
-  are a contract: `docs/HANDOFF-mcp.md` lists them, and the production
-  verifier asserts one of them against the running stack. The file door
-  says `path outside the workspace: ...` and the shell door says `cwd
-  outside workspace: ...`, and they say it again. The wording is now
-  pinned by a tripwire against the document that promises it.
 
 - **The refusals changed their wording.** Unifying the path rules into
   one helper also unified the *words* of the refusals, and those words

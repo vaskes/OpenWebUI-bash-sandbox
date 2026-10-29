@@ -59,7 +59,7 @@ services:
     # Must be at least uvicorn's --timeout-graceful-shutdown (25s) +
     # headroom, otherwise Docker SIGKILLs the container mid-shutdown.
     stop_grace_period: 30s
-    # Read-only root filesystem. Writes go through the bind-mount + tmpfs.
+    # Read-only root filesystem. Writes go through the tmpfs mounts below.
     # The privilege mode's fourth setting: set AGENT_READ_ONLY=false and
     # the privileged root can also install packages. See docs/SECURITY.md,
     # "The privilege mode".
@@ -67,10 +67,31 @@ services:
     tmpfs:
       - /tmp:size=512m,mode=1777
       - /run:size=64m,mode=755
+      # THE WORKSPACE IS A TMPFS INSIDE THE CONTAINER, WITH A CEILING.
+      #
+      # It used to be a bind of /opt/agent-workspace, and that made the
+      # host's own partition the sandbox's scratchpad: `dd if=/dev/zero
+      # of=/workspace/x` filled the operator's disk, not the container's.
+      # A bind is the one writable surface that reaches past the
+      # container, and an unbounded one is a disk-filler with a working
+      # shell in front of it.
+      #
+      # AGENT_WORKSPACE_SIZE is the whole ceiling — the number of bytes
+      # the sandbox may occupy. When it is reached the write fails with
+      # ENOSPC inside the container, and the host's disk is none the
+      # wiser. The cost is honest and worth naming: the workspace is
+      # RAM, and it does not survive a container recreate.
+      - /workspace:size=${AGENT_WORKSPACE_SIZE:-1g},mode=1777
+      # The download caches are tmpfs for the same reason. A named volume
+      # is a directory on the host's disk, and a writable one is a hole
+      # in exactly the bound this stack claims to have.
+      - /var/cache/apt:size=128m,mode=1777
+      - /home/agent/.cache/pip:size=64m,mode=1777
     volumes:
-      # Persistent workspace — host directory mounted as /workspace.
-      # The agent's home is read-only because we run as non-root.
-      - /opt/agent-workspace:/workspace
+      # The only host path the agent sees is the SSH key directory, and
+      # it is read-only. A read-only bind stays read-only even for a
+      # root command inside the container: remounting it needs a
+      # capability (CAP_SYS_ADMIN) the container does not have.
       - /opt/agent-workspace/.ssh:/home/agent/.ssh:ro
       # NOTE: there is deliberately NO volume mounted at /home/agent. The
       # application code lives there (WORKDIR is /home/agent so the import
@@ -79,10 +100,6 @@ services:
       # shadows the code with the copy from the first run, and every later
       # image rebuild becomes a no-op: the repository moves, the container
       # does not. Sub-paths are fine — they do not cover the code.
-      # Persistent apt cache (saves bandwidth + time on rebuilds).
-      - sandbox-agent-apt:/var/cache/apt:rw
-      # Persistent pip cache.
-      - sandbox-agent-pip:/home/agent/.cache/pip:rw
     environment:
       - AGENT_WORKSPACE=/workspace
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
@@ -233,8 +250,10 @@ services:
         condition: service_started
 
 volumes:
-  sandbox-agent-apt:
-  sandbox-agent-pip:
+  # The agent's writable paths are tmpfs mounts with ceilings, so they
+  # are not volumes: a named volume is a directory on the host's disk.
+  # The only volume left here belongs to Open WebUI, and it must stay
+  # out of the agent's reach.
   open-webui-data:
 
 networks:
