@@ -55,6 +55,16 @@ jobs:
           pytest --cov=. --cov-report=xml --cov-report=term tests/ || \
             coverage run --source=. -m unittest discover -s tests && \
             coverage report
+      - name: The suite also runs on the stdlib
+        # The README promises "stdlib unittest, no pytest required", and
+        # the fallback above only runs when pytest is MISSING -- which is
+        # exactly when nobody is looking.  Run the stdlib path on
+        # purpose: it is a promise about a path, and a promise nobody
+        # walks is a promise nobody checks.  (It was broken once: the
+        # tmux isolation lived in a pytest fixture, so two of the suite's
+        # own tests failed there, and the sessions the live tests made
+        # were litter on the machine's default tmux server.)
+        run: python -m unittest discover -s tests
       - name: Upload coverage
         if: matrix.python-version == '3.11'
         uses: codecov/codecov-action@v7
