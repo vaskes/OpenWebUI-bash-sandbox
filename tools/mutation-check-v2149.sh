@@ -97,7 +97,7 @@ mutate docker-compose.yml \
 
 echo "== the template offers a knob no compose interpolates =="
 mutate docker-compose.yml \
-  '      - OPENAPI_PROXY_UPSTREAM_TOKEN=${OPENAPI_PROXY_UPSTREAM_TOKEN:-}' \
+  '      - OPENAPI_PROXY_UPSTREAM_TOKEN=${OPENAPI_PROXY_UPSTREAM_TOKEN:-${AGENT_INBOUND_TOKEN:-${OPENAPI_PROXY_TOKEN}}}' \
   '      # (removed)' \
   "$RULE_DRIFT" \
   "every offered knob is a knob the stack honours"

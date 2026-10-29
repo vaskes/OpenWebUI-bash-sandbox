@@ -312,6 +312,32 @@ def _safe_cwd(candidate: str) -> str:
 # ---------------------------------------------------------------------------
 # tmux plumbing
 # ---------------------------------------------------------------------------
+# The environment variables the model's shell must never see.
+#
+# The agent needs its own token to authenticate the calls that arrive at
+# its doors, and the model's shell inherits the agent's environment
+# through the tmux server: tmux starts its server from the first client,
+# and the server's environment is what every session's shell gets.
+# Measured on 2026-10-29, a session's `env` printed the agent's token in
+# plaintext — and the sandbox has unrestricted outbound network access, so
+# a token in the model's hands is a token that can leave the host.
+#
+# The token stays in the agent's own environment (it has to be there); it
+# is removed from the environment tmux hands to the model.
+# See docs/SECURITY.md, "The sandbox is not a boundary".
+_SECRET_ENV_MARKERS = ("TOKEN", "SECRET", "PASSWORD")
+
+
+def _secret_env_names() -> list[str]:
+    """The names of the environment variables that look like credentials."""
+    return [name for name in os.environ if any(m in name.upper() for m in _SECRET_ENV_MARKERS)]
+
+
+def _tmux_environment() -> dict[str, str]:
+    """The environment the tmux client — and therefore its server — gets."""
+    return {name: value for name, value in os.environ.items() if name not in _secret_env_names()}
+
+
 async def _tmux(*args: str) -> tuple[int, str, str]:
     """Run a tmux command asynchronously. Returns ``(returncode, stdout, stderr)``."""
     proc = await asyncio.create_subprocess_exec(
@@ -319,6 +345,7 @@ async def _tmux(*args: str) -> tuple[int, str, str]:
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=_tmux_environment(),
     )
     stdout, stderr = await proc.communicate()
     return (
@@ -326,6 +353,24 @@ async def _tmux(*args: str) -> tuple[int, str, str]:
         stdout.decode("utf-8", "replace"),
         stderr.decode("utf-8", "replace"),
     )
+
+
+async def _unscrub_tmux_server() -> None:
+    """Take the credentials out of the tmux server's own environment.
+
+    The server keeps the environment of the client that started it. When
+    that client was this agent, the environment is already clean. But a
+    server that was started earlier — by an older build, or by anything
+    else in the container — still carries the secrets, and every session
+    created after that inherits them. Unsetting them globally closes it.
+
+    Runs before the first session is created, because the shell's
+    environment is fixed when its pane is created.
+    """
+    for name in _secret_env_names():
+        # `set-environment -u` unsets; a name the server does not know is
+        # an error we do not care about.
+        await _tmux("set-environment", "-g", "-u", name)
 
 
 async def tmux_session_exists(name: str) -> bool:
@@ -712,6 +757,11 @@ async def create_session(body: CreateSession) -> dict[str, Any]:
     sid = safe_id(body.session_id)
     name = tmux_name(sid)
     requested = _safe_cwd(body.cwd) if body.cwd else None
+    # The tmux server has just been started by the call above (tmux
+    # starts it from its first client). Take the credentials out of its
+    # environment before any pane is created, because a pane's
+    # environment is fixed when the pane is created.
+    await _unscrub_tmux_server()
     if await tmux_session_exists(name):
         # The pane is alive. Two cases, and they used to be one:
         #
