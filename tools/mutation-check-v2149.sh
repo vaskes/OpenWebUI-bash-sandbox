@@ -59,6 +59,13 @@ mutate agent_core.py \
   "$RULE_DRIFT" \
   "the contract pins the version that is deployed"
 
+echo "== the tree's version stops matching the changelog's newest section =="
+mutate agent_core.py \
+  '__version__ = "' \
+  '__version__ = "0.0.0' \
+  "tests/test_release_claims_v2149.py" \
+  "the shipped version is the release the changelog describes"
+
 echo "== the metrics table drops a metric the service exports =="
 mutate docs/CONFIGURATION.md \
   '| `sandbox_agent_exec_refused_total`    | agent   | commands refused before they were typed, because they would stick the shell |' \
@@ -90,7 +97,7 @@ mutate docker-compose.yml \
 
 echo "== the template offers a knob no compose interpolates =="
 mutate docker-compose.yml \
-  '      - OPENAPI_PROXY_UPSTREAM_TOKEN=${OPENAPI_PROXY_UPSTREAM_TOKEN:-}' \
+  '      - OPENAPI_PROXY_UPSTREAM_TOKEN=${OPENAPI_PROXY_UPSTREAM_TOKEN:-${AGENT_INBOUND_TOKEN:-${OPENAPI_PROXY_TOKEN}}}' \
   '      # (removed)' \
   "$RULE_DRIFT" \
   "every offered knob is a knob the stack honours"

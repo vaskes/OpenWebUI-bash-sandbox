@@ -100,7 +100,14 @@ services:
       - AGENT_MCP_MAX_READ_BYTES=${AGENT_MCP_MAX_READ_BYTES:-1m}
       # Same token as OPENAPI_PROXY_TOKEN — the proxy forwards it on
       # every call. The agent refuses to serve if this is empty.
-      - AGENT_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
+      # The token the agent accepts on its own doors. It defaults to the
+      # proxy's token — one credential for the whole stack — which is the
+      # simple single-operator shape. Set AGENT_INBOUND_TOKEN to a
+      # **different** value and the two roles separate: the operator's
+      # token stays out of this container, and the model's shell (which
+      # inherits this environment) can only ever see the internal one.
+      # See docs/SECURITY.md, "The sandbox is not a boundary".
+      - AGENT_TOKEN=${AGENT_INBOUND_TOKEN:-${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}}
       # The Host header values the MCP endpoint answers for. Empty =
       # no check at all — the check is off by default. A deployment
       # behind a domain names it here, or the MCP endpoint answers 421.
@@ -131,7 +138,10 @@ services:
       - OPENAPI_PROXY_TOKEN=${OPENAPI_PROXY_TOKEN:?OPENAPI_PROXY_TOKEN must be set}
       # The token the proxy uses to call sandbox-agent. Empty = the same
       # token as above, which is the usual single-trust-boundary case.
-      - OPENAPI_PROXY_UPSTREAM_TOKEN=${OPENAPI_PROXY_UPSTREAM_TOKEN:-}
+      # When the agent has its own inbound token, the proxy must send
+      # that one — hence the fallback chain: an explicit value, then the
+      # agent's inbound token, then the proxy's own.
+      - OPENAPI_PROXY_UPSTREAM_TOKEN=${OPENAPI_PROXY_UPSTREAM_TOKEN:-${AGENT_INBOUND_TOKEN:-${OPENAPI_PROXY_TOKEN}}}
       - OPENAPI_PROXY_CORS_ORIGINS=${OPENAPI_PROXY_CORS_ORIGINS:-}
       - OPENAPI_PROXY_SSH_ALLOWLIST=${OPENAPI_PROXY_SSH_ALLOWLIST:-}
       - OPENAPI_PROXY_RATE_LIMIT_RPM=${OPENAPI_PROXY_RATE_LIMIT_RPM:-120}

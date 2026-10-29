@@ -10,6 +10,7 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_WORKSPACE`      | `/workspace`                              | Path the agent considers its writable surface. Bind-mount this. |
 | `AGENT_SESSIONS_FILE`  | `/workspace/.agent-sessions.json`         | Where the per-session registry is persisted.                   |
 | `AGENT_TOKEN`          | (empty → 503)                             | Bearer token. Mirrored from `OPENAPI_PROXY_TOKEN`. Required.   |
+| `AGENT_INBOUND_TOKEN`  | = the proxy's token                       | Bearer token the **agent** accepts on its own doors. Set it to a different value to keep the operator's stack token out of the container the model runs in — see [docs/SECURITY.md](SECURITY.md), "The sandbox is not a boundary". |
 | `AGENT_LOG_LEVEL`      | `INFO`                                    | uvicorn log level (`debug`, `info`, `warning`, `error`).      |
 | `AGENT_PORT`           | `8082`                                    | uvicorn listen port.                                           |
 | `AGENT_STDOUT_LIMIT`   | `512k`                                    | How much text one command may return in one exec. 32k..1024k.  |

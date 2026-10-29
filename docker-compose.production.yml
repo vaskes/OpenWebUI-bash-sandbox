@@ -2,7 +2,7 @@ name: telegrambot-sandbox
 
 # Production sandbox side-car for the telegram bot on llmhost1.
 #
-# Upstream: github.com/vaskes/OpenWebUI-bash-sandbox @ v2.14.9
+# Upstream: github.com/vaskes/OpenWebUI-bash-sandbox @ v2.14.11
 # Cloned fresh into this directory — nothing is copied from llmhost2.
 #
 # The bot reaches this through the openapi-proxy's bearer-authenticated
@@ -103,7 +103,14 @@ services:
       # 0 = no budget of its own. The HTTP /files door keeps its own
       # limit: there the bytes land in a file, not in a prompt.
       - AGENT_MCP_MAX_READ_BYTES=${AGENT_MCP_MAX_READ_BYTES:-1m}
-      - AGENT_TOKEN=${AGENT_STACK_TOKEN:?AGENT_STACK_TOKEN must be set}
+      # The token the agent accepts on its own doors. It defaults to the
+      # operator's stack token — one credential for the whole stack — which
+      # is the simple single-operator shape. Set AGENT_INBOUND_TOKEN to a
+      # **different** value and the two roles separate: the operator's
+      # token stays out of this container, and the model's shell (which
+      # inherits this environment) can only ever see the internal one.
+      # See docs/SECURITY.md, "The sandbox is not a boundary".
+      - AGENT_TOKEN=${AGENT_INBOUND_TOKEN:-${AGENT_STACK_TOKEN:?AGENT_STACK_TOKEN must be set}}
       # The Host header values the MCP endpoint answers for. Empty =
       # no check at all — the check is off by default. A deployment
       # behind a domain names it here, or the MCP endpoint answers 421.
@@ -132,7 +139,10 @@ services:
       - OPENAPI_PROXY_TOKEN=${AGENT_STACK_TOKEN:?AGENT_STACK_TOKEN must be set}
       # The token the proxy uses to call sandbox-agent. Empty = the same
       # token as above, which is the usual single-trust-boundary case.
-      - OPENAPI_PROXY_UPSTREAM_TOKEN=${OPENAPI_PROXY_UPSTREAM_TOKEN:-}
+      # When the agent has its own inbound token, the proxy must send
+      # that one — hence the fallback chain: an explicit value, then the
+      # agent's inbound token, then the operator's stack token.
+      - OPENAPI_PROXY_UPSTREAM_TOKEN=${OPENAPI_PROXY_UPSTREAM_TOKEN:-${AGENT_INBOUND_TOKEN:-${AGENT_STACK_TOKEN}}}
       - OPENAPI_PROXY_RATE_LIMIT_RPM=${OPENAPI_PROXY_RATE_LIMIT_RPM:-120}
       - OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS=${OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS:-10000}
       - OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT=${OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT:-300}

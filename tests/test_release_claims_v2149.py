@@ -37,6 +37,20 @@ if str(ROOT) not in sys.path:
 VERSION = "2.14.9"
 
 
+def _newest_section_version() -> str:
+    """The version of the newest ``## [X.Y.Z]`` section of the changelog.
+
+    The version a release claims is the version the changelog's **newest**
+    section describes — not a literal written into this file. A literal
+    here is a number that rots: it goes stale on the next release, and
+    then it is either edited (so the test says nothing) or left (so the
+    suite is red for a reason that has nothing to do with the code).
+    """
+    match = re.search(r"^## \[([0-9]+\.[0-9]+\.[0-9]+)\]", _source("CHANGELOG.md"), re.M)
+    assert match is not None, "the changelog has no version section"
+    return match.group(1)
+
+
 def _source(name: str) -> str:
     return (ROOT / name).read_text(encoding="utf-8")
 
@@ -66,6 +80,10 @@ class TestTheVersionIsTheRelease(unittest.TestCase):
         # The number this release claims is pinned by the claims test of
         # the release that is current.
         self.assertEqual(agent_core.__version__, proxy_core.__version__)
+        # The shipped version is the release the changelog's newest section
+        # describes — not a literal pinned in this file, which would rot on
+        # the next release.
+        self.assertEqual(agent_core.__version__, _newest_section_version())
 
     def test_the_changelog_has_the_section(self) -> None:
         self.assertIn(f"## [{VERSION}]", _source("CHANGELOG.md"))
