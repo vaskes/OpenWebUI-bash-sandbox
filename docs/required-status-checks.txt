@@ -1,0 +1,67 @@
+# The canonical list of required status checks on `main`.
+#
+# WHY THIS FILE EXISTS
+#
+# GitHub holds the list of required status checks in its own settings, not
+# in the repository. That makes the list invisible to the tree — and a
+# required check that no run ever reports is not a slow gate, it is a
+# **permanently closed one**.
+#
+# Measured on 2026-10-29, on a throwaway branch with the same rules as
+# `main`: a required context that CI never reports ("A Job That Was Renamed
+# Last Year") left every pull request at
+#
+#     13 of 13 required status checks are queued.
+#     mergeable_state: blocked
+#
+# The merge was refused with HTTP 405 and there was no way out of it from
+# the repository side: only a human in the branch settings could remove
+# the stale context. The same trap waits for `main` the moment somebody
+# renames a CI job — and the repository would look perfectly healthy while
+# every release was stuck.
+#
+# So the list lives here, in the tree, and `tests/test_branch_protection.py`
+# checks it against the job names the workflow really produces. The
+# workflow is the source of truth for the *names*; this file is the source
+# of truth for the *list*. A tripwire that compares the two in both
+# directions is what turns "someone renamed a job" from a silent
+# brick into a red build.
+#
+# WHAT BELONGS HERE
+#
+# One required status check per line, exactly as GitHub spells it. The
+# names are the values of the `name:` keys under `jobs:` in
+# `.github/workflows/ci.yml`, after the matrix has been expanded:
+#
+#     Tests (Python ${{ matrix.python-version }})  ->  Tests (Python 3.11)
+#                                                     Tests (Python 3.12)
+#                                                     Tests (Python 3.13)
+#                                                     Tests (Python 3.14)
+#
+# The two CodeQL analyses are reported by GitHub itself (the default
+# code-scanning workflow), not by this repository's workflow — which is
+# why they are listed here but never appear in `ci.yml`. The tripwire
+# knows about that difference and does not treat it as a drift.
+#
+# TO CHANGE THE LIST
+#
+# 1. Edit the workflow (or the GitHub-side CodeQL setup) first.
+# 2. Run `make test` — the tripwire tells you which names changed.
+# 3. Edit this file to match.
+# 4. Push the same change to the branch protection settings, in the same
+#    commit. A list that says one thing and the settings another is the
+#    same drift this file exists to catch.
+
+Lint (ruff)
+SAST (ruff B-rules)
+Tests (Python 3.11)
+Tests (Python 3.12)
+Tests (Python 3.13)
+Tests (Python 3.14)
+The suite is green without tmux
+Privilege mode (sudo + a root that can actually write)
+Deploy (docker build + boot + smoke)
+Mutation checks (the tripwires can still go red)
+Secret scan (gitleaks)
+Analyze (python)
+Analyze (actions)

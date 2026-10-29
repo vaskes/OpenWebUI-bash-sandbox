@@ -143,15 +143,25 @@ rather than by good intentions:
 | force pushes are refused | history on `main` cannot be rewritten |
 | deletion is refused | `main` cannot be deleted |
 | the history must be linear | no merge commits |
-| thirteen checks must be green before a merge | the four Python versions, the linters, the mutation checks, the deploy, the privilege mode, the secret scan and the two CodeQL analyses |
+| every check in [`docs/required-status-checks.txt`](docs/required-status-checks.txt) must be green before a merge | the four Python versions, the linters, the mutation checks, the deploy, the privilege mode, the secret scan and the two CodeQL analyses |
 | the branch must be up to date before merging | `strict` — a green run on an old commit is not enough |
 | conversations must be resolved | no merging over an open review thread |
+
+The list of required checks lives on GitHub, in the branch settings, where
+the repository cannot see it. So the tree keeps its own copy in
+[`docs/required-status-checks.txt`](docs/required-status-checks.txt), and
+`tests/test_branch_protection.py` compares the two. This matters more than
+it looks: a required check that no run ever reports is not a slow gate but
+a **permanently closed** one — every pull request stays blocked with
+`required status checks are queued`, and only a human in the branch
+settings can undo it. The tripwire turns "somebody renamed a CI job" from
+a silent brick into a red build.
 
 The checks are the gate, so a PR that is green is mergeable — there is
 no separate human approval to wait for. The maintainer merges.
 
 The maintainer's own releases go through the same door: the wave lands
-on a branch, the branch becomes a PR, the thirteen checks run on it,
+on a branch, the branch becomes a PR, the checks run on it,
 and the PR is rebased into `main` — which is why the history stays
 linear. The release's tag then lands on the merged commit that carries
 the release's changelog section, and that commit is the one the
