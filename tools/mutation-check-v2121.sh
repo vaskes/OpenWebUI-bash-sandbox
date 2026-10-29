@@ -21,7 +21,7 @@ mutate body_limit.py \
 
 echo "== the body limiter stops refusing =="
 mutate body_limit.py \
-  'if total > self.limit:' \
+  'if total > limit:' \
   'if False:' \
   'tests/test_hardening_v2121.py' \
   "over-limit bodies are refused"

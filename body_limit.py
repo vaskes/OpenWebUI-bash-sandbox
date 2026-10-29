@@ -21,6 +21,8 @@ would count bytes the application never sees.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from fastapi import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -54,16 +56,48 @@ class BodySizeLimit:
     The header is checked first because it is free, and a client that
     says "ten megabytes" deserves to be told so before the ten
     megabytes are read. The count is what makes the limit real.
+
+    ``overrides`` gives a path its own limit. The default limit is the
+    one that fits the doors that carry a *command* - a body of a few
+    megabytes there is either a mistake or an attack. The door that
+    carries a *file* needs a ceiling of its own: the same body limit
+    that keeps a hostile padding out of the JSON parser would refuse
+    the very bytes the door exists to deliver. Longest prefix wins, so
+    ``/files`` can have a limit of its own without touching the doors
+    around it.
     """
 
-    def __init__(self, app: ASGIApp, limit: int) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        limit: int,
+        overrides: Mapping[str, int] | None = None,
+    ) -> None:
         self.app = app
         self.limit = int(limit)
+        self.overrides = {str(k): int(v) for k, v in (overrides or {}).items()}
+
+    def limit_for(self, path: str) -> int:
+        """The limit that applies to ``path``.
+
+        A path matches an override when it *is* the prefix or starts
+        with it followed by a slash, so ``/files`` matches ``/files``
+        and ``/files/meta`` but not ``/filesystem``.
+        """
+        best: str | None = None
+        for prefix in self.overrides:
+            if path != prefix and not path.startswith(prefix.rstrip("/") + "/"):
+                continue
+            if best is None or len(prefix) > len(best):
+                best = prefix
+        return self.limit if best is None else self.overrides[best]
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        limit = self.limit_for(str(scope.get("path", "")))
 
         declared = None
         for key, value in scope.get("headers", []):
@@ -72,7 +106,7 @@ class BodySizeLimit:
                 break
         if declared is not None:
             try:
-                if int(declared) > self.limit:
+                if int(declared) > limit:
                     await self._refuse(send)
                     return
             except ValueError:
@@ -88,7 +122,7 @@ class BodySizeLimit:
             message = await receive()
             if message["type"] == "http.request":
                 total += len(message.get("body", b""))
-                if total > self.limit:
+                if total > limit:
                     raise BodyTooLarge
             return message
 

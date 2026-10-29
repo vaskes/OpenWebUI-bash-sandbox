@@ -40,6 +40,33 @@ the file was too large.
   `404` (the parent directory does not exist), `409` (the name is
   taken), `413` (over the limit).
 
+- **The published door has a way in too.** `POST /files` was on the
+  agent; the proxy -- the only surface the bot can reach -- had
+  `GET /files`, `GET /files/meta` and `DELETE /files` and nothing
+  else. The upload the handoff asked for had nowhere to go. The proxy
+  now relays `POST /files`: the body is streamed upstream (the proxy's
+  memory use does not depend on the file's size) and the status is
+  relayed as it is, in the same vocabulary as the other two file doors
+  (200 / 400 / 404 / 409 / 413, and a 502 for an unreachable agent).
+
+- **The upload door has a ceiling of its own.** Both services keep a
+  2 MB body guard on every door that carries a *command*: a body that
+  weighs more there is either a mistake or an attack. The upload door
+  carries a *file*, and the file it exists to deliver is tens of
+  megabytes, so it needed a ceiling of its own -- `AGENT_UPLOAD_MAX_BYTES`
+  on the agent (default 64 MiB) and `OPENAPI_PROXY_UPLOAD_MAX_BYTES` on
+  the proxy (default 67108864, i.e. 64 MiB). The guard now answers per
+  path: the command doors keep their 2 MB, the file door gets its own.
+
+  The two numbers are different axes, and the order matters: the
+  **file policy** (`AGENT_BINARY_LIMIT`) says how large a file may be
+  in the sandbox, and the **transport ceiling** says how many bytes are
+  read before the request is refused. The ceiling has to be at least
+  the policy, or the transport refuses an upload the door itself would
+  have accepted -- and refuses it with the vaguer of the two answers.
+  The production stack runs a 50 MiB policy under a 64 MiB ceiling, so
+  the policy is the one that answers.
+
 ### Changed
 
 - **The path rules live in one place.** The download door and the new
@@ -49,6 +76,35 @@ the file was too large.
   containment, and `_safe_cwd` says what a directory has to be for the
   shell door. Two copies of a containment rule are two chances to get
   it wrong.
+
+### Fixed
+
+- **The refusals changed their wording.** Unifying the path rules into
+  one helper also unified the *words* of the refusals, and those words
+  are a contract: `docs/HANDOFF-mcp.md` lists them, and the production
+  verifier asserts one of them against the running stack. The file door
+  says `path outside the workspace: ...` and the shell door says `cwd
+  outside workspace: ...`, and they say it again. The wording is now
+  pinned by a tripwire against the document that promises it.
+
+- **The refusals changed their wording.** Unifying the path rules into
+  one helper also unified the *words* of the refusals, and those words
+  are a contract: `docs/HANDOFF-mcp.md` lists them, and the production
+  verifier asserts one of them against the running stack. The file door
+  says `path outside the workspace: ...` and the shell door says `cwd
+  outside workspace: ...`, and they say it again. The wording is now
+  pinned by a tripwire against the document that promises it.
+
+- **The tests of the new door used only small payloads.** The tripwires
+  that decide whether a body over 2 MB reaches the upload door were
+  written against payloads of a few bytes, so they could not tell the
+  difference between a door that takes a file and a door that takes a
+  note. The tests now push real bodies -- three megabytes through the
+  agent, three megabytes through the proxy, and a body over the
+  ceiling -- and the tripwires are mutation-verified: nine mutations
+  break the new properties on purpose, and every one of them has to
+  turn a test red.
+
 ## [2.14.11] - 2026-10-29
 
 The agent's token reached the model's shell. A finding from an internal

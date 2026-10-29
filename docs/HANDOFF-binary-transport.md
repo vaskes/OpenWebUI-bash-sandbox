@@ -124,11 +124,17 @@ the workspace, one component at a time, every component with
 `/files` endpoints are not published to the outside — the proxy is the only
 surface.
 
-**All three endpoints answer the same way.** A file that is not there is
+**All four endpoints answer the same way.** A file that is not there is
 a **404**, a path that is refused is a **400**, a file that is over the
 binary limit is a **413** (and the message names the real size), a path
 that was replaced while it was being opened is a **409**, an unsatisfiable
-`Range` is a **416**, and an unreachable sandbox agent is a **502**. The
+`Range` is a **416**, and an unreachable sandbox agent is a **502**.
+
+That is the *enumeration*: the canonical list, and every code is named
+in it exactly once. What each code means for which door is said where
+the door is described — the upload's own codes are in §2.6. A code named
+twice in this list is a fact in two places, and the second place is the
+one that rots. The
 error body is `{"detail": "..."}` — the message itself, not a JSON document
 inside a JSON string. Do not look for an `error` key: there is none, and a
 client that checks the status code is told the truth.
@@ -214,6 +220,7 @@ token is in the URL, and the link expires after an hour.
 | Limit | Value | Who sets it |
 |-------|-------|-------------|
 | Sandbox policy | `AGENT_BINARY_LIMIT`, default `2048k` (2 MiB), `0` = unlimited | the sandbox's env |
+| Transport ceiling (upload) | `AGENT_UPLOAD_MAX_BYTES` on the agent, `OPENAPI_PROXY_UPLOAD_MAX_BYTES` on the proxy, default **64 MiB** | the sandbox's env |
 | Channel | Telegram `sendDocument`: **50 MB** via the public Bot API (2000 MB with a local `telegram-bot-api`) | the channel |
 
 A sandbox limit above the channel's limit is a limit nobody can use:
@@ -221,6 +228,13 @@ raise the channel first, then the sandbox. A file over the sandbox limit
 comes back as a **413** whose message names the real size — so the bot
 can say "the file is 3 MB, the sandbox allows 2 MB" instead of failing
 vaguely.
+
+The **transport ceiling** is a different number from the policy: it is
+how many bytes are read before the request is refused, not how large a
+file may be. It has to be **at least** the policy, or the transport
+refuses an upload the door itself would have accepted — with the vaguer
+of the two answers. The production stack runs a 50 MiB policy under a
+64 MiB ceiling, so the policy is the one that answers.
 
 ### 2.5 What the sandbox deliberately does not do
 
@@ -238,6 +252,47 @@ vaguely.
   the internet.** The sandbox stays on the internal network. If a user
   needs to fetch a file directly with a browser, that is a different
   feature (and it belongs on the bot's own domain, not the sandbox's).
+
+### 2.6 The way in: `POST /files`
+
+The door above only opened outwards. `POST /files?path=P` is the other
+half: **the body is the file's raw bytes** — no base64, no multipart,
+the same binary transport the download already speaks.
+
+```bash
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  --data-binary @/path/to/the/file \
+  'http://127.0.0.1:8090/files?path=incoming.bin'
+# {"name":"incoming.bin","path":"/workspace/incoming.bin","size":49912217}
+```
+
+Four things about it that a client has to know:
+
+* **It never overwrites and never deletes.** If a file with that name is
+  already in the sandbox, the upload is refused with a **409** and the
+  file that is there stays exactly as it was. A delivery that removes
+  what it was not told to remove is a surprise, and the surprise is what
+  the user has to undo. **Pick a fresh name** — the `file_id` you keep
+  for the outgoing direction is the natural one (`tg-<file_id>`).
+* **The write is atomic.** The bytes land in a temporary file in the
+  target's own directory, and only a complete file is moved onto the
+  target name. A client can never catch a half-written file under that
+  name.
+* **The limit is enforced while the bytes arrive**, not after: the
+  reading stops the moment the upload goes over the limit, so an
+  oversized body never becomes fifty megabytes of garbage on the disk.
+  The refusal is a **413**, and its message names the real size.
+* **The path is inside the sandbox workspace.** A path outside it is a
+  **400**, and a parent directory that is not there is a **404**.
+
+The codes, in the vocabulary of §2.1: **200** with
+`{"name", "path", "size"}`, **400** for a name that is not a file name or
+an empty body, **404** for a parent directory that is not there, **409**
+for a name that is already taken, **413** for a body over the limit.
+
+The proxy relays the bytes as they arrive and relays the status as it
+is: the same vocabulary as the download, so a client has one set of
+rules and not two.
 
 ---
 
@@ -344,9 +399,11 @@ know:
 | v2.13.0 | the MCP door (`POST /mcp`) appeared — a separate surface with its own read budget | see `docs/HANDOFF-mcp.md`; the HTTP door is untouched |
 | v2.14.1 | the file door opens relative to a workspace descriptor, every component with `O_NOFOLLOW` | a path replaced mid-read is a **409**, and a symlinked component is never followed |
 | v2.14.6 | the size limit is checked **before** the file is opened | a file over the limit is a **413** without the descriptor ever being opened |
+| v2.15.0 | the door grew its other half: `POST /files` puts a file **into** the sandbox, with a transport ceiling of its own (64 MiB) and the 2 MB body guard left in place for the command doors | an upload over the ceiling is a **413**, a name that is taken is a **409** and nothing is overwritten; the client's file now has a way in |
 
-The route list itself did not change: `POST /sessions/{id}/exec`,
-`GET /files`, `GET /files/meta` and `DELETE /files` are the same four,
+The route list itself did not change until **v2.15.0**, which added
+`POST /files`: `POST /sessions/{id}/exec`, `GET /files`,
+`GET /files/meta`, `POST /files` and `DELETE /files` are the same five,
 with the same methods and the same authorization contract. `/metrics`
 appeared on both services (v2.12.1), and that is the only addition to the
 published surface.
