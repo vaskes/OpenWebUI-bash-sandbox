@@ -157,6 +157,32 @@ BINARY_LIMIT_BYTES = parse_size(
     minimum=0,
 )
 
+#: The transport ceiling for the *upload* door (``POST /files``).
+#:
+#: The command doors carry a body of JSON, and 2 MB is a generous
+#: ceiling for that: a body that weighs more is either a mistake or an
+#: attack. The upload door carries a *file*, and the file that has to
+#: come through it is tens of megabytes - so the door needs a ceiling of
+#: its own, and the general one would refuse the very bytes the door
+#: exists to deliver.
+#:
+#: This is the *transport* ceiling, not the file policy: the file that
+#: lands is still measured against ``AGENT_BINARY_LIMIT``, and the
+#: transport ceiling only decides how many bytes are read before the
+#: request is refused. It therefore has to be **at least**
+#: ``AGENT_BINARY_LIMIT`` - a transport ceiling below the file policy
+#: refuses an upload the door itself would have accepted, and refuses it
+#: with the vaguer of the two answers.
+#:
+#: 64 MiB is the default: it is comfortably above the 50 MiB the
+#: production deployment allows as a file, so the file policy is the one
+#: that answers, and it is a round number an operator can reason about.
+UPLOAD_MAX_BYTES = parse_size(
+    os.environ.get("AGENT_UPLOAD_MAX_BYTES", "64m"),
+    name="AGENT_UPLOAD_MAX_BYTES",
+    minimum=0,
+)
+
 #: The hard ceiling for one MCP read, independent of any configured limit.
 #:
 #: The HTTP door streams a file out in chunks and never holds it whole, so

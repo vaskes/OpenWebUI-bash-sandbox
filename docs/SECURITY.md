@@ -190,10 +190,10 @@ so two users opening the terminal would see each other's output. v2.1
 generates a unique `ws-<hex>` per connection and tears down the
 tmux session when the connection closes.
 
-### 8. The file door (`/files`, `/files/meta`, `DELETE /files`)
+### 8. The file door (`/files`, `/files/meta`, `POST /files`, `DELETE /files`)
 
-The binary door hands out the raw bytes of a workspace file, and
-`DELETE /files` removes one. Two things about it:
+The binary door hands out the raw bytes of a workspace file, `POST /files`
+puts a file in, and `DELETE /files` removes one. Two things about it:
 
 * **It is not a security boundary.** The workspace scope is hygiene: the
   model already has a shell in the same workspace and can read and remove
@@ -246,6 +246,43 @@ This is a hygiene guarantee, not a privilege boundary: the bash door
 reads the same bytes with the same uid, so nothing is gained here that
 the shell did not already have. What is gained is a promise the door
 can actually keep.
+
+**The way in is a door of the same kind.** `POST /files` writes a file
+into the workspace, and it is guarded the same way: the bearer token, the
+workspace scope (a path outside it is refused with a 400, and the parent
+directory is resolved and checked before a byte is written), and the size
+limits. Three things about it are worth stating plainly:
+
+* **It is not a security boundary either.** The model has a shell in the
+  same workspace and can write the same files with `cat >`. Anyone who can
+  call `POST /files` with a valid token could already write a file there.
+* **It never overwrites and never deletes.** A file with that name is
+  already in the sandbox, the upload is refused with a **409**, and the
+  file that is there stays exactly as it was. A delivery that removes
+  what it was not told to remove is a surprise, and the surprise is what
+  the user has to undo. The check happens twice - before the bytes are
+  read and again after they land - because the workspace is writable by
+  the agent and a file can appear while an upload is in flight.
+* **The bytes are streamed, not buffered.** The body is written to disk
+  as it arrives, and the ceiling is enforced *while* it arrives, so an
+  oversized upload never becomes fifty megabytes of garbage on the disk
+  and the proxy's memory use does not depend on the file's size. The
+  write is atomic: the bytes land in a temporary file in the target's own
+  directory and only a complete file is moved onto the target name, so a
+  client can never catch a half-written file under that name.
+
+Two limits, and they are different numbers: the **file policy**
+(`AGENT_BINARY_LIMIT`) says how large a file may be in the sandbox, and
+the **transport ceiling** (`AGENT_UPLOAD_MAX_BYTES`,
+`OPENAPI_PROXY_UPLOAD_MAX_BYTES`) says how many bytes are read before
+the request is refused. The ceiling has to be at least the policy, or
+the transport refuses an upload the door itself would have accepted - and
+refuses it with the vaguer of the two answers.
+
+One honest detail: the temporary file of an in-flight upload lives in the
+target's own directory under a dot-name, so a model with a shell in the
+same workspace can see a file that is still arriving. That is the same
+"this is not a boundary" fact, stated for the upload instead of hidden.
 
 The file door is deliberately **not** rate limited: a per-minute request
 budget would break a chunked transfer for a reason that has nothing to

@@ -409,7 +409,7 @@ class TestTheHandoffContractNamesEveryStatusTheDoorAnswers(unittest.TestCase):
     #: the door can answer are listed in the prose that follows it, and
     #: that prose is the contract — a mention of "409" in a table further
     #: down the document is an aside, not the enumeration.
-    ENUMERATION_MARKER = "**All three endpoints answer the same way.**"
+    ENUMERATION_MARKER = "**All four endpoints answer the same way.**"
 
     def _status_codes_the_door_can_raise(self) -> set[int]:
         """The HTTP status codes the file door raises, read from the AST.
@@ -476,6 +476,27 @@ class TestTheHandoffContractNamesEveryStatusTheDoorAnswers(unittest.TestCase):
                         "enumeration does not name it — the bot's transport would fall "
                         "through to a generic error",
                     )
+
+    def test_the_enumeration_names_a_code_once(self) -> None:
+        """The list is a list: a code named twice is a fact in two places.
+
+        The mutation check for this contract breaks the enumeration's
+        **409** and expects the contract to stop naming it. That only
+        works while the enumeration names it *once*: a second mention
+        somewhere else in the list would keep the code named, the
+        mutation would destroy nothing, and the tripwire would report a
+        verdict about a property that never broke.
+        """
+        enumeration = self._the_status_contract()
+        for code in (409,):
+            with self.subTest(code=code):
+                self.assertEqual(
+                    enumeration.count(str(code)),
+                    1,
+                    f"the enumeration names {code} {enumeration.count(str(code))} times - "
+                    "a code named twice is a fact in two places, and the mutation that "
+                    "breaks one mention would break nothing",
+                )
 
     def test_the_contract_pins_a_tag_that_exists_in_the_tree(self) -> None:
         """The contract names the sandbox version it was written against.

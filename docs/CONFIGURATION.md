@@ -15,6 +15,7 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_PORT`           | `8082`                                    | uvicorn listen port.                                           |
 | `AGENT_STDOUT_LIMIT`   | `512k`                                    | How much text one command may return in one exec. 32k..1024k.  |
 | `AGENT_BINARY_LIMIT`   | `2048k`                                   | How large a file `/files` will serve. `0` = unlimited.         |
+| `AGENT_UPLOAD_MAX_BYTES` | `64m`                                   | The **transport** ceiling of the upload door (`POST /files`): how many bytes are read before the request is refused. `0` = unlimited. It is not the file policy — that is `AGENT_BINARY_LIMIT` — and it has to be **at least** as large, or the transport refuses an upload the door itself would have accepted. Every other door keeps the 2 MB body guard. |
 | `AGENT_MCP_MAX_READ_BYTES` | `1m`                                  | How many bytes one MCP `read_file` may put into a model's context. `0` = no budget of its own. 0..64m. A file over the budget is refused, and the refusal names the file's size and the limit. The HTTP `/files` door keeps `AGENT_BINARY_LIMIT` — there the bytes land in a file, not in a prompt. |
 | `AGENT_ALLOW_SUDO`     | `0`                                       | Build the image with `sudo`, so a command can become root. **Private, secured deployments only.** |
 | `AGENT_NO_NEW_PRIVILEGES` | `true`                                  | The container's `no-new-privileges` flag. `false` is required by the privilege mode. |
@@ -74,8 +75,9 @@ section 9.
 
 ### Size values
 
-`AGENT_STDOUT_LIMIT` and `AGENT_BINARY_LIMIT` accept a plain byte count or
-a suffix: `b`, `k`/`kb`, `m`/`mb`, `g`/`gb` (`512k`, `2m`, `1g`, `1048576`).
+`AGENT_STDOUT_LIMIT`, `AGENT_BINARY_LIMIT` and `AGENT_UPLOAD_MAX_BYTES`
+accept a plain byte count or a suffix: `b`, `k`/`kb`, `m`/`mb`, `g`/`gb`
+(`512k`, `2m`, `1g`, `1048576`).
 A value that cannot be parsed, or that is outside the documented range, is a
 **startup failure** — the container refuses to boot rather than silently
 clamping to something the operator did not ask for.
@@ -140,6 +142,7 @@ Runs every 10 s; container is marked unhealthy after 3 consecutive failures.
 | `OPENAPI_PROXY_CORS_ORIGINS`           | (empty)                          | Comma-separated allowlist. Empty = no browser cross-origin access.     |
 | `OPENAPI_PROXY_SSH_ALLOWLIST`          | (empty → ssh disabled)           | Comma-separated hostnames / CIDRs the `ssh` shortcut may target.       |
 | `OPENAPI_PROXY_RATE_LIMIT_RPM`          | `120`                            | Per-token requests per minute. `0` = disabled.                         |
+| `OPENAPI_PROXY_UPLOAD_MAX_BYTES`        | `67108864` (64 MiB)              | The proxy's **transport** ceiling for an upload (`POST /files`): how many bytes are read before the proxy refuses the request. A plain byte count, like the proxy's other numbers. The *file policy* belongs to the agent (`AGENT_BINARY_LIMIT`), and this number has to be at least as large — otherwise the proxy refuses an upload the agent would have taken. |
 | `OPENAPI_PROXY_RATE_LIMIT_MAX_KEYS`     | `10000`                          | LRU cap on the in-memory rate-limit dict. Past this, oldest key evicted. |
 | `OPENAPI_PROXY_WEBSOCKET_IDLE_TIMEOUT` | `300`                            | Close `/ws` connections idle this long (sec). `0` = disabled. New in v2.4.0. |
 | `OPENAPI_PROXY_LOG_LEVEL`              | `INFO`                           | uvicorn log level.                                                      |
