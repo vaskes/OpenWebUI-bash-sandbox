@@ -76,9 +76,16 @@ class TestTheVersionIsTheRelease(unittest.TestCase):
         import agent_core  # noqa: PLC0415
         import proxy_core  # noqa: PLC0415
 
+        # The number moves with every release; the *agreement* does not.
+        # The number this release claims is pinned by the claims test of
+        # the release that is current.
+        self.assertEqual(agent_core.__version__, proxy_core.__version__)
+        # The number moves with every release; the *agreement* does not.
+        # The number this release claims is pinned by the claims test of
+        # the release that is current.
         self.assertEqual(agent_core.__version__, proxy_core.__version__)
         # The shipped version is the release the changelog's newest section
-        # describes — not a literal pinned in this file, which would rot on
+        # describes - not a literal pinned in this file, which would rot on
         # the next release.
         self.assertEqual(agent_core.__version__, _newest_section_version())
 
