@@ -94,6 +94,7 @@ from agent_config import (
     PANE_HEIGHT,
     PANE_WIDTH,
     STDOUT_LIMIT_BYTES,
+    UPLOAD_MAX_BYTES,
 )
 from agent_core import (
     CONTINUATION_PROMPT,
@@ -287,7 +288,7 @@ def _persisted_cwd(sid: str) -> str | None:
         return None
 
 
-def _inside_workspace(candidate: str) -> str:
+def _inside_workspace(candidate: str, *, refusal: str = "path outside the workspace") -> str:
     """Resolve a path and confirm it is inside the workspace.
 
     The perimeter is the real workspace root: a path that resolves
@@ -300,6 +301,13 @@ def _inside_workspace(candidate: str) -> str:
     * absolute paths outside the workspace (e.g. ``/etc``),
     * ``..`` traversal (e.g. ``/workspace/../etc``),
     * symlinks pointing outside the workspace.
+
+    The wording of the refusal belongs to the caller, and that is not a
+    detail: the refusals are a documented contract (``docs/HANDOFF-mcp.md``
+    lists the ones a client may see), and a refactor that unifies two
+    messages quietly changes what the client reads. The shell door says
+    "cwd outside workspace", the file door says "path outside the
+    workspace", and both keep saying it.
     """
     real = os.path.realpath(candidate)
     if real == WORKSPACE_REAL:
@@ -308,7 +316,7 @@ def _inside_workspace(candidate: str) -> str:
         return WORKSPACE_REAL
     if real.startswith(WORKSPACE_PREFIX):
         return real
-    raise HTTPException(status_code=400, detail=f"path outside workspace: {candidate}")
+    raise HTTPException(status_code=400, detail=f"{refusal}: {candidate}")
 
 
 def _safe_cwd(candidate: str) -> str:
@@ -321,7 +329,7 @@ def _safe_cwd(candidate: str) -> str:
     * ``..`` traversal (e.g. ``/workspace/../etc``),
     * symlinks pointing outside the workspace.
     """
-    real = _inside_workspace(candidate)
+    real = _inside_workspace(candidate, refusal="cwd outside workspace")
     # The check on the filesystem comes *after* the containment check,
     # and inside it: the path is already known to be inside the
     # workspace, so the question that is left is only whether it is a
@@ -622,9 +630,18 @@ app = FastAPI(
 # client declared: a chunked body has no length to read, and reading
 # only the header leaves exactly the case the limit exists for open.
 # See :mod:`body_limit` for why it is an ASGI middleware.
+#
+# The upload door (``POST /files``) is the one exception, and it is an
+# exception on purpose: it carries a *file*, not a command, and the file
+# it exists to deliver is tens of megabytes. Its own ceiling is
+# ``AGENT_UPLOAD_MAX_BYTES``; every other door keeps the 2 MB guard.
 MAX_BODY_BYTES = 2 * 1024 * 1024
 
-app.add_middleware(BodySizeLimit, limit=MAX_BODY_BYTES)
+app.add_middleware(
+    BodySizeLimit,
+    limit=MAX_BODY_BYTES,
+    overrides={"/files": UPLOAD_MAX_BYTES},
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1775,7 +1792,7 @@ def _safe_file(candidate: str) -> str:
         if not os.path.isfile(resolved):
             raise HTTPException(status_code=400, detail=f"not a regular file: {candidate}")
         return resolved
-    raise HTTPException(status_code=400, detail=f"path outside workspace: {candidate}")
+    raise HTTPException(status_code=400, detail=f"path outside the workspace: {candidate}")
 
 
 def _content_disposition(name: str) -> str:
@@ -1833,7 +1850,7 @@ def _open_inside_workspace(resolved: str) -> int:
     guard. Every platform this container runs on has them.
     """
     if not resolved.startswith(WORKSPACE_PREFIX):
-        raise HTTPException(status_code=400, detail=f"path outside workspace: {resolved}")
+        raise HTTPException(status_code=400, detail=f"path outside the workspace: {resolved}")
     relative = resolved[len(WORKSPACE_PREFIX) :]
     parts = [part for part in relative.split(os.sep) if part]
     if not parts:

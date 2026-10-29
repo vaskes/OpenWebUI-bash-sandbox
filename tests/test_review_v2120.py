@@ -136,7 +136,13 @@ class TestABodyWithoutALengthIsCounted(unittest.TestCase):
     def test_the_middleware_counts_the_bytes(self) -> None:
         source = _source("body_limit.py")
         self.assertIn('total += len(message.get("body", b""))', source)
-        self.assertIn("if total > self.limit", source)
+        # The running total is compared with the limit that applies to
+        # this request. The name of that limit has changed over time
+        # (it was the middleware's own, it is a per-request local now),
+        # so the assertion is about the comparison and not about a
+        # spelling: a check that pins a variable name goes red on a
+        # refactor that kept the property.
+        self.assertRegex(source, r"if total > \w+:")
 
     def test_the_refusal_is_a_413(self) -> None:
         source = _source("body_limit.py")
