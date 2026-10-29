@@ -54,6 +54,23 @@ open(path, "w", encoding="utf-8").write(text.replace(old, new, 1))
 PY
 }
 
+# Replace **every** occurrence of $2 with $3 in $1. Use it when the fact
+# under test lives in more than one place: breaking one copy leaves the
+# other intact, the property survives, and the mutation reports a verdict
+# about a tree that nobody broke. Fails when the pattern is gone.
+mutation_apply_all() {
+    "$PY" - "$1" "$2" "$3" <<'PY'
+import sys
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(path, encoding="utf-8").read()
+count = text.count(old)
+if not count:
+    sys.exit(f"PATTERN NOT FOUND in {path}: {old!r}")
+open(path, "w", encoding="utf-8").write(text.replace(old, new))
+print(count)
+PY
+}
+
 # A stale bytecode cache can hide a mutation: Python keys a .pyc by the
 # source's mtime AND its size, so two mutations of the same length in the
 # same second leave the second one invisible. The check must see the code
@@ -65,8 +82,32 @@ mutation_purge_pycache() {
 }
 
 # Did the run collect anything at all?
-mutation_collected_nothing() {
-    grep -q "no tests ran\|no tests collected\|ERROR: not found\|ERROR collecting" "$1"
+#
+# pytest's exit code says this exactly, and the output text does not:
+#
+#   0  the tests ran and passed
+#   1  the tests ran and at least one failed  <- a catch
+#   2  interrupted (a collection error)
+#   3  an internal error
+#   4  usage error (the selector names no file)
+#   5  no tests were collected
+#
+# The old check grepped the whole output for "no tests ran" and friends.
+# That is wrong in a way the output itself demonstrates: a failing test
+# prints the assertion's message, and that message may quote a file that
+# contains the phrase — the library quotes itself, and the mutation that
+# renamed a function made the test print the library's own source, with
+# "ERROR: not found" inside it. The grep then said "nothing was
+# collected" about a run that had three real failures, and the script
+# called a caught mutation INVALID.
+#
+# The exit code is not quoted by anybody. Use it.
+mutation_run_was_invalid() {
+    # mutation_run_was_invalid <exit-code>
+    # Only 0 (everything passed) and 1 (something failed) mean that a
+    # test ran. Every other code means it did not, and a mutation whose
+    # test never ran is not a catch.
+    [ "$1" -ne 0 ] && [ "$1" -ne 1 ]
 }
 
 # Run the test under the mutation, then say what the run means:
@@ -77,7 +118,12 @@ mutation_run_pytest() {
     # mutation_run_pytest <selector> <out-file> <label>
     local selector="$1" out="$2" label="$3" rc=0
     "$PY" -m pytest "$selector" -q >"$out" 2>&1 || rc=$?
-    if [ "$rc" -eq 1 ] && ! mutation_collected_nothing "$out"; then
+    if mutation_run_was_invalid "$rc"; then
+        echo "INVALID $label — the test did not run (pytest exited $rc)"
+        FAIL=$((FAIL+1))
+        return 2
+    fi
+    if [ "$rc" -eq 1 ]; then
         echo "OK    $label — the test went red"
         PASS=$((PASS+1))
         return 0
@@ -123,6 +169,32 @@ mutate() {
     MUT_BACKUP="$backup"
     MUT_TARGET="$file"
     if ! mutation_apply "$file" "$old" "$new"; then
+        echo "SKIP  $label (pattern not found — mutation did not apply)"
+        cp "$backup" "$file"
+        rm -f "$backup"
+        FAIL=$((FAIL+1))
+        return
+    fi
+    mutation_purge_pycache
+    mutation_run_pytest "$selector" "$MUT_OUT" "$label"
+    cp "$backup" "$file"
+    rm -f "$backup"
+    MUT_BACKUP=""
+    MUT_TARGET=""
+}
+
+# The same shape, but every occurrence of the pattern is replaced. Use it
+# when the fact under test lives in more than one place and the mutation
+# has to destroy all of them to mean anything.
+mutate_all() {
+    # mutate_all <file> <old> <new> <test-selector> <label>
+    local file="$1" old="$2" new="$3" selector="$4" label="$5"
+    local backup
+    backup="$(mktemp -p /tmp mut.XXXXXX)"
+    cp "$file" "$backup"
+    MUT_BACKUP="$backup"
+    MUT_TARGET="$file"
+    if ! mutation_apply_all "$file" "$old" "$new" >/dev/null; then
         echo "SKIP  $label (pattern not found — mutation did not apply)"
         cp "$backup" "$file"
         rm -f "$backup"
