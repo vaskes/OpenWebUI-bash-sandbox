@@ -198,6 +198,60 @@ class TestTheDoorTakesFilesIn(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_an_absolute_path_outside_the_workspace_is_refused(self) -> None:
+        # ".." is one way out; an absolute path is another. The
+        # anchoring rule keeps an absolute path that is outside the
+        # logical workspace as it is, so the containment check is what
+        # refuses it -- and the check has to be there, or the path is
+        # simply obeyed.
+        target = os.path.join(self.tmpdir, "..", f"absolute-{os.path.basename(self.tmpdir)}.bin")
+
+        response = self.client.post(
+            "/files", params={"path": target}, content=b"x", headers=self.auth
+        )
+
+        self.assertIn(response.status_code, (400, 404))
+        self.assertFalse(os.path.exists(target), "the upload wrote outside the workspace")
+
+    def test_a_symlinked_parent_that_points_out_is_refused(self) -> None:
+        # The dangerous one: the name of the parent looks harmless,
+        # and the directory it stands for is somewhere else entirely.
+        # The path is resolved before the check, so a link that leaves
+        # the workspace is refused rather than followed.
+        outside = os.path.join(self.tmpdir, "..", f"outside-dir-{os.path.basename(self.tmpdir)}")
+        os.makedirs(outside, exist_ok=True)
+        link = os.path.join(self.workspace_real, "link-out")
+        os.symlink(outside, link)
+        self.addCleanup(os.unlink, link)
+
+        response = self.client.post(
+            "/files", params={"path": "link-out/pwned.bin"}, content=b"x", headers=self.auth
+        )
+
+        self.assertIn(response.status_code, (400, 404))
+        self.assertFalse(
+            os.path.exists(os.path.join(outside, "pwned.bin")),
+            "the upload wrote through the symlink and landed outside the workspace",
+        )
+
+    def test_a_symlink_under_the_uploaded_name_is_not_written_through(self) -> None:
+        # The link itself is replaced, never its target: the file that
+        # is somewhere else stays exactly as it was.
+        outside = os.path.join(self.tmpdir, "..", f"secret-{os.path.basename(self.tmpdir)}.txt")
+        with open(outside, "wb") as handle:
+            handle.write(b"not yours")
+        link = os.path.join(self.workspace_real, "link-file")
+        os.symlink(outside, link)
+        self.addCleanup(os.unlink, link)
+
+        response = self.client.post(
+            "/files", params={"path": "link-file"}, content=b"x", headers=self.auth
+        )
+
+        self.assertIn(response.status_code, (200, 409))
+        with open(outside, "rb") as handle:
+            self.assertEqual(handle.read(), b"not yours", "the upload wrote through the symlink")
+
 
 if __name__ == "__main__":
     unittest.main()
