@@ -65,39 +65,41 @@ services:
     # A read-only root filesystem is the stock posture: the agent writes
     # only through the bind-mounts and the tmpfs. It is also the fourth
     # setting of the privilege mode, and the one that decides whether a
-    # root shell is useful: a root in a read-only container owns the
-    # filesystem and cannot change a byte of it — apt-get needs three
+    # Read-only root filesystem. Writes go through the tmpfs mounts below.
+    #
+    # THE RULE: WHERE SUDO IS ON, THE ROOT HAS TO BE WRITABLE.
+    # A root that cannot write is a half-root: apt-get needs three
     # writable paths (/var/lib/apt/lists, /var/lib/dpkg and /usr) and
-    # gets "Read-only file system" for all three. Set
-    # AGENT_READ_ONLY=false for a deployment whose privileged root has
-    # to install packages. See docs/SECURITY.md, "The privilege mode".
+    # gets "Read-only file system" for all three, so a privileged shell
+    # cannot install anything and the model calls the sandbox broken.
+    # The default below is read-only, and that is right for the default
+    # deployment, which has no sudo. The production stack runs the
+    # privilege mode, so its environment sets AGENT_READ_ONLY=false as
+    # well -- tools/check-posture.sh refuses a half-root. See
+    # docs/SECURITY.md, "The privilege mode".
     read_only: "${AGENT_READ_ONLY:-true}"
     tmpfs:
       - /tmp:size=512m,mode=1777
       - /run:size=64m,mode=755
-      # THE WORKSPACE IS A TMPFS INSIDE THE CONTAINER, WITH A CEILING.
-      #
-      # It used to be a bind of /opt/telegrambot/sandbox-workspace, and
-      # that made the host's own partition the sandbox's scratchpad. The
-      # agent reached it with `dd` and ate the operator's disk: the
-      # partition it filled was the one the whole host lives on
-      # (measured 2026-10-29: nvme0n1p4, 1.8 T, 94 % used, 106 G free).
-      # A bind is the one writable surface that reaches past the
-      # container, and an unbounded one is a disk-filler with a shell in
-      # front of it.
-      #
-      # AGENT_WORKSPACE_SIZE is the whole ceiling — the number of bytes
-      # the sandbox may occupy. When it is reached the write fails with
-      # ENOSPC inside the container, and the host's disk is none the
-      # wiser. The cost is honest and worth naming: the workspace is
-      # RAM, and it does not survive a container recreate.
-      - /workspace:size=${AGENT_WORKSPACE_SIZE:-2g},mode=1777
-      # The download caches are tmpfs for the same reason. A named volume
-      # is a directory on the host's disk, and a writable one is a hole
-      # in exactly the bound this stack claims to have.
+      # The download caches are tmpfs: they are rewritten on every apt-get
+      # and pip install, and a named volume is a directory on the host's
+      # disk.
       - /var/cache/apt:size=256m,mode=1777
       - /home/agent/.cache/pip:size=128m,mode=1777
     volumes:
+      # The workspace is on disk, and it has a ceiling.
+      #
+      # The volume is named, but it does not live in
+      # /var/lib/docker/volumes: its driver binds a host path, and that
+      # path is the mount point of an ext4 filesystem in a file of
+      # AGENT_WORKSPACE_SIZE. Docker has no quota for a volume -- the
+      # ceiling has to come from the filesystem -- and
+      # tools/setup-workspace.sh is what makes that filesystem.
+      #
+      # Until it has run, this volume is a plain directory on the host's
+      # disk and the ceiling is a promise instead of a fact. The deploy
+      # scripts run it; the verifier checks it.
+      - owbs-workspace:/workspace
       # The only host path the agent sees is the SSH key directory, and
       # it is read-only — and empty on purpose. A read-only bind stays
       # read-only even for a root command inside the container:
@@ -208,6 +210,18 @@ services:
       timeout: 3s
       retries: 3
       start_period: 15s
+
+volumes:
+  # The agent's workspace: a named volume whose driver binds a host
+  # path -- the mount point of the ext4 filesystem that
+  # tools/setup-workspace.sh makes out of a file of AGENT_WORKSPACE_SIZE.
+  # Docker cannot cap a volume, so the ceiling is the filesystem's.
+  owbs-workspace:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${AGENT_WORKSPACE_PATH:-/opt/telegrambot/sandbox-workspace}
 
 networks:
   tb-net:

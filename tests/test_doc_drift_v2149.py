@@ -60,6 +60,19 @@ NOT_OPERATOR_KNOBS = {
     "AGENT_SESSIONS_FILE",
 }
 
+#: Knobs the deployment applies **on the host**, not through compose.
+#:
+#: The workspace's ceiling and its place are read by the script that
+#: makes the workspace filesystem, because Docker has no quota for a
+#: volume: the ceiling cannot come from the compose file, because the
+#: compose file cannot enforce one. They are still operator knobs --
+#: the deploy scripts read the operator's env file and hand the values
+#: to that script -- so the template may offer them, and the check is
+#: that the named script really reads them.
+HOST_KNOBS = {
+    "AGENT_WORKSPACE_SIZE": "tools/setup-workspace.sh",
+}
+
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -196,6 +209,14 @@ class TestTheTemplateOffersOnlyKnobsThatWork(unittest.TestCase):
         ``pids_limit``, ``cap_drop``, ``security_opt``, ``read_only``
         and the image's ``build.args`` are deployment knobs too, and all
         of them read the operator's env file.
+
+        Two knobs are applied on the **host** instead: the workspace's
+        ceiling and its place, which the script that makes the
+        workspace filesystem reads (Docker cannot cap a volume, so the
+        ceiling cannot come from the compose file). For those the check
+        is that the named script reads the knob -- otherwise setting it
+        in .env would change nothing, which is the failure this test
+        exists to catch.
         """
         interpolated = _interpolated_knobs(COMPOSE)
         # Variables the Open WebUI service reads for itself, or that the
@@ -203,6 +224,21 @@ class TestTheTemplateOffersOnlyKnobsThatWork(unittest.TestCase):
         aliases = {"WHISPER_API_KEY": "AUDIO_STT_OPENAI_API_KEY"}
         for knob in sorted(_template_knobs()):
             if knob in NOT_OPERATOR_KNOBS:
+                continue
+            if knob in HOST_KNOBS:
+                reader = REPO_ROOT / HOST_KNOBS[knob]
+                with self.subTest(knob=knob):
+                    self.assertTrue(
+                        reader.exists(),
+                        f"{knob} is a host-side knob, and the script that applies it "
+                        f"({HOST_KNOBS[knob]}) does not exist",
+                    )
+                    self.assertIn(
+                        knob,
+                        reader.read_text(encoding="utf-8"),
+                        f"{knob} is offered in .env.example, but {HOST_KNOBS[knob]} "
+                        "does not read it — setting it in .env cannot change anything",
+                    )
                 continue
             with self.subTest(knob=knob):
                 self.assertTrue(
