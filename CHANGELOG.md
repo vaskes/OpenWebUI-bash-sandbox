@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.21.0] - 2026-10-30
+
+The mount belongs to the stack, and a model is not a contributor.
+
+### Changed
+
+- **The workspace's mount is no longer in the host's boot.** The
+  filesystem the workspace lives in is a fact about the running kernel,
+  not about the file: after a reboot of the host the image is intact
+  and nothing is mounted, so the directory the volume binds is an
+  ordinary directory on the host's partition again — and a directory
+  has no ceiling. v2.19.0 answered that by writing the mount into
+  `/etc/fstab`, so the host's boot would bring it back. The mount is
+  part of the stack's lifecycle instead: it is made when the stack
+  starts, by the stack's own tooling, and the tool that wrote the boot
+  entry (`tools/install-workspace-mount.sh`) is gone.
+- **A workspace that has lost its ceiling is refused, loudly.** The
+  ceiling the deployment declared (`AGENT_WORKSPACE_SIZE`) travels into
+  the container, and the agent compares it with the size of the
+  filesystem it is actually looking at. A plain directory on the host's
+  partition is a different size, so the container comes up **refusing**,
+  with the reason in its log, instead of coming up working against the
+  host's disk. A deployment that declares no ceiling is not checked by
+  this — the check is about a ceiling that was promised.
+
+### Fixed
+
+- **The repository's contributors list had a model on it.** Two commits
+  carried a `Co-Authored-By:` trailer naming a model, and GitHub counts
+  a co-author trailer as a contribution — so the model appeared as a
+  contributor having written nothing. The history was rewritten, the
+  tags were recreated with their taggers, dates and annotations (every
+  release's tree is byte-for-byte what it was), and a tripwire now
+  fails the suite if a trailer comes back. `.mailmap` could not have
+  helped: it applies to the author field, and a co-author trailer is
+  parsed as written.
+
 ## [2.20.0] - 2026-10-30
 
 The workspace is attacker-controlled, and this repository does not obey it.

@@ -365,22 +365,36 @@ class TheInspectorIsSafeToUse(unittest.TestCase):
 
 class TheReleaseNamesItself(unittest.TestCase):
     """The release contract: the changelog, the handoff and the two
-    versions describe one tree."""
+    versions describe one tree.
 
-    VERSION = "2.20.0"
+    The version is read from the NEWEST section of the changelog, not
+    from a constant here: a constant in a test belongs to the release
+    it was written for, and the next release would have to remember to
+    change it -- and the release that forgets is a release whose
+    contract is checked against the wrong number.
+    """
+
+    @staticmethod
+    def _current_version() -> str:
+        match = re.search(r"^## \[(\d+\.\d+\.\d+)\]", _read("CHANGELOG.md"), re.M)
+        assert match, "the changelog has no release section"
+        return match.group(1)
 
     def test_the_changelog_has_the_section(self) -> None:
-        self.assertIn(f"## [{self.VERSION}]", _read("CHANGELOG.md"))
+        version = self._current_version()
+        self.assertIn(f"## [{version}]", _read("CHANGELOG.md"))
 
     def test_the_handoff_names_the_release(self) -> None:
-        self.assertIn(f"v{self.VERSION}", _read("docs/HANDOFF-binary-transport.md"))
+        version = self._current_version()
+        self.assertIn(f"v{version}", _read("docs/HANDOFF-binary-transport.md"))
 
     def test_both_services_carry_the_version(self) -> None:
+        version = self._current_version()
         for name in ("agent_core.py", "proxy_core.py"):
             self.assertIn(
-                f'__version__ = "{self.VERSION}"',
+                f'__version__ = "{version}"',
                 _read(name),
-                f"{name} does not carry {self.VERSION}",
+                f"{name} does not carry {version}",
             )
 
 
