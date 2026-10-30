@@ -120,7 +120,7 @@ mutate tools/setup-workspace.sh \
 
 echo "== the setup script stops mounting it =="
 mutate tools/setup-workspace.sh \
-  'mount -o loop "$IMAGE" "$MOUNTPOINT"' \
+  'mount -o "$WORKSPACE_MOUNT_OPTS" "$IMAGE" "$MOUNTPOINT"' \
   'mount --bind "$IMAGE" "$MOUNTPOINT"' \
   "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_ceiling_comes_from_a_filesystem_somebody_makes" \
   "the setup script mounts the filesystem"
@@ -293,6 +293,27 @@ mutate_all openapi_proxy.py \
   '            status_code=502, detail=_upstream_detail(body)' \
   "$RULE_FULL::TestTheProxyRelaysTheFullWorkspace::test_the_status_is_relayed" \
   "the proxy relays the agent's status as it is"
+
+echo "== the workspace is mounted with the setuid bit alive =="
+mutate tools/setup-workspace.sh \
+  'WORKSPACE_MOUNT_OPTS="loop,nosuid,nodev"' \
+  'WORKSPACE_MOUNT_OPTS="loop,nodev"' \
+  "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_workspace_is_mounted_without_the_setuid_bit" \
+  "the workspace is mounted without nosuid"
+
+echo "== the workspace is mounted with device files alive =="
+mutate tools/setup-workspace.sh \
+  'WORKSPACE_MOUNT_OPTS="loop,nosuid,nodev"' \
+  'WORKSPACE_MOUNT_OPTS="loop,nosuid"' \
+  "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_workspace_is_mounted_without_the_setuid_bit" \
+  "the workspace is mounted without nodev"
+
+echo "== the check does not read the live mount =="
+mutate tools/setup-workspace.sh \
+  '    findmnt -no OPTIONS --target "$MOUNTPOINT" 2>/dev/null || true' \
+  '    findmnt -no SOURCE --target "$MOUNTPOINT" 2>/dev/null || true' \
+  "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_check_reads_the_live_mount_and_not_the_script" \
+  "the check reads the mount that is there"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

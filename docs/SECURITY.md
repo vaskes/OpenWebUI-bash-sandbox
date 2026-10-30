@@ -192,6 +192,24 @@ Two things follow from the bound, and both are worth knowing:
   mounts has to stay below it, or the OOM killer stops the container
   before its own ceiling is reached.
 
+And one property of the filesystem itself, which the move to the disk
+would have taken away with it:
+
+* **The workspace is mounted `nosuid,nodev`.** The workspace's root
+  directory is mode 1777 — any host user can reach it — and in the
+  privilege mode the agent can become uid 0 inside the container,
+  which is uid 0 on the host (no user namespace remaps it). Without
+  `nosuid`, a binary dropped in the workspace with the setuid bit set
+  is a **setuid-root file that lives on the host's disk**, and whoever
+  runs it gets the host's root. The tmpfs the workspace used to be
+  carried both flags; the filesystem on the disk carries them too.
+  `tools/setup-workspace.sh --check` reads the options of the mount
+  that is **there** (not the script's own text), refuses a workspace
+  that does not carry them, and a deployment that runs the script
+  remounts an older workspace with them. Measured on the production
+  host before this was fixed: the mount carried `rw,relatime`, and
+  `chmod u+s` inside the workspace worked.
+
 One surface is still unbounded, and it is the privilege mode's fourth
 setting: `AGENT_READ_ONLY=false` makes the container's root filesystem
 writable, and the writable layer lives on the host's disk with no quota
