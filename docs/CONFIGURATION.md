@@ -231,6 +231,43 @@ which is exactly the hole the ceiling closes.
 | `/tmp`              | container tmpfs                         | yes (ephemeral) |
 | `/usr`, `/etc`, `/var/lib/apt`, `/var/lib/dpkg` | the image itself | no — the read-only root filesystem is what makes `apt-get` fail in a privileged deployment (`AGENT_READ_ONLY=false` turns the root filesystem writable) |
 
+### The python environment in the image
+
+The sandbox is a python image, and the model installs python packages in
+it. Three things make that cheap instead of painful:
+
+| Path              | What it is                                                        | Writable? |
+|-------------------|-------------------------------------------------------------------|-----------|
+| `/opt/pylibs`     | the preinstalled packages (numpy, matplotlib, pandas, …)          | no — a seed, read-only |
+| `/opt/wheelhouse` | the wheels those packages were built from                          | no |
+| `pip`             | `python3-pip` + `python3-venv` from apt (so `ensurepip` is there) | — |
+
+`PIP_FIND_LINKS=/opt/wheelhouse` is set in the image, so pip looks at the
+local wheels **first**: installing one of the preinstalled packages is an
+offline, instant operation. The network stays available for everything
+else — pip falls back to it.
+
+The list of preinstalled packages is the build argument
+`AGENT_PYTHON_PACKAGES` (default: `numpy matplotlib pandas sqlalchemy
+openai requests httpx pillow sympy pytest tqdm`). A smaller image is one
+build flag away:
+
+```bash
+docker compose build --build-arg AGENT_PYTHON_PACKAGES="numpy matplotlib"
+```
+
+Two rules the image keeps:
+
+* **a plain `pip install` is refused** — the interpreter is externally
+  managed (PEP 668), and that refusal is correct: the image is not a
+  package dump. The way to add a package is a virtual environment inside
+  the workspace (`python3 -m venv /workspace/.venv`), which is writable,
+  executable, and survives a container recreate;
+* **`/opt/pylibs` is on the model's `PYTHONPATH`, not on the service's.**
+  The tree carries its own `pydantic` and `httpx`; letting those shadow
+  the agent service's pinned dependencies would break the service for a
+  reason that has nothing to do with the model.
+
 ### Healthcheck
 
 ```

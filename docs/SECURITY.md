@@ -201,6 +201,20 @@ is the price of a root that can really write, and it is the operator's
 call — the workspace, where the agent's files actually live, is bounded
 either way.
 
+**Installing a python package is a disk write like any other.** The
+image ships pip (v2.18.0), so the model does not have to install a
+package manager first — and the packages that come up most are already
+there, which removes a whole class of "spend the command's timeout on
+apt-get" at a stroke. The ceiling still applies: the preinstalled tree
+and the wheelhouse are part of the **image** (read-only, and not part
+of the workspace's budget), while anything the model installs for
+itself lands in a virtual environment inside the workspace — inside the
+filesystem with the ceiling. The one way around that is
+`--break-system-packages` in a deployment with a writable root
+(`AGENT_READ_ONLY=false`), which writes into the unbounded layer
+described above. That is the same trade as any other privileged write:
+the boundary is the container, not the workspace.
+
 ### 5. LLM spawns long-running processes
 
 `tmux` keeps them alive forever. They consume memory and PIDs.
