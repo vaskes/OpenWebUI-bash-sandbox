@@ -184,7 +184,11 @@ mounted_options() {
 # Does the mount carry every option it has to carry?
 workspace_mount_is_safe() {
     local opts flag
-    opts=",$(mounted_options | tr ',' '\n' | tr -d '[:space:]'),"
+    # The options stay comma-separated: the separators are the token
+    # boundaries. Splitting them and throwing the separators away
+    # turns "rw,nosuid,nodev" into "rwnosuidnodev", which is neither
+    # the options nor anything that can be compared with them.
+    opts=",$(mounted_options | tr -d '[:space:]'),"
     for flag in $WORKSPACE_REQUIRED_OPTS; do
         case "$opts" in
             *",$flag,"*) ;;
