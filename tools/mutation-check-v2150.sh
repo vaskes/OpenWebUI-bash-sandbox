@@ -47,17 +47,21 @@ mutate agent_api.py \
 echo "== the containment check does not hold =="
 # The check that says "this resolved path is inside the workspace".
 # Without it, an absolute path outside is simply obeyed -- the door
-# writes where it is told to. CodeQL points at this code (the
-# py/path-injection alerts on the upload door), and the code is
-# guarded; these tests are what makes that guard a fact rather than an
-# opinion.
+# writes where it is told to.
+#
+# The rule is checked in more than one place on purpose: the analyser
+# follows a check that stands next to the use, and every copy of it
+# is pinned by its shape (tests/test_path_containment.py). So this
+# mutation is aimed at the door that has no other guard of its own --
+# the shell door's cwd -- and not at the upload, whose own check
+# catches the escape on its own.
 mutate agent_api.py \
   '    if real.startswith(WORKSPACE_PREFIX):
         return real' \
   '    if True:
         return real' \
-  "$RULE_DOOR" \
-  "the resolved path is checked against the perimeter"
+  "tests/test_agent_api_endpoints.py" \
+  "the shell door refuses a directory outside the workspace"
 
 echo "== the file never lands, and the temporary file stays =="
 mutate agent_api.py \
