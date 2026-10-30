@@ -31,11 +31,17 @@ cd "$(dirname "$0")/.."
 mutation_require_python
 
 RULE="tests/test_python_env_v2180.py"
+#: The shape of the containment checks is part of the contract: the
+#: analyser follows a check that stands next to the use, and a reader
+#: checks it in one line. The checks live in the tree, so they can
+#: rot -- and a rotted check is an open door with a comment on it.
+RULE_CONTAINMENT="tests/test_path_containment.py"
 
 # The tripwire has to be green before anything is broken. A script that
 # runs against a red tree reports catches for a tree that was already
 # broken -- and the verdicts look perfectly fine while measuring nothing.
 mutation_require_green "$RULE"
+mutation_require_green "$RULE_CONTAINMENT"
 
 echo "== the runtime image loses pip =="
 mutate Dockerfile.sandbox \
@@ -159,6 +165,38 @@ mutate_all docs/CONFIGURATION.md \
   'PYTHONPATH' \
   "$RULE::TestTheModelIsToldWhatItCanInstall::test_the_documents_say_the_same_thing" \
   "the documents say the same thing the model is told"
+
+echo "== the upload's containment check is not next to the write =="
+mutate agent_api.py \
+  '    target = os.path.realpath(os.path.join(parent, name))
+    if not target.startswith(WORKSPACE_PREFIX):
+        raise HTTPException(status_code=400, detail=f"path outside the workspace: {path}")' \
+  '    target = os.path.join(parent, name)' \
+  "$RULE_CONTAINMENT" \
+  "the upload compares the path it writes against the perimeter"
+
+echo "== the helper that reads the filesystem has no check of its own =="
+mutate agent_api.py \
+  '    if not target.startswith(WORKSPACE_PREFIX):
+        raise HTTPException(status_code=400, detail=f"path outside the workspace: {name}")
+    if os.path.exists(target):' \
+  '    if os.path.exists(target):' \
+  "$RULE_CONTAINMENT" \
+  "the helper that reads the filesystem checks the path it reads"
+
+echo "== the upload does not resolve the path it writes =="
+mutate agent_api.py \
+  '    target = os.path.realpath(os.path.join(parent, name))' \
+  '    target = os.path.join(parent, name)' \
+  "$RULE_CONTAINMENT" \
+  "the upload resolves the path it writes"
+
+echo "== the name the client sent goes into the temporary file's name =="
+mutate agent_api.py \
+  '                dir=os.path.dirname(target), prefix=".upload.", suffix=".tmp"' \
+  '                dir=os.path.dirname(target), prefix=f".{name}.", suffix=".tmp"' \
+  "$RULE_CONTAINMENT" \
+  "the temporary file carries nothing the client sent"
 
 echo
 echo "mutations: $PASS caught, $FAIL failed"

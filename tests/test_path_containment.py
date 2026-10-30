@@ -193,7 +193,10 @@ class TestTheGuardIsWrittenInTheShapeTheAnalyserFollows(_ContainmentBase):
 
     def _function(self, name: str) -> ast.FunctionDef:
         for node in ast.walk(self.tree):
-            if isinstance(node, ast.FunctionDef) and node.name == name:
+            # The doors are async; the helpers are not. Both are
+            # functions, and the shape of a check does not depend on
+            # which kind it is.
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
                 return node
         self.fail(f"{name} is not in agent_api.py")
 
@@ -238,6 +241,79 @@ class TestTheGuardIsWrittenInTheShapeTheAnalyserFollows(_ContainmentBase):
             and node.func.attr == "realpath"
         ]
         self.assertTrue(realpaths, "_safe_file must resolve symlinks with realpath")
+
+    def _startswith_guards(self, name: str) -> list[ast.Call]:
+        """The startswith comparisons a function makes against the prefix."""
+        func = self._function(name)
+        calls = [
+            node
+            for node in ast.walk(func)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "startswith"
+        ]
+        return [
+            call
+            for call in calls
+            if ast.dump(call.args[0]) == ast.dump(ast.Name(id="WORKSPACE_PREFIX", ctx=ast.Load()))
+        ]
+
+    def test_the_upload_check_is_a_startswith_on_the_prefix(self) -> None:
+        # The upload half of the door writes, and a write is a sink the
+        # analyser reports. The check has to stand next to the write,
+        # in the shape the analyser follows -- otherwise the same
+        # alerts come back with the next analysis, and the next
+        # reviewer has to argue with them instead of reading the code.
+        self.assertTrue(
+            self._startswith_guards("upload_file"),
+            "the upload must compare the path it writes with str.startswith "
+            "against the prefix constant, next to the write",
+        )
+
+    def test_the_refusal_helper_check_is_a_startswith_on_the_prefix(self) -> None:
+        self.assertTrue(
+            self._startswith_guards("_refuse_if_taken"),
+            "the helper that reads the filesystem must compare the path it "
+            "reads with str.startswith against the prefix constant",
+        )
+
+    def test_the_upload_normalisation_is_a_realpath(self) -> None:
+        func = self._function("upload_file")
+        realpaths = [
+            node
+            for node in ast.walk(func)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "realpath"
+        ]
+        self.assertTrue(
+            realpaths,
+            "the upload must resolve the path it writes: a name can be a "
+            "symlink that points out of the workspace",
+        )
+
+    def test_the_temporary_file_carries_nothing_the_client_sent(self) -> None:
+        # The temporary file's name is built from constants. Nothing the
+        # client sent goes into a path -- not even into the name of the
+        # file that is about to be replaced.
+        func = self._function("upload_file")
+        prefixes = []
+        for node in ast.walk(func):
+            if not isinstance(node, ast.Call):
+                continue
+            func_name = getattr(node.func, "attr", getattr(node.func, "id", ""))
+            if func_name != "mkstemp":
+                continue
+            for keyword in node.keywords:
+                if keyword.arg in ("prefix", "suffix"):
+                    prefixes.append(keyword.value)
+        self.assertTrue(prefixes, "the temporary file is created with mkstemp")
+        for value in prefixes:
+            self.assertIsInstance(
+                value,
+                ast.Constant,
+                f"the temporary file's name must be a constant, not {ast.dump(value)}",
+            )
 
 
 if __name__ == "__main__":  # pragma: no cover
