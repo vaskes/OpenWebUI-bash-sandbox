@@ -187,7 +187,7 @@ class TheWorkspaceIsNotWiped(unittest.TestCase):
         """
         self.assertRegex(
             self.code,
-            r'AGENT_WORKSPACE_SIZE:-4g',
+            r"AGENT_WORKSPACE_SIZE:-4g",
             "the default ceiling is not 4 GiB: AGENT_WORKSPACE_SIZE must "
             "default to 4g, and the size must stay a parameter",
         )
@@ -265,7 +265,9 @@ class TheWorkspaceIsMountedAtBoot(unittest.TestCase):
         options = entry.split()[3]
         self.assertIn("nosuid", options.split(","), "the boot entry mounts without nosuid")
         self.assertIn("nodev", options.split(","), "the boot entry mounts without nodev")
-        self.assertIn("loop", options.split(","), "the boot entry does not mount the image as a filesystem")
+        self.assertIn(
+            "loop", options.split(","), "the boot entry does not mount the image as a filesystem"
+        )
 
     def test_the_entry_does_not_stop_the_boot(self) -> None:
         """A missing image must not keep the host from booting."""
@@ -295,7 +297,13 @@ class TheWorkspaceIsMountedAtBoot(unittest.TestCase):
         env = dict(os.environ)
         env["FSTAB"] = str(self.fstab)
         done = subprocess.run(
-            ["bash", str(INSTALL_MOUNT), "--check", "/opt/owbs-workspace", "/opt/owbs-workspace.img"],
+            [
+                "bash",
+                str(INSTALL_MOUNT),
+                "--check",
+                "/opt/owbs-workspace",
+                "/opt/owbs-workspace.img",
+            ],
             capture_output=True,
             text=True,
             timeout=60,
@@ -312,7 +320,13 @@ class TheWorkspaceIsMountedAtBoot(unittest.TestCase):
         env = dict(os.environ)
         env["FSTAB"] = str(self.fstab)
         done = subprocess.run(
-            ["bash", str(INSTALL_MOUNT), "--check", "/opt/owbs-workspace", "/opt/owbs-workspace.img"],
+            [
+                "bash",
+                str(INSTALL_MOUNT),
+                "--check",
+                "/opt/owbs-workspace",
+                "/opt/owbs-workspace.img",
+            ],
             capture_output=True,
             text=True,
             timeout=60,
@@ -362,8 +376,7 @@ class TheDocumentsSayTheSameThing(unittest.TestCase):
         self.assertRegex(
             section,
             r"Default: `4g`",
-            "the configuration reference does not say that the default ceiling "
-            "is 4g",
+            "the configuration reference does not say that the default ceiling is 4g",
         )
 
     def test_the_configuration_reference_says_that_the_workspace_grows(self) -> None:
@@ -371,14 +384,12 @@ class TheDocumentsSayTheSameThing(unittest.TestCase):
         self.assertRegex(
             section,
             r"(?i)grow",
-            "the configuration reference does not say that a bigger ceiling "
-            "grows the workspace",
+            "the configuration reference does not say that a bigger ceiling grows the workspace",
         )
         self.assertRegex(
             section,
             r"(?i)(refus|smaller)",
-            "the configuration reference does not say that a smaller ceiling "
-            "is refused",
+            "the configuration reference does not say that a smaller ceiling is refused",
         )
 
     def test_the_readme_says_that_the_workspace_survives(self) -> None:
@@ -386,8 +397,7 @@ class TheDocumentsSayTheSameThing(unittest.TestCase):
         self.assertRegex(
             readme,
             r"(?i)survives a container recreate",
-            "the README does not say that the workspace survives a container "
-            "recreate",
+            "the README does not say that the workspace survives a container recreate",
         )
 
     def test_the_security_model_names_the_ceiling(self) -> None:
