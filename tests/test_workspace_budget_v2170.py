@@ -400,6 +400,42 @@ class TestTheWorkspaceIsOnDiskWithACeiling(unittest.TestCase):
             "that mode is not the one the scratchpad needs",
         )
 
+    def test_a_plain_directory_is_not_a_mounted_workspace(self) -> None:
+        """The workspace's directory lives on the host's partition.
+
+        findmnt answers with the nearest mount that CONTAINS the path,
+        so a plain directory inside a mounted filesystem looks mounted
+        too -- and the setup script refused the production host's
+        workspace for exactly that reason ("already mounted from
+        /dev/nvme0n1p4"), when it was a directory like any other.
+
+        The check needs no root and no loop device, so it can be run
+        here: a directory that is not a mount point is a directory that
+        is not mounted.
+        """
+        script = ROOT / "tools" / "setup-workspace.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            plain = pathlib.Path(tmp) / "not-mounted"
+            plain.mkdir()
+            result = subprocess.run(
+                ["bash", str(script), "--check", str(plain), "1g"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertNotEqual(
+            result.returncode,
+            0,
+            "the check accepted a directory that is not mounted",
+        )
+        self.assertIn(
+            "not mounted",
+            result.stderr,
+            "a plain directory was taken for a mounted workspace -- the "
+            "setup script would refuse to make the workspace on the host "
+            "that has one",
+        )
+
     def test_the_workspace_volume_has_to_be_the_workspace(self) -> None:
         """A volume that is not the workspace has no ceiling.
 
