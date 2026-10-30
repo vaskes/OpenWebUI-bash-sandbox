@@ -61,6 +61,60 @@ from agent_config import parse_size
 
 ROOT = Path(__file__).resolve().parent.parent
 
+#: A fake `docker` for the volume check.
+#:
+#: The check asks docker two things: which volumes carry a name label
+#: (and, since the host can carry more than one deployment, which
+#: project they belong to), and what each of them binds. The fake
+#: answers both, and it answers them the way docker does -- the
+#: filters are applied, not ignored -- so the scoping of the check is
+#: part of what the tripwire pins.
+FAKE_DOCKER = """#!/usr/bin/env python3
+import os
+import sys
+
+#: One fake volume per line: name, project, device (empty for a plain
+#: local volume, which is a directory in Docker's own directory).
+volumes = []
+for line in os.environ.get("OWBS_FAKE_VOLUMES", "").splitlines():
+    parts = line.split()
+    if len(parts) >= 2:
+        volumes.append((parts[0], parts[1], parts[2] if len(parts) > 2 else ""))
+
+args = sys.argv[1:]
+
+
+def labels() -> dict:
+    out = {}
+    for arg in args:
+        if arg.startswith("label="):
+            key, _, value = arg[len("label="):].partition("=")
+            out[key] = value
+    return out
+
+
+if args[:2] == ["volume", "ls"]:
+    wanted = labels()
+    for name, project, _device in volumes:
+        if wanted.get("com.docker.compose.volume") not in (None, "owbs-workspace"):
+            continue
+        if "com.docker.compose.project" in wanted:
+            if project != wanted["com.docker.compose.project"]:
+                continue
+        print(name)
+    sys.exit(0)
+
+if args[:2] == ["volume", "inspect"]:
+    name = args[2] if len(args) > 2 else ""
+    for volume_name, _project, device in volumes:
+        if volume_name == name:
+            print(device)
+            sys.exit(0)
+    sys.exit(1)
+
+sys.exit(0)
+"""
+
 #: Every stack this repository ships. The CI stack counts: it is a
 #: deployment like any other, and a rule that only the two "real" stacks
 #: follow is a rule with a hole in it.
@@ -458,48 +512,37 @@ class TestTheWorkspaceIsOnDiskWithACeiling(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             fake_bin = pathlib.Path(tmp)
             fake_docker = fake_bin / "docker"
-            fake_docker.write_text(
-                "#!/bin/sh\n"
-                'case "$1 $2" in\n'
-                "  'volume ls') printf '%s\\n' \"$OWBS_FAKE_VOLUMES\" ;;\n"
-                "  'volume inspect')\n"
-                '    for a in "$@"; do\n'
-                '      case "$a" in\n'
-                '        good-volume) echo "$OWBS_FAKE_GOOD_DEVICE" ;;\n'
-                '        plain-volume) echo "$OWBS_FAKE_PLAIN_DEVICE" ;;\n'
-                "      esac\n"
-                "    done\n"
-                "    ;;\n"
-                "esac\n",
-                encoding="utf-8",
-            )
+            fake_docker.write_text(FAKE_DOCKER, encoding="utf-8")
             fake_docker.chmod(0o755)
 
-            def check(
-                volumes: str, device: str, plain: str, *args: str
-            ) -> subprocess.CompletedProcess:
+            def check(volumes: str, *args: str) -> subprocess.CompletedProcess:
                 env = {
                     "PATH": f"{fake_bin}:/usr/bin:/bin",
                     "OWBS_FAKE_VOLUMES": volumes,
-                    "OWBS_FAKE_GOOD_DEVICE": device,
-                    "OWBS_FAKE_PLAIN_DEVICE": plain,
                 }
                 return subprocess.run(
-                    ["bash", str(script), *args, "/opt/owbs-workspace"],
+                    ["bash", str(script), *args],
                     capture_output=True,
                     text=True,
                     check=False,
                     env=env,
                 )
 
-            good = check("good-volume", "/opt/owbs-workspace", "", "/opt/owbs-workspace")
+            # The volumes of OUR project: one is the workspace, one is a
+            # plain directory in Docker's own directory. Both carry the
+            # same logical name.
+            ours = "ours-good ours /opt/owbs-workspace\nours-plain ours \n"
+            # A volume of another deployment on the same host: not ours.
+            theirs = "theirs-plain theirs \n"
+
+            good = check("ours-good ours /opt/owbs-workspace\n", "/opt/owbs-workspace", "ours")
             self.assertEqual(
                 good.returncode,
                 0,
                 f"the check refused the workspace volume: {good.stdout}{good.stderr}",
             )
 
-            plain = check("plain-volume", "/opt/owbs-workspace", "", "/opt/owbs-workspace")
+            plain = check(ours, "/opt/owbs-workspace", "ours")
             self.assertNotEqual(
                 plain.returncode,
                 0,
@@ -508,9 +551,18 @@ class TestTheWorkspaceIsOnDiskWithACeiling(unittest.TestCase):
                 "ceiling on it",
             )
             self.assertIn(
-                "plain-volume",
+                "ours-plain",
                 plain.stderr,
                 "the check does not name the volume that is not the workspace",
+            )
+
+            # Another deployment's volume is not ours, and the check must
+            # not reach for it: the host can carry more than one.
+            foreign = check(theirs, "/opt/owbs-workspace", "ours")
+            self.assertEqual(
+                foreign.returncode,
+                0,
+                f"the check refused another deployment's volume: {foreign.stdout}{foreign.stderr}",
             )
 
     def test_the_deployment_runs_the_setup_script(self) -> None:
