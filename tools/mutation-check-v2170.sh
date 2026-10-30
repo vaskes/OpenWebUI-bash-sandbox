@@ -83,6 +83,13 @@ mutate_all tools/setup-workspace.sh \
   "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_workspace_is_writable_by_the_root_the_container_hands_out" \
   "the setup script sets the mode of the workspace"
 
+echo "== a plain directory is taken for a mounted workspace =="
+mutate tools/setup-workspace.sh \
+  '[ "$target" = "$MOUNTPOINT_CANON" ] || return 0' \
+  ':' \
+  "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_a_plain_directory_is_not_a_mounted_workspace" \
+  "a plain directory is not a mounted workspace"
+
 echo "== the volume check accepts any volume =="
 mutate tools/check-workspace-volume.sh \
   'if [ "$device" = "$WS_PATH" ] || printf '"'"'%s'"'"' "$options" | grep -qF "device:$WS_PATH"; then' \
