@@ -156,7 +156,10 @@ mcp = MCPServer(
         "executable, and the environment survives a restart: "
         "`python3 -m venv /workspace/.venv && /workspace/.venv/bin/pip install "
         "<package>`. The wheels of the preinstalled packages are on disk, so "
-        "installing one of those is instant and needs no network."
+        "installing one of those is instant and needs no network. "
+        "Your environment sees the preinstalled packages first, ahead of "
+        "whatever you install yourself: if you need another version of one of "
+        "them, install and run it with `env -u PYTHONPATH`."
     )
 )
 async def bash(

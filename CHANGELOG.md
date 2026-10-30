@@ -36,6 +36,12 @@ trip through apt-get and sudo -- paid out of the command's timeout.
   what is preinstalled and how to add a package -- a virtual
   environment inside the workspace, which is writable, executable, and
   survives a container recreate.
+- **The tool description says what the tree does to the path order.**
+  `PYTHONPATH` comes before a virtual environment's own
+  `site-packages`, so a version the model installs does not override a
+  preinstalled one -- pip reports the install as successful, and the
+  preinstalled version is what runs. The model is told the way out:
+  `env -u PYTHONPATH`.
 
 ### Changed
 

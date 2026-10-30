@@ -143,6 +143,23 @@ mutate mcp_server.py \
   "$RULE::TestTheModelIsToldWhatItCanInstall::test_the_tool_description_says_how_to_add_a_package" \
   "the tool description says how to add a package"
 
+echo "== the model is not told the way out of the path order =="
+mutate mcp_server.py \
+  'install and run it with `env -u PYTHONPATH`.' \
+  'install and run it as usual.' \
+  "$RULE::TestTheModelIsToldWhatItCanInstall::test_the_tool_description_names_the_way_out_of_the_path_order" \
+  "the tool description names the way out of the path order"
+
+echo "== the documents do not say the way out either =="
+# Both copies of the command have to go: the block in the document
+# shows the install and the run, and removing one of them leaves the
+# way out written down all the same.
+mutate_all docs/CONFIGURATION.md \
+  'env -u PYTHONPATH' \
+  'PYTHONPATH' \
+  "$RULE::TestTheModelIsToldWhatItCanInstall::test_the_documents_say_the_same_thing" \
+  "the documents say the same thing the model is told"
+
 echo
 echo "mutations: $PASS caught, $FAIL failed"
 [ "$FAIL" -eq 0 ]
