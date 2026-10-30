@@ -1,9 +1,9 @@
 """A full workspace is a normal answer, and the door has to name it.
 
-The workspace became a tmpfs with a ceiling in v2.16.0, and a ceiling
-turns "no space left on device" from an accident into an event. The
-door has to answer it the way it answers everything else: with the
-status that says what happened and a detail that names the cause.
+The workspace has a ceiling, and a ceiling turns "no space left on
+device" from an accident into an event. The door has to answer it the
+way it answers everything else: with the status that says what happened
+and a detail that names the cause.
 
 What is pinned here:
 
@@ -16,7 +16,10 @@ What is pinned here:
 
 The refusals the door already had were pinned in v2.15.0
 (``tests/test_file_door_upload_v2150.py``). This file adds the one the
-ceiling introduced.
+ceiling introduced. The ceiling itself moved in v2.17.0 -- from a tmpfs
+to a filesystem with a size -- but the contract did not: a full
+workspace is still a 507 with that wording, and the code that answers
+it is the code that is pinned here.
 """
 
 from __future__ import annotations
