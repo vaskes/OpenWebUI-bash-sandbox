@@ -38,18 +38,16 @@ services:
     security_opt: ["no-new-privileges:${AGENT_NO_NEW_PRIVILEGES:-true}"]
     stop_grace_period: 10s
     # The stock posture: a read-only root filesystem, like production.
-    # The privilege mode's fourth setting — AGENT_READ_ONLY=false — makes
-    # the root filesystem writable, which is what a root shell needs to
-    # install packages. See docs/SECURITY.md, "The privilege mode".
+    # THE RULE: WHERE SUDO IS ON, THE ROOT HAS TO BE WRITABLE -- a root
+    # that cannot write is a half-root. AGENT_READ_ONLY=false makes the
+    # root filesystem writable, which is what a root shell needs to
+    # install packages; tools/check-posture.sh refuses a deployment that
+    # grants sudo and keeps the root read-only. See docs/SECURITY.md,
+    # "The privilege mode".
     read_only: "${AGENT_READ_ONLY:-true}"
     tmpfs:
       - /tmp:size=256m,mode=1777
       - /run:size=64m,mode=755
-      # The workspace is a tmpfs with a ceiling, exactly as in the
-      # shipped stacks: a named volume is a directory on the host's
-      # disk, and a writable one is a hole in the bound this stack
-      # claims to have.
-      - /workspace:size=${AGENT_WORKSPACE_SIZE:-1g},mode=1777
       - /var/cache/apt:size=128m,mode=1777
       - /home/agent/.cache/pip:size=64m,mode=1777
     # NOTE: there is deliberately NO volume mounted at /home/agent. The
@@ -60,10 +58,17 @@ services:
     # volume the two coincide and nobody notices, but any stack that is
     # rebuilt and restarted keeps running its first-deploy code.
     #
-    # There are no volumes at all here: every path the CI agent may
-    # write is a tmpfs with a ceiling, and the CI job needs no host
-    # directory and no SSH key.
-    volumes: []
+    # There is one volume here, and it is the workspace: a named volume
+    # whose driver binds a host path -- the mount point of an ext4
+    # filesystem that tools/setup-workspace.sh makes. Every other path
+    # the CI agent may write is a tmpfs with a ceiling, and the CI job
+    # needs no SSH key.
+    volumes:
+      # The workspace is on disk, and it has a ceiling: a named volume
+      # whose driver binds the mount point of the ext4 filesystem that
+      # tools/setup-workspace.sh makes. The CI job runs that script
+      # before it starts the stack.
+      - owbs-workspace:/workspace
     environment:
       - AGENT_WORKSPACE=/workspace
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
@@ -131,6 +136,18 @@ services:
       timeout: 3s
       retries: 12
       start_period: 10s
+
+volumes:
+  # The agent's workspace: a named volume whose driver binds a host
+  # path -- the mount point of the ext4 filesystem that
+  # tools/setup-workspace.sh makes out of a file of AGENT_WORKSPACE_SIZE.
+  # Docker cannot cap a volume, so the ceiling is the filesystem's.
+  owbs-workspace:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${AGENT_WORKSPACE_PATH:-/tmp/owbs-workspace}
 
 networks:
   ci-net:

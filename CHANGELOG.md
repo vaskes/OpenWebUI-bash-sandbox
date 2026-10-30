@@ -4,6 +4,93 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.17.0] - 2026-10-30
+
+The workspace goes back to disk, and the root may write again.
+
+Two decisions of v2.16.0 are reversed here, on the operator's ruling
+and with the reasons measured rather than argued.
+
+The first was the workspace. It became a tmpfs inside the container --
+RAM, capped, and gone when the container was replaced -- and the price
+was paid in the places that matter for a working shell: the files the
+model wrote and the session registry with them. The workspace is now a
+**volume over a filesystem of a fixed size**. The second was the root:
+a privileged deployment was left with a root that could not write,
+because a writable root filesystem was traded away for a storage bound
+that the writable root filesystem was the reason for.
+
+### Fixed
+
+- **The workspace is on disk again, with a hard ceiling.** It is the
+  named volume `owbs-workspace`, whose driver binds a host path
+  (`AGENT_WORKSPACE_PATH`), and that path is the mount point of an
+  ext4 filesystem living in a file of `AGENT_WORKSPACE_SIZE`. The file
+  is sparse -- it costs what the workspace holds -- and it cannot grow
+  past the ceiling: the filesystem runs out of space, the write fails
+  with `ENOSPC`, and the door answers **507**.
+
+  The ceiling cannot come from Docker, and that is why the ceiling
+  comes from the filesystem instead: compose has no per-volume storage
+  option, and `--storage-opt size` only ever worked with the
+  devicemapper storage driver, which Docker no longer ships (the host
+  runs overlayfs). A named volume is a directory on the host's disk by
+  construction; this one is not, because its driver binds a mount
+  point.
+
+  `tools/setup-workspace.sh` makes the filesystem and mounts it; the
+  deploy scripts and the CI run it before the stack starts, and
+  `make workspace` does it for the default stack. It is idempotent, it
+  refuses to mount over a filesystem that is not ours, and it refuses
+  to make a workspace that cannot hold a file the door accepts
+  (`AGENT_BINARY_LIMIT`) -- a ceiling below the policy refuses a file
+  that was in range, and that refusal comes from the wrong side.
+
+  What comes back with the disk: the files the model wrote survive a
+  container recreate, and so does the session registry.
+
+- **A root that can write, where the agent is root.** The privilege
+  mode grants sudo, and a root whose filesystem is read-only cannot
+  install anything: `apt-get` needs `/var/lib/apt/lists`,
+  `/var/lib/dpkg` and `/usr` to be writable and gets *"Read-only file
+  system"* for all three. That is a half-root, and a half-root is a
+  deployment that passes every check and fails at the first `apt-get`.
+
+  The rule is now explicit and checked: **where sudo is on, the root
+  filesystem has to be writable.** `tools/check-posture.sh` refuses a
+  deployment that grants sudo and keeps the root read-only -- it names
+  the contradiction and stops, it does not fix it behind the operator's
+  back -- and it passes the stock deployment (no sudo, read-only root)
+  and the privilege mode (sudo, writable root). The CI runs the check
+  rather than reading it.
+
+### Changed
+
+- **`AGENT_WORKSPACE_PATH`** -- where the workspace lives on the host.
+  It is the mount point of the filesystem above, and the path has to be
+  absolute: Docker resolves a relative `device` against the daemon's
+  working directory, not against the compose file. Default
+  `/opt/owbs-workspace` (`/opt/telegrambot/sandbox-workspace` in the
+  production stack, `/tmp/owbs-workspace` in CI).
+
+- **The workspace's ceiling is compared with the file policy where the
+  ceiling is applied.** `tools/setup-workspace.sh` reads
+  `AGENT_BINARY_LIMIT` and refuses a workspace that cannot hold it.
+
+- **The tmpfs budget shrank, and still fits.** The workspace left the
+  RAM budget, so what is left -- `/tmp`, `/run` and the two download
+  caches -- has to fit below the container's `mem_limit`, or the OOM
+  killer stops the container before its own ceiling is reached.
+
+### Added
+
+- **`tools/setup-workspace.sh`** -- makes the workspace: an ext4
+  filesystem in a sparse file of `AGENT_WORKSPACE_SIZE`, mounted, and
+  checked. `--check` does the same question without root and without
+  changing anything, so a deployment can prove its own ceiling.
+
+- **`tools/check-posture.sh`** -- refuses a half-root.
+
 ## [2.16.0] - 2026-10-29
 
 The sandbox's storage is capped, and the host's disk is out of reach.

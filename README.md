@@ -10,7 +10,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 978](https://img.shields.io/badge/tests-978_total-brightgreen)](tests/)
+[![Tests: 970](https://img.shields.io/badge/tests-970_total-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -71,7 +71,7 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 - ✅ **Singleton HTTP client** — no per-request TCP handshake
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
-- ✅ **978 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **970 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -126,8 +126,10 @@ The minimum required before exposing this on a network:
 5. Set `OPENAPI_PROXY_CORS_ORIGINS` if you serve a browser UI.
 6. Set `OPENAPI_PROXY_SSH_ALLOWLIST` to your actual fleet.
 7. Set `AGENT_WORKSPACE_SIZE` to the ceiling the sandbox may occupy
-   (default `1g`). The workspace is a tmpfs inside the container, so
-   the ceiling is the whole bound — the host's disk is not in reach.
+   (default `1g`), and make the workspace:
+   `sudo bash tools/setup-workspace.sh "$AGENT_WORKSPACE_PATH" "$AGENT_WORKSPACE_SIZE"`.
+   The workspace is a volume over a filesystem of exactly that size —
+   on disk, with a hard ceiling, and it survives a container recreate.
 8. Pipe the JSON logs to your log aggregator.
 
 ## Architecture
@@ -190,12 +192,17 @@ The most important knobs:
   `Host` is refused with a 421. The bearer token is the guard either
   way; this is one more layer.
 - **`AGENT_WORKSPACE_SIZE`** — how much space the sandbox's workspace
-  may occupy (default `1g`). The workspace is a **tmpfs inside the
-  container**, not a directory on the host: a bind-mount would make the
+  may occupy (default `1g`). The workspace is a **volume over a
+  filesystem of exactly that size**: Docker has no quota for a
+  volume, so `tools/setup-workspace.sh` makes an ext4 filesystem in a
+  sparse file and mounts it, and the volume binds that mount point. The
+  workspace is on disk (a bind-mount of a host directory would make the
   host's own partition the sandbox's scratchpad, and a scratchpad
-  without a ceiling is a disk-filler. The price is that the workspace
-  is RAM and does not survive a container recreate — a file that has to
-  outlive the container leaves through the file door.
+  without a ceiling is a disk-filler), it has a hard ceiling, and it
+  survives a container recreate.
+- **`AGENT_WORKSPACE_PATH`** — where the workspace lives on the host
+  (default `/opt/owbs-workspace`). It is the mount point of that
+  filesystem; the path has to be absolute.
 - **`AGENT_ALLOW_SUDO`** — `0` by default. `1` builds the image with
   `sudo`, so a command in the sandbox can run `sudo su` and become root
   **inside the container**. **Private deployments in secured environments
@@ -575,11 +582,13 @@ distribution — there is no `apt-get` in it, and the healthcheck asks
 Python, not `curl`. Look at `docker logs openapi-proxy --tail 50`, and
 re-read the env with `docker compose up -d` (not `restart`).
 
-**`/workspace` empty** → it is a tmpfs: it starts empty on every
-container and it is emptied by a container recreate. If a file you put
-there before a restart is gone, that is the workspace doing what it
-does now, not a lost file. `docker exec sandbox-agent df -h /workspace`
-shows the ceiling it is working under.
+**`/workspace` empty** → the workspace is a filesystem with a ceiling,
+and it is empty until something is written into it. It does *not* get
+emptied by a container recreate: it lives on the host's disk, in a
+filesystem of `AGENT_WORKSPACE_SIZE`. `docker exec sandbox-agent df -h
+/workspace` shows the ceiling it is working under, and
+`bash tools/setup-workspace.sh --check "$AGENT_WORKSPACE_PATH"
+"$AGENT_WORKSPACE_SIZE"` says whether the workspace is really there.
 
 **Open WebUI loses the tool connection on restart** → re-add via
 Settings → External Tool Servers, or set `TOOL_SERVER_CONNECTIONS` in
