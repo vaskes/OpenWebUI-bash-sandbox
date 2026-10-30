@@ -212,6 +212,29 @@ class TheWorkspaceIsNotWiped(unittest.TestCase):
 class TheWorkspaceIsMountedAtBoot(unittest.TestCase):
     """The mount survives the host, not just the deployment."""
 
+    @staticmethod
+    def _target(makefile: str, name: str) -> str:
+        """The body of one Makefile target.
+
+        A Makefile has more than one target, and a check that reads the
+        whole file is satisfied by any of them: the `workspace` target
+        installs the boot entry and the `workspace-check` target checks
+        it, so a check for "the string is in the Makefile" says nothing
+        about the one that has to install it. The body is read from the
+        target's header to the next target.
+        """
+        body: list[str] = []
+        inside = False
+        for line in makefile.splitlines():
+            if not inside:
+                if line.startswith(f"{name}:"):
+                    inside = True
+                continue
+            if line and not line[0].isspace():
+                break
+            body.append(line)
+        return "\n".join(body)
+
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.fstab = Path(self._tmp.name) / "fstab"
@@ -306,13 +329,14 @@ class TheWorkspaceIsMountedAtBoot(unittest.TestCase):
         made the filesystem and stopped would leave a host whose ceiling
         quietly disappears on the next boot.
         """
-        makefile = _read("Makefile")
+        target = self._target(_read("Makefile"), "workspace")
+        self.assertTrue(target, "the Makefile has no `workspace` target")
         self.assertIn(
             "tools/install-workspace-mount.sh",
-            makefile,
-            "the Makefile never installs the boot entry: after a reboot the "
-            "workspace would be a plain directory, and a plain directory has "
-            "no ceiling",
+            target,
+            "the `workspace` target does not install the boot entry: after a "
+            "reboot the workspace would be a plain directory, and a plain "
+            "directory has no ceiling",
         )
 
 
