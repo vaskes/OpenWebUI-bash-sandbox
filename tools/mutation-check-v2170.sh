@@ -85,7 +85,7 @@ mutate_all tools/setup-workspace.sh \
 
 echo "== the volume check accepts any volume =="
 mutate tools/check-workspace-volume.sh \
-  'if [ "$device" = "$WS_PATH" ]; then' \
+  'if [ "$device" = "$WS_PATH" ] || printf '"'"'%s'"'"' "$options" | grep -qF "device:$WS_PATH"; then' \
   'if true; then' \
   "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_workspace_volume_has_to_be_the_workspace" \
   "the workspace volume has to be the workspace"
