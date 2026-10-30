@@ -364,6 +364,32 @@ class TestTheModelIsToldWhatItCanInstall(unittest.TestCase):
             "spend its timeout finding that out",
         )
 
+    def test_the_tool_description_names_the_way_out_of_the_path_order(self) -> None:
+        # The tree is on PYTHONPATH, and PYTHONPATH comes before a
+        # virtual environment's own site-packages. A version the model
+        # installs into its own environment therefore does not override
+        # the preinstalled one: pip says it installed, and the
+        # preinstalled version is what runs. The model is the only one
+        # who can hit that, so it is the one who has to be told.
+        description = _tool_description("bash")
+        self.assertIn(
+            "env -u PYTHONPATH",
+            description,
+            "the tool description does not name the way out of the path "
+            "order: the preinstalled tree wins over what the model "
+            "installs, and pip reports the install as successful",
+        )
+
+    def test_the_documents_say_the_same_thing(self) -> None:
+        configuration = _read("docs/CONFIGURATION.md")
+        self.assertIn(
+            "env -u PYTHONPATH",
+            configuration,
+            "the documents do not say how to get a version of a "
+            "preinstalled package to win -- the rule the model is told "
+            "about has to be written down for the humans too",
+        )
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
