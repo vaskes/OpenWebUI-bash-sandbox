@@ -96,11 +96,17 @@ mutate tools/install-workspace-mount.sh \
   "the boot entry check accepts an entry it would not write"
 
 echo "== the Makefile does not install the boot entry =="
+# The label is in single quotes on purpose: backticks inside double
+# quotes are a COMMAND SUBSTITUTION, and a label that runs
+# `make workspace` on the machine that runs the mutation sweep creates
+# a 4 GiB filesystem in /opt. (It did, once: the label said
+# "`make workspace` does not install the boot entry" and the shell
+# answered with the recipe's own echo.)
 mutate Makefile \
   '	sudo bash tools/install-workspace-mount.sh "$(WORKSPACE_PATH)"' \
   '	true # the boot entry is not installed' \
   "$RULE::TheWorkspaceIsMountedAtBoot::test_the_makefile_installs_the_boot_entry" \
-  "`make workspace` does not install the boot entry"
+  'the workspace target does not install the boot entry'
 
 echo "== the documentation says 1 GiB =="
 mutate docs/CONFIGURATION.md \
