@@ -175,6 +175,15 @@ mutate agent_api.py \
   "$RULE_CONTAINMENT" \
   "the upload compares the path it writes against the perimeter"
 
+echo "== the shared helper loses its check =="
+mutate agent_api.py \
+  '    if real.startswith(WORKSPACE_PREFIX):
+        return real' \
+  '    if True:
+        return real' \
+  "$RULE_CONTAINMENT" \
+  "the shared helper compares the resolved path against the perimeter"
+
 echo "== the helper that reads the filesystem has no check of its own =="
 mutate agent_api.py \
   '    if not target.startswith(WORKSPACE_PREFIX):

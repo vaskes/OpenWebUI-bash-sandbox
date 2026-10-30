@@ -258,6 +258,16 @@ class TestTheGuardIsWrittenInTheShapeTheAnalyserFollows(_ContainmentBase):
             if ast.dump(call.args[0]) == ast.dump(ast.Name(id="WORKSPACE_PREFIX", ctx=ast.Load()))
         ]
 
+    def test_the_shared_helper_check_is_a_startswith_on_the_prefix(self) -> None:
+        # The helper both the shell door's cwd and the upload's parent
+        # directory go through. It is the real gate for the cwd, so its
+        # spelling is pinned like the others.
+        self.assertTrue(
+            self._startswith_guards("_inside_workspace"),
+            "_inside_workspace must compare the resolved path with "
+            "str.startswith against the prefix constant",
+        )
+
     def test_the_upload_check_is_a_startswith_on_the_prefix(self) -> None:
         # The upload half of the door writes, and a write is a sink the
         # analyser reports. The check has to stand next to the write,
