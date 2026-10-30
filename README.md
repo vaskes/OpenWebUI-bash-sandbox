@@ -10,7 +10,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 1020](https://img.shields.io/badge/tests-1020_total-brightgreen)](tests/)
+[![Tests: 1039](https://img.shields.io/badge/tests-1039_total-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -73,7 +73,7 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 - ✅ **Multi-stage Dockerfiles** — small images
 - ✅ **Python packages out of the box** — pip in the image, a wheelhouse
   for instant offline installs, and the usual suspects preinstalled
-- ✅ **1020 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **1039 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -128,10 +128,14 @@ The minimum required before exposing this on a network:
 5. Set `OPENAPI_PROXY_CORS_ORIGINS` if you serve a browser UI.
 6. Set `OPENAPI_PROXY_SSH_ALLOWLIST` to your actual fleet.
 7. Set `AGENT_WORKSPACE_SIZE` to the ceiling the sandbox may occupy
-   (default `1g`), and make the workspace:
+   (default `4g`), and make the workspace:
    `sudo bash tools/setup-workspace.sh "$AGENT_WORKSPACE_PATH" "$AGENT_WORKSPACE_SIZE"`.
    The workspace is a volume over a filesystem of exactly that size —
    on disk, with a hard ceiling, and it survives a container recreate.
+   Put the mount back at boot with
+   `sudo bash tools/install-workspace-mount.sh "$AGENT_WORKSPACE_PATH"`,
+   so a reboot does not leave the volume bound to a plain directory
+   (which has no ceiling at all).
 8. Pipe the JSON logs to your log aggregator.
 
 ## Architecture
@@ -194,7 +198,7 @@ The most important knobs:
   `Host` is refused with a 421. The bearer token is the guard either
   way; this is one more layer.
 - **`AGENT_WORKSPACE_SIZE`** — how much space the sandbox's workspace
-  may occupy (default `1g`). The workspace is a **volume over a
+  may occupy (default `4g`). The workspace is a **volume over a
   filesystem of exactly that size**: Docker has no quota for a
   volume, so `tools/setup-workspace.sh` makes an ext4 filesystem in a
   sparse file and mounts it, and the volume binds that mount point. The
@@ -203,7 +207,9 @@ The most important knobs:
   workspace is on disk (a bind-mount of a host directory would make the
   host's own partition the sandbox's scratchpad, and a scratchpad
   without a ceiling is a disk-filler), it has a hard ceiling, and it
-  survives a container recreate.
+  survives a container recreate. A **bigger** ceiling grows the
+  filesystem in place and the files stay; a smaller one is refused,
+  because shrinking means deciding what to throw away.
 - **`AGENT_WORKSPACE_PATH`** — where the workspace lives on the host
   (default `/opt/owbs-workspace`). It is the mount point of that
   filesystem; the path has to be absolute.

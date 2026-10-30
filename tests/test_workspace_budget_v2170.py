@@ -401,14 +401,29 @@ class TestTheWorkspaceIsOnDiskWithACeiling(unittest.TestCase):
         # for, and a check that is satisfied by either of those is a
         # check that a mutation cannot turn red.
         code = "\n".join(_code_lines(script.read_text(encoding="utf-8")))
-        self.assertRegex(
+        # The CREATE path, and not any truncate in the script: the
+        # script also GROWS the file, and a check that is satisfied by
+        # the grow path says nothing about the path that makes the
+        # ceiling for a workspace that does not exist yet. (v2.19.0
+        # added the second truncate, and this check would have gone
+        # green with the create path's truncate removed.)
+        guard = 'if [ ! -e "$IMAGE" ]; then'
+        self.assertIn(
+            guard,
             code,
+            "the setup script has no create path: a workspace that does not "
+            "exist would never get a file, and a file with no filesystem "
+            "in it is a directory with a size",
+        )
+        create = code.split(guard, 1)[1]
+        self.assertRegex(
+            create,
             r"(?m)^\s*truncate\s+-s\s+",
             "the setup script does not make a file of the ceiling -- without "
             "the file there is no filesystem and no ceiling",
         )
         self.assertRegex(
-            code,
+            create,
             r"(?m)^\s*mkfs\.ext4\s+",
             "the setup script does not make a filesystem -- a file on the "
             "host's disk is a directory with a size, not a filesystem that "
