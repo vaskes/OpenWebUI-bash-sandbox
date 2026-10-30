@@ -2142,7 +2142,15 @@ def _refuse_if_taken(target: str, name: str) -> None:
     after they land -- because the workspace is writable by the agent:
     a file can appear while the upload is in flight. Both calls come
     here, so there is one rule and not two.
+
+    The containment check stands here, next to the call that reads the
+    filesystem. The analyser follows a check that stands next to the
+    use, and a reader can check it in one line; the caller has already
+    resolved and vetted the path. The same shape as the download half
+    uses, for the same reason.
     """
+    if not target.startswith(WORKSPACE_PREFIX):
+        raise HTTPException(status_code=400, detail=f"path outside the workspace: {name}")
     if os.path.exists(target):
         raise HTTPException(status_code=409, detail=f"file already exists: {name}")
 
@@ -2218,7 +2226,20 @@ async def upload_file(
         raise HTTPException(status_code=400, detail=f"invalid file name: {path!r}")
 
     parent = _safe_parent(_anchor(os.path.dirname(raw) or ".", allow_root=True))
-    target = os.path.join(parent, name)
+
+    # The target is resolved and checked **here**, where it is used.
+    #
+    # The parent was already resolved and vetted by _safe_parent, but
+    # the string that is written to is the one that has to be inside
+    # the workspace: the name itself can be a symlink that points out
+    # of it, and a file written through that link would land outside.
+    # The check is written in the shape the analyser follows -- a
+    # startswith against the prefix constant, with the refusal next to
+    # it -- and in the shape a reader can check in one line. It is the
+    # same rule, and the same spelling, as the download half uses.
+    target = os.path.realpath(os.path.join(parent, name))
+    if not target.startswith(WORKSPACE_PREFIX):
+        raise HTTPException(status_code=400, detail=f"path outside the workspace: {path}")
     _refuse_if_taken(target, name)
 
     # A body that says it is too big is refused before a byte of it is
@@ -2241,6 +2262,11 @@ async def upload_file(
     # The temporary file is in the same directory as the target, so the
     # rename onto it is atomic: same filesystem, same directory.
     #
+    # The directory is taken from the target -- the path that was
+    # resolved and checked -- and the name of the temporary file is a
+    # constant: nothing the client sent goes into a path, not even
+    # into the name of the file that is about to be replaced.
+    #
     # The workspace has a ceiling (AGENT_WORKSPACE_SIZE), and the answer
     # to hitting it has to name the cause: a full workspace is a 507, not
     # a 500 with a traceback in it. The client is told that the file did
@@ -2248,7 +2274,9 @@ async def upload_file(
     tmp_path: str | None = None
     try:
         try:
-            tmp_fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=f".{name}.", suffix=".upload")
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                dir=os.path.dirname(target), prefix=".upload.", suffix=".tmp"
+            )
         except OSError as exc:
             if exc.errno == errno.ENOSPC:
                 raise HTTPException(

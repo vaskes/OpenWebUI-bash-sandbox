@@ -235,8 +235,10 @@ class TestTheDoorTakesFilesIn(unittest.TestCase):
         )
 
     def test_a_symlink_under_the_uploaded_name_is_not_written_through(self) -> None:
-        # The link itself is replaced, never its target: the file that
-        # is somewhere else stays exactly as it was.
+        # A name that is a symlink is resolved before the write, and
+        # the resolved path is the one that is checked: a link that
+        # leaves the workspace is refused, and the file that is
+        # somewhere else stays exactly as it was.
         outside = os.path.join(self.tmpdir, "..", f"secret-{os.path.basename(self.tmpdir)}.txt")
         with open(outside, "wb") as handle:
             handle.write(b"not yours")
@@ -248,7 +250,7 @@ class TestTheDoorTakesFilesIn(unittest.TestCase):
             "/files", params={"path": "link-file"}, content=b"x", headers=self.auth
         )
 
-        self.assertIn(response.status_code, (200, 409))
+        self.assertEqual(response.status_code, 400, response.text)
         with open(outside, "rb") as handle:
             self.assertEqual(handle.read(), b"not yours", "the upload wrote through the symlink")
 

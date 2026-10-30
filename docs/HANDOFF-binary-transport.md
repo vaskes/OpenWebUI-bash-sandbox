@@ -298,6 +298,15 @@ an empty body, **404** for a parent directory that is not there, **409**
 for a name that is already taken, **413** for a body over the limit,
 **507** for a workspace that has no room left.
 
+A **400** also answers a path that leaves the workspace — by traversal,
+by an absolute path, by a parent that is a symlink out of the workspace,
+or by a name that is itself a symlink out of it. The path is resolved
+before the write, and the resolved path is the one that is checked and
+the one that is written, so an upload never lands outside the sandbox
+and never writes through a link that leaves it. The name that was asked
+for is the name that lands; the answer's `path` field names the file
+that is really there.
+
 The proxy relays the bytes as they arrive and relays the status as it
 is: the same vocabulary as the download, so a client has one set of
 rules and not two.
