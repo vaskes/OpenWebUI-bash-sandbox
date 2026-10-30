@@ -456,6 +456,88 @@ class TestTheWorkspaceIsOnDiskWithACeiling(unittest.TestCase):
                 "reach are the host's problem, not the sandbox's",
             )
 
+    def test_the_check_accepts_a_mount_with_the_flags_and_refuses_one_without(self) -> None:
+        """The comparison has to work on the options as the mount gives them.
+
+        The shape of the check is not the check. A version of this
+        function that compared "rwnosuidnodev" against "nosuid" has the
+        right shape and refuses every mount there is -- which is how it
+        was found: the deployment stopped with "still mounted without
+        nosuid" on a mount that carried both. So the function is run,
+        with a mount table of its own.
+        """
+        script = ROOT / "tools" / "setup-workspace.sh"
+        for options, expected in (
+            ("rw,nosuid,nodev,relatime", 0),
+            ("rw,relatime", 1),
+            ("rw,nosuid,relatime", 1),
+            ("rw,nodev,relatime", 1),
+            # The separators are the token boundaries: an option that
+            # merely starts with the same letters is not that option.
+            ("rw,nosuidfoo,nodev,relatime", 1),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                mountpoint = Path(tmp) / "workspace"
+                mountpoint.mkdir()
+                # The mode is part of the workspace's contract, and the
+                # check refuses a workspace that does not carry it --
+                # so the mount point in the test has to carry it too.
+                mountpoint.chmod(0o1777)
+                image = Path(tmp) / "workspace.img"
+                image.write_bytes(b"x" * 1024)
+                bindir = Path(tmp) / "bin"
+                bindir.mkdir()
+                self._fake_mount_tools(bindir, options, image, mountpoint)
+                result = subprocess.run(
+                    [
+                        "bash",
+                        str(script),
+                        "--check",
+                        str(mountpoint),
+                        "1k",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    env={
+                        **os.environ,
+                        "PATH": f"{bindir}:{os.environ.get('PATH', '')}",
+                        "MOUNTPOINT_FAKE": str(mountpoint),
+                        "OPTIONS_FAKE": options,
+                        "IMAGE_FAKE": str(image),
+                    },
+                )
+                self.assertEqual(
+                    result.returncode,
+                    expected,
+                    f"the check on the options {options!r} answered "
+                    f"{result.returncode}, expected {expected}: "
+                    f"{result.stdout}{result.stderr}",
+                )
+
+    @staticmethod
+    def _fake_mount_tools(bindir: Path, options: str, image: Path, mountpoint: Path) -> None:
+        """A mount table of our own, so the script can be run without root."""
+        findmnt = bindir / "findmnt"
+        findmnt.write_text(
+            "#!/usr/bin/env bash\n"
+            'case "$*" in\n'
+            '    *"-no TARGET"*) echo "$MOUNTPOINT_FAKE" ;;\n'
+            '    *"-no SOURCE"*) echo "/dev/loop999" ;;\n'
+            '    *"-no OPTIONS"*) echo "$OPTIONS_FAKE" ;;\n'
+            '    *) echo "" ;;\n'
+            "esac\n",
+            encoding="utf-8",
+        )
+        findmnt.chmod(0o755)
+        losetup = bindir / "losetup"
+        losetup.write_text(
+            '#!/usr/bin/env bash\necho "/dev/loop999 $IMAGE_FAKE"\n',
+            encoding="utf-8",
+        )
+        losetup.chmod(0o755)
+        # The answers travel in the environment the script is run with;
+        # nothing is left behind in the process that runs the tests.
+
     def test_the_check_reads_the_live_mount_and_not_the_script(self) -> None:
         """A rule about the filesystem is only true of the filesystem.
 

@@ -315,6 +315,17 @@ mutate tools/setup-workspace.sh \
   "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_check_reads_the_live_mount_and_not_the_script" \
   "the check reads the mount that is there"
 
+echo "== the options are compared without their separators =="
+# The separators are the token boundaries. Throwing them away turns
+# "rw,nosuid,nodev" into "rwnosuidnodev", and then no mount is ever
+# right. This is how the bug got there, and the behavioural check on
+# the script is what catches it.
+mutate tools/setup-workspace.sh \
+  '    opts=",$(mounted_options | tr -d '"'"'[:space:]'"'"'),"' \
+  '    opts=",$(mounted_options | tr '"'"','"'"' '"'"'\n'"'"' | tr -d '"'"'[:space:]'"'"'),"' \
+  "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_check_accepts_a_mount_with_the_flags_and_refuses_one_without" \
+  "the options are compared as tokens"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
