@@ -74,40 +74,6 @@ mutate Makefile \
   "$RULE::TheWorkspaceIsNotWiped::test_the_makefile_says_the_same_thing" \
   "the Makefile's default ceiling is 1 GiB"
 
-echo "== the boot entry drops the boundary =="
-mutate tools/install-workspace-mount.sh \
-  'FSTAB_OPTIONS="loop,nosuid,nodev,nofail,x-systemd.device-timeout=30"' \
-  'FSTAB_OPTIONS="loop,nofail,x-systemd.device-timeout=30"' \
-  "$RULE::TheWorkspaceIsMountedAtBoot::test_the_entry_carries_the_boundary" \
-  "the boot entry mounts without nosuid and nodev"
-
-echo "== the boot entry stops the boot =="
-mutate tools/install-workspace-mount.sh \
-  'FSTAB_OPTIONS="loop,nosuid,nodev,nofail,x-systemd.device-timeout=30"' \
-  'FSTAB_OPTIONS="loop,nosuid,nodev,x-systemd.device-timeout=30"' \
-  "$RULE::TheWorkspaceIsMountedAtBoot::test_the_entry_does_not_stop_the_boot" \
-  "the boot entry is not nofail"
-
-echo "== the check accepts a tampered entry =="
-mutate tools/install-workspace-mount.sh \
-  '        if [ "$line" != "$want" ]; then' \
-  '        if false; then' \
-  "$RULE::TheWorkspaceIsMountedAtBoot::test_a_tampered_entry_is_refused" \
-  "the boot entry check accepts an entry it would not write"
-
-echo "== the Makefile does not install the boot entry =="
-# The label is in single quotes on purpose: backticks inside double
-# quotes are a COMMAND SUBSTITUTION, and a label that runs
-# `make workspace` on the machine that runs the mutation sweep creates
-# a 4 GiB filesystem in /opt. (It did, once: the label said
-# "`make workspace` does not install the boot entry" and the shell
-# answered with the recipe's own echo.)
-mutate Makefile \
-  '	sudo bash tools/install-workspace-mount.sh "$(WORKSPACE_PATH)"' \
-  '	true # the boot entry is not installed' \
-  "$RULE::TheWorkspaceIsMountedAtBoot::test_the_makefile_installs_the_boot_entry" \
-  'the workspace target does not install the boot entry'
-
 echo "== the documentation says 1 GiB =="
 mutate docs/CONFIGURATION.md \
   'Default: `4g`.' \

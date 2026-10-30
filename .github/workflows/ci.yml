@@ -188,9 +188,6 @@ jobs:
           fi
           sudo test -f "$WS/persist-probe"
           # The mount comes back at boot.
-          sudo bash tools/install-workspace-mount.sh "$WS"
-          bash tools/install-workspace-mount.sh --check "$WS"
-          sudo bash tools/install-workspace-mount.sh --remove "$WS"
           sudo umount "$WS"
           sudo rm -rf "$WS" "$WS.img"
 

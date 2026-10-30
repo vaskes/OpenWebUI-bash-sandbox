@@ -117,6 +117,12 @@ services:
       # below, so nothing is lost by leaving /home/agent image-owned.
     environment:
       - AGENT_WORKSPACE=/workspace
+      # The ceiling the workspace is supposed to have. The mount of the
+      # workspace belongs to this stack -- it is made when the stack starts,
+      # and it is NOT in the host's /etc/fstab -- so the agent checks the
+      # filesystem it is looking at and refuses to serve against a plain
+      # directory, which has no ceiling at all.
+      - AGENT_WORKSPACE_SIZE=${AGENT_WORKSPACE_SIZE:-}
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
       - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-INFO}
       # How much text one command may return. 32k..1024k.

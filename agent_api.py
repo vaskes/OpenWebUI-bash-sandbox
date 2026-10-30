@@ -150,6 +150,69 @@ MAX_OUTPUT_BYTES = STDOUT_LIMIT_BYTES
 #: still holds, which is the same silent loss one layer up.
 CAPTURE_PANE_LINES = CAPTURE_DEPTH_LINES
 WORKSPACE = os.environ.get("AGENT_WORKSPACE", "/workspace")
+#: The ceiling the workspace is supposed to have, when the deployment
+#: declares one. The workspace is a filesystem in a file on the host, and
+#: the mount belongs to the stack: it is made when the stack starts, and
+#: it is deliberately NOT in the host's /etc/fstab. So a container can
+#: come up against a plain directory -- after a reboot of the host, for
+#: instance -- and a plain directory has no ceiling: the agent's files
+#: would land on the host's disk instead of inside the filesystem that
+#: has the ceiling.
+#:
+#: The agent refuses to serve in that state. The size of the filesystem
+#: it is looking at has to be the size that was asked for, and a host's
+#: partition is a different size.
+WORKSPACE_SIZE = os.environ.get("AGENT_WORKSPACE_SIZE", "")
+
+#: How far the filesystem may differ from the ceiling that was asked
+#: for. ext4 keeps a few percent for itself, so this is a band and not
+#: an equality.
+CEILING_TOLERANCE = 0.05
+
+
+def _parse_size(text: str) -> int | None:
+    """``"4g"`` -> ``4294967296``. None when the text is not a size."""
+    raw = text.strip().lower()
+    if not raw:
+        return None
+    units = {"k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
+    multiplier = 1
+    if raw[-1] in units:
+        multiplier = units[raw[-1]]
+        raw = raw[:-1]
+    if not raw.isdigit():
+        return None
+    return int(raw) * multiplier
+
+
+def workspace_ceiling_state() -> tuple[bool, str]:
+    """Is the workspace the filesystem with the ceiling?
+
+    Returns ``(intact, explanation)``. When no ceiling is declared the
+    question does not apply, and the workspace is left alone -- a
+    deployment that mounts a tmpfs has no ceiling to keep.
+    """
+    want = _parse_size(WORKSPACE_SIZE)
+    if want is None:
+        return True, "no ceiling was declared"
+    try:
+        st = os.statvfs(WORKSPACE)
+    except OSError as exc:
+        return False, f"the workspace {WORKSPACE} cannot be read: {exc}"
+    have = st.f_blocks * st.f_frsize
+    if have <= 0:
+        return False, f"the workspace {WORKSPACE} reports a filesystem of zero bytes"
+    if abs(have - want) > want * CEILING_TOLERANCE:
+        return (
+            False,
+            f"the workspace {WORKSPACE} is a filesystem of {have} bytes, not the "
+            f"{want} bytes that were asked for ({WORKSPACE_SIZE}); it is probably a "
+            "plain directory on the host's disk -- the mount belongs to the stack "
+            "and is made when the stack starts",
+        )
+    return True, f"the workspace is a filesystem of {have} bytes"
+
+
 SESSIONS_FILE = os.environ.get("AGENT_SESSIONS_FILE", "/workspace/.agent-sessions.json")
 #: Largest file the binary endpoint will serve. 0 means no limit. See
 #: agent_config.
@@ -164,6 +227,26 @@ logger = logging.getLogger("sandbox-agent")
 # format string interpolated the message into a JSON string, so a
 # command containing a quote produced a line no parser could read.
 configure_logging(os.environ.get("AGENT_LOG_LEVEL", "INFO"))
+
+
+def enforce_workspace_ceiling() -> None:
+    """Refuse to serve against a workspace that has lost its ceiling.
+
+    The mount of the workspace belongs to the stack: it is made when the
+    stack starts, and it is not in the host's /etc/fstab. A container
+    that comes up without it finds a plain directory -- and a plain
+    directory has no ceiling, so the agent's files would land on the
+    host's disk. That is a quiet failure with a loud consequence, so
+    it is refused loudly here instead.
+    """
+    intact, why = workspace_ceiling_state()
+    if not intact:
+        logger.error("workspace ceiling: %s", why)
+        raise SystemExit(2)
+    logger.info("workspace ceiling: %s", why)
+
+
+enforce_workspace_ceiling()
 
 #: What the agent exposes on ``/metrics``. The gauge is read at scrape
 #: time, so it reflects the sessions that exist right now.
