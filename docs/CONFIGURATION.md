@@ -144,9 +144,18 @@ overlayfs). A named volume is a directory on the host's disk by
 construction. So the ceiling comes from the filesystem instead:
 
 * `tools/setup-workspace.sh` makes an ext4 filesystem in a **sparse
-  file** of `AGENT_WORKSPACE_SIZE` and mounts it. The file costs what
-  the workspace actually holds, and it cannot grow: the filesystem
-  inside it runs out of space, and the write fails.
+  file** of `AGENT_WORKSPACE_SIZE` and mounts it. The file cannot grow:
+  the filesystem inside it runs out of space, and the write fails.
+
+  The file is sparse when it is made, so an empty workspace costs a few
+  megabytes. **After the workspace has held a lot, the host's disk pays
+  the high-water mark:** the filesystem frees its blocks when the files
+  are deleted, but the file does not give them back — ext4 does not
+  punch holes in the file it lives in. Measured on the production host
+  after a verification that filled the workspace and cleaned it up: the
+  filesystem was empty (544 K used) and the image file still took 1.9 G.
+  The ceiling is therefore the most the host can ever lose to the
+  workspace — and the most it can lose, because the file cannot grow.
 * The stack's `owbs-workspace` volume binds that **mount point**, so
   the container sees the filesystem and not a directory.
 

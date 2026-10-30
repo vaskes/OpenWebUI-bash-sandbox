@@ -26,9 +26,11 @@ that the writable root filesystem was the reason for.
   named volume `owbs-workspace`, whose driver binds a host path
   (`AGENT_WORKSPACE_PATH`), and that path is the mount point of an
   ext4 filesystem living in a file of `AGENT_WORKSPACE_SIZE`. The file
-  is sparse -- it costs what the workspace holds -- and it cannot grow
-  past the ceiling: the filesystem runs out of space, the write fails
-  with `ENOSPC`, and the door answers **507**.
+  cannot grow past the ceiling: the filesystem runs out of space, the
+  write fails with `ENOSPC`, and the door answers **507**. The file is
+  sparse when it is made; after the workspace has held a lot, the host's
+  disk pays the high-water mark, because ext4 does not punch holes in
+  the file it lives in.
 
   The ceiling cannot come from Docker, and that is why the ceiling
   comes from the filesystem instead: compose has no per-volume storage
