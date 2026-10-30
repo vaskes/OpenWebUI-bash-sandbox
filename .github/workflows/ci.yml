@@ -192,7 +192,7 @@ jobs:
           bash tools/install-workspace-mount.sh --check "$WS"
           sudo bash tools/install-workspace-mount.sh --remove "$WS"
           sudo umount "$WS"
-          sudo rm -f "$WS" "$WS.img"
+          sudo rm -rf "$WS" "$WS.img"
 
       - name: Build both images from a clean tree
         env:
