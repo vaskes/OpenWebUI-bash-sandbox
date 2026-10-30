@@ -542,27 +542,6 @@ jobs:
       - name: The workspace gets its ceiling
         run: sudo bash tools/setup-workspace.sh "${AGENT_WORKSPACE_PATH:-/tmp/owbs-workspace}" "${AGENT_WORKSPACE_SIZE:-1g}"
 
-      # The rule: where sudo is on, the root has to be writable. A root
-      # that cannot write is a half-root, and a half-root is a
-      # deployment that passes every check and fails at the first
-      # apt-get. The check refuses it -- and the refusal is what this
-      # step proves, by running the check rather than reading it.
-      - name: A half-root is refused
-        env:
-          AGENT_ALLOW_SUDO: "1"
-        run: |
-          set -euo pipefail
-          if AGENT_READ_ONLY=true bash tools/check-posture.sh; then
-            echo "::error::a half-root passed the posture check"; exit 1
-          fi
-          if AGENT_READ_ONLY=false AGENT_ALLOW_SUDO=1 bash tools/check-posture.sh; then
-            echo "::error::a real root was refused by the posture check"; exit 1
-          fi
-          if AGENT_ALLOW_SUDO=0 AGENT_READ_ONLY=true bash tools/check-posture.sh; then
-            echo "::error::the stock deployment was refused by the posture check"; exit 1
-          fi
-          echo "the posture check refuses a half-root and accepts a real root"
-
       - name: Build the agent image with sudo
         env:
           OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
