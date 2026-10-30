@@ -4,6 +4,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.0] - 2026-10-30
+
+The ceiling grows the workspace. It never wipes it.
+
+The workspace is an ext4 filesystem in a file of `AGENT_WORKSPACE_SIZE`,
+mounted on the host. That part was already true in v2.17.0. What was
+not true is what happened when the size changed -- and the answer was
+measured on the production host before anything was written.
+
+### Fixed
+
+- **A changed ceiling used to throw the workspace away.** The setup
+  script made a new filesystem whenever the requested size did not
+  match the file's size: it deleted the image and made another one. A
+  deployment that raised the ceiling therefore destroyed the agent's
+  work, and the loss looked like "the sandbox wipes itself on restart".
+  It is not the restart: a container recreate was measured to keep the
+  files, and the files that were lost died in the tmpfs-to-ext4
+  migration deploy. A bigger ceiling now **grows** the filesystem in
+  place -- `truncate` the file, tell the loop device the file grew,
+  `resize2fs` the filesystem -- and **the files stay**. Measured on
+  the production host: 2 GiB to 4 GiB, the file list before and after
+  identical, `df -h` 3.9G, `df -i` 262144.
+- **A file that is not a filesystem is left alone.** Before the image
+  is made bigger it is asked what it is (`dumpe2fs`), and a file that
+  is not a filesystem is not touched: growing it would change a file
+  somebody else put there. A file that exists and does not mount is
+  never formatted over either -- that is a human's decision, and the
+  script says so instead of doing it.
+- **The mount comes back after a reboot of the host.** The filesystem
+  is a fact about the running kernel, not about the file: after a
+  reboot the image is intact and nothing is mounted, so the directory
+  the volume binds is an ordinary directory on the host's partition
+  again -- and a directory has no ceiling. The failure is quiet, which
+  is the worst kind. The mount is now installed into `/etc/fstab` by
+  `tools/install-workspace-mount.sh`, with `nosuid` and `nodev` (the
+  boundary the mount carries) and `nofail` (a missing image must not
+  keep the host from booting). `make workspace` installs it;
+  `make workspace-check` checks it, and it needs no root.
+- **The plan and the doing are the same function.** `setup-workspace.sh
+  --plan` answers one question -- `create`, `same`, `grow`, `refuse` or
+  `foreign` -- and it is the function the script acts on, so the plan
+  cannot promise one thing and do another. It needs no root and
+  changes nothing, so a deployment can ask before it acts.
+- **Two bugs in the growth path itself.** `e2fsck` exits 1 when it
+  *corrected* errors, and under `set -e` that killed the script before
+  the check that matters; the code is now captured and only 4 and
+  above (errors left uncorrected) stop the grow. And a fractional size
+  ("1.5g") was rounded by the plan while `truncate` made the file
+  bigger, so the next run decided it had to *shrink* a file it had
+  made: a fractional size is refused now, and the file is created at
+  exactly the number of bytes the plan compared against.
+
+### Changed
+
+- **A smaller ceiling is refused, and the refusal needs no privileges.**
+  Shrinking a filesystem means deciding what to throw away, and that
+  decision belongs to a human. The workspace is left exactly as it is:
+  the files, the filesystem and the mount all stay, and the script
+  exits 1 with the reason.
+- **The default ceiling is `4g`** (script, Makefile and documentation).
+  It stays a parameter: the host's disk is the narrow one, and a
+  ceiling that is right on an empty disk is a bomb on a full one. The
+  production host was grown in place to 4 GiB with its data intact;
+  the image is still sparse (4.00 GiB apparent, 1.87 GiB real).
+
+### Unchanged
+
+- The bot's contract did not change: the same routes, the same status
+  codes, the same budget. `docs/HANDOFF-binary-transport.md` still
+  stands as it was written.
+
 ## [2.18.0] - 2026-10-30
 
 The sandbox can install python packages, and does not have to be told twice.

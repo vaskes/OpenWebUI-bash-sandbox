@@ -2,11 +2,11 @@
 
 **For:** the agent that maintains the bot (`vaskes/llama.cpp_telegram`).
 **From:** the sandbox side (`vaskes/OpenWebUI-bash-sandbox`).
-**Code against:** sandbox tag **`v2.18.0`** (the contract below was written
+**Code against:** sandbox tag **`v2.19.0`** (the contract below was written
 against `v2.7.0`; §6 lists what changed since, and the status-code table
 in §3 is the current one).
 **Written:** 2026-10-25. **Status codes last verified:** 2026-10-30 against
-`v2.18.0`.
+`v2.19.0`.
 
 This is the contract between the two halves of the system. Everything in
 it is measured or verified — the numbers are not aspirations, they are
@@ -420,6 +420,7 @@ know:
 | v2.16.0 | the workspace became a tmpfs inside the container with a size ceiling (`AGENT_WORKSPACE_SIZE`) instead of a read-write bind of a host directory | an upload that does not fit is a **507** and the file did not land; nothing is left behind, and the file that was already in the sandbox is untouched |
 | v2.17.0 | the workspace went back to disk — a volume over a filesystem of `AGENT_WORKSPACE_SIZE` — and the privilege mode's root may write again | the door's contract did not change: a workspace with no room left is still a **507**, with the same wording |
 | v2.18.0 | the image ships pip, a wheelhouse and a preinstalled tree of python packages (`/opt/pylibs`) | the door's contract did not change: the same five routes, the same status codes; the model can install packages without asking a human for a package manager |
+| v2.19.0 | the workspace's ceiling grew instead of being wiped, and the mount comes back at boot | the door's contract did not change: the same five routes, the same status codes; a workspace with no room left is still a **507**, with the same wording |
 
 The route list itself did not change until **v2.15.0**, which added
 `POST /files`: `POST /sessions/{id}/exec`, `GET /files`,
