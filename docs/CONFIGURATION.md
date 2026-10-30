@@ -134,7 +134,7 @@ filesystem that carries `/workspace`, and it is the whole bound: the
 sandbox cannot write more than this, and when it tries, the write
 fails with `ENOSPC` *inside the workspace*.
 
-Default: `1g` (`2g` in the production stack).
+Default: `4g`.
 
 **The workspace is on disk, in a filesystem of exactly that size.** The
 ceiling cannot come from Docker: compose has no per-volume storage
@@ -159,6 +159,11 @@ construction. So the ceiling comes from the filesystem instead:
 * The stack's `owbs-workspace` volume binds that **mount point**, so
   the container sees the filesystem and not a directory.
 
+**The ceiling is a parameter, and the size is not a constant.** The
+host's disk is the narrow one, and a ceiling that is right on an empty
+disk is a bomb on a full one: the operator moves the number, not the
+code.
+
 Two rules come with the number:
 
 * **Keep it at or above `AGENT_BINARY_LIMIT`.** The file door accepts a
@@ -166,9 +171,47 @@ Two rules come with the number:
   workspace smaller than the policy would refuse a file the door had
   already promised to accept. `tools/setup-workspace.sh` compares the
   two and refuses to make a workspace that cannot hold it.
-* **Changing the ceiling wipes the workspace.** The ceiling is the size
-  of the filesystem, and a different size is a different filesystem. The
-  script says so out loud before it does it.
+* **A bigger ceiling grows the workspace; a smaller one is refused.**
+  The ceiling is the size of the image file, and the image file is the
+  disk of the filesystem inside it — so a bigger ceiling is the same
+  disk with more room. The script grows the file, tells the loop device
+  the file grew, and resizes the filesystem under the mount that is
+  already there. **The files stay.** It used to make a new filesystem
+  instead, and that threw the agent's work away: the loss looked like
+  "the sandbox wipes itself on restart", which was wrong about the
+  cause and right about the pain.
+
+  A *smaller* ceiling is refused, loudly and without privileges:
+  shrinking a filesystem means deciding what to throw away, and that
+  decision belongs to a human.
+
+  The script never formats over a file it did not make: a file that is
+  there and does not mount is left byte-for-byte alone, and a human
+  decides what happens to it.
+
+**What happens when the workspace is full.** The write fails with
+`ENOSPC` *inside* the workspace. The file door answers **507** — the
+workspace has no room left — and the agent's own writes fail with the
+operating system's own error. The ceiling is the whole bound: the
+sandbox cannot write more than this, and neither can the agent that
+runs in it.
+
+**The mount is put back at boot.** The filesystem is a fact about the
+running kernel, not about the file: after a reboot of the host the
+image is intact and nothing is mounted, so the directory the volume
+binds is an ordinary directory on the host's partition again — and a
+directory has no ceiling. The failure is quiet, which is the worst
+kind. So the mount is installed into `/etc/fstab`:
+
+```bash
+sudo bash tools/install-workspace-mount.sh "$AGENT_WORKSPACE_PATH"
+bash tools/install-workspace-mount.sh --check "$AGENT_WORKSPACE_PATH"
+```
+
+The entry carries `nosuid` and `nodev` (the same boundary the mount
+itself carries — the workspace root is mode 1777 on the host's disk,
+and the privilege mode's root is the host's root) and `nofail`, so a
+missing image cannot keep the host from booting.
 
 The price of the bound is honest and worth naming. The workspace is
 **on disk and durable**: it survives a container recreate, and so does

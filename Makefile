@@ -15,7 +15,7 @@ COMPOSE := docker compose
 # closes. The path below is the same default the compose file uses, so
 # the two cannot drift apart.
 WORKSPACE_PATH ?= /opt/owbs-workspace
-WORKSPACE_SIZE ?= 1g
+WORKSPACE_SIZE ?= 4g
 
 .PHONY: help build up down logs ps restart test test-cov mutation lint format clean health check-env workspace workspace-check
 
@@ -38,17 +38,22 @@ up: check-env workspace-check ## Start the full stack in the background (refuses
 # The workspace is a filesystem with a ceiling, and it lives on the
 # host: an ext4 filesystem in a file, mounted, and handed to the stack
 # as a volume. Run this once per host (it needs root), or whenever the
-# ceiling changes -- which wipes the workspace, because a ceiling is
-# the size of the filesystem and a different size is a different
-# filesystem.
+# ceiling changes -- which now GROWS the filesystem and keeps the files
+# in it. A smaller ceiling is refused: that is a human's decision.
+#
+# The mount is also put into /etc/fstab, so it comes back after a
+# reboot of the host. Without it, the volume would bind a plain
+# directory after a reboot -- and a plain directory has no ceiling.
 workspace: ## Give the sandbox its workspace: a filesystem with a ceiling (needs sudo)
 	sudo bash tools/setup-workspace.sh "$(WORKSPACE_PATH)" "$(WORKSPACE_SIZE)"
+	sudo bash tools/install-workspace-mount.sh "$(WORKSPACE_PATH)"
 
 # The same question as `make workspace`, without root and without
-# changing anything: is the workspace really there, and is its ceiling
-# the one that was asked for?
+# changing anything: is the workspace really there, is its ceiling the
+# one that was asked for, and will it be there after a reboot?
 workspace-check: ## Check that the workspace is mounted with the right ceiling
 	bash tools/setup-workspace.sh --check "$(WORKSPACE_PATH)" "$(WORKSPACE_SIZE)"
+	bash tools/install-workspace-mount.sh --check "$(WORKSPACE_PATH)"
 
 down: ## Stop and remove containers
 	$(COMPOSE) down

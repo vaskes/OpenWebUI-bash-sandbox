@@ -105,8 +105,13 @@ mutate tools/check-workspace-volume.sh \
   "the volume check is scoped to the deployment's own project"
 
 echo "== the setup script stops making the file =="
+# The CREATE path, not any truncate in the script: the script also
+# grows the file (v2.19.0), and a mutation of the wrong copy would
+# leave the tree with a truncate in it -- and the tripwire, which
+# looks for a truncate, would stay green over a tree that cannot make
+# a ceiling any more.
 mutate tools/setup-workspace.sh \
-  '    truncate -s "$SIZE" "$IMAGE"' \
+  '    truncate -s "$want_bytes" "$IMAGE"' \
   '    :' \
   "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_ceiling_comes_from_a_filesystem_somebody_makes" \
   "the setup script makes a file of the ceiling"
