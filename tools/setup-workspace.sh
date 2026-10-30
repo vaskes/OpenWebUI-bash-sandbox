@@ -156,6 +156,44 @@ workspace_mode() {
     stat -c %a "$MOUNTPOINT" 2>/dev/null || echo 0
 }
 
+# The options the workspace is mounted with.
+#
+# nosuid and nodev are not decoration. The workspace is a 1777
+# directory on the host's disk, and in the privilege mode the agent
+# can become uid 0 inside the container -- which is uid 0 on the
+# host, because no user namespace is remapping it. Without nosuid, a
+# binary dropped in the workspace with the setuid bit set is a
+# setuid-root file that lives on the host, and whoever runs it gets
+# the host's root. The tmpfs the workspace used to be carried both
+# flags; the filesystem on disk has to carry them too, or the move
+# to the disk quietly took the boundary away with it.
+WORKSPACE_MOUNT_OPTS="loop,nosuid,nodev"
+
+# The options the mount must carry. Read as tokens, not as
+# substrings: "nosuidfoo" is not "nosuid".
+WORKSPACE_REQUIRED_OPTS="nosuid nodev"
+
+# The options the mount carries right now.
+mounted_options() {
+    local target
+    target="$(findmnt -no TARGET --target "$MOUNTPOINT" 2>/dev/null || true)"
+    [ "$target" = "$MOUNTPOINT_CANON" ] || return 0
+    findmnt -no OPTIONS --target "$MOUNTPOINT" 2>/dev/null || true
+}
+
+# Does the mount carry every option it has to carry?
+workspace_mount_is_safe() {
+    local opts flag
+    opts=",$(mounted_options | tr ',' '\n' | tr -d '[:space:]'),"
+    for flag in $WORKSPACE_REQUIRED_OPTS; do
+        case "$opts" in
+            *",$flag,"*) ;;
+            *) return 1 ;;
+        esac
+    done
+    return 0
+}
+
 # The bytes the workspace can actually hold right now. A filesystem of
 # N bytes holds a little less than N: ext4 keeps a reserve for root.
 usable_bytes() {
@@ -225,9 +263,39 @@ case "$kind" in
                     echo "setup-workspace: into a directory it does not own." >&2
                     exit 1
                 fi
+                # The mount is ours, but the mount may still be the one
+                # an earlier version made -- and an earlier version did
+                # not carry nosuid and nodev. The check reads the live
+                # mount, not the script: a rule about the filesystem is
+                # only true of the filesystem that is there.
+                if ! workspace_mount_is_safe; then
+                    echo "setup-workspace: $MOUNTPOINT is mounted without ${WORKSPACE_REQUIRED_OPTS// /, };" >&2
+                    echo "setup-workspace: the workspace is a directory any host user can" >&2
+                    echo "setup-workspace: reach, and without nosuid a binary in it with the" >&2
+                    echo "setup-workspace: setuid bit is a setuid-root file on the host." >&2
+                    echo "setup-workspace: run setup-workspace.sh (without --check) to remount it." >&2
+                    exit 1
+                fi
                 echo "setup-workspace: $MOUNTPOINT is the workspace filesystem ($SIZE)."
                 report
                 exit 0
+            fi
+            # The mount may be an older one -- the filesystem does not
+            # change when the options do, and the options are what
+            # keep the setuid bit from meaning anything. Remounting
+            # with the options keeps the workspace and its contents;
+            # it is the mount that is put back, not the data.
+            if ! workspace_mount_is_safe; then
+                echo "setup-workspace: $MOUNTPOINT is mounted without ${WORKSPACE_REQUIRED_OPTS// /, };"
+                echo "setup-workspace: remounting it with them."
+                mount -o "remount,${WORKSPACE_MOUNT_OPTS#loop,}" "$MOUNTPOINT" || {
+                    echo "setup-workspace: cannot remount $MOUNTPOINT." >&2
+                    exit 1
+                }
+                if ! workspace_mount_is_safe; then
+                    echo "setup-workspace: $MOUNTPOINT is still mounted without ${WORKSPACE_REQUIRED_OPTS// /, }." >&2
+                    exit 1
+                fi
             fi
             # The mode is part of the scratchpad's contract, and anything
             # else may have changed it -- a chmod, a filesystem restored
@@ -294,7 +362,7 @@ if [ -n "$(ls -A "$MOUNTPOINT" 2>/dev/null)" ]; then
 fi
 
 echo "setup-workspace: mounting $IMAGE on $MOUNTPOINT"
-mount -o loop "$IMAGE" "$MOUNTPOINT"
+mount -o "$WORKSPACE_MOUNT_OPTS" "$IMAGE" "$MOUNTPOINT"
 
 # The mode the tmpfs used to have. The agent's user writes here, and so
 # does the root the privilege mode hands out -- and a container that
