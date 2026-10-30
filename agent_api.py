@@ -93,6 +93,7 @@ from agent_config import (
     HISTORY_LIMIT_LINES,
     PANE_HEIGHT,
     PANE_WIDTH,
+    PREINSTALLED_PYTHON_PATH,
     STDOUT_LIMIT_BYTES,
     UPLOAD_MAX_BYTES,
 )
@@ -383,7 +384,22 @@ def _secret_env_names() -> list[str]:
 
 def _tmux_environment() -> dict[str, str]:
     """The environment the tmux client — and therefore its server — gets."""
-    return {name: value for name, value in os.environ.items() if name not in _secret_env_names()}
+    env = {name: value for name, value in os.environ.items() if name not in _secret_env_names()}
+    # The model's shell gets the preinstalled python tree (numpy,
+    # matplotlib, ...) that the image ships. The service's own
+    # PYTHONPATH deliberately does not carry it: the tree has its own
+    # pydantic and httpx, and shadowing the service's pinned
+    # dependencies with them would break the service for a reason that
+    # has nothing to do with the model.
+    #
+    # PYTHONPATH is one variable, so it is rewritten, not appended to
+    # blindly -- the container's value ("/home/agent") stays, and the
+    # tree goes in front of it.
+    pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{PREINSTALLED_PYTHON_PATH}:{pythonpath}" if pythonpath else PREINSTALLED_PYTHON_PATH
+    )
+    return env
 
 
 async def _tmux(*args: str) -> tuple[int, str, str]:

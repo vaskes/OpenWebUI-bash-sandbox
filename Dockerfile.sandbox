@@ -13,6 +13,20 @@
 # ---- builder ----
 FROM ubuntu:26.04 AS builder
 
+# The python packages the model's shell gets for free.
+#
+# The model asked for pip, and the image had none: python3-pip was in
+# the builder stage only, to build the agent's own dependencies, and
+# the runtime stage never got it. So every attempt to install a package
+# cost a round trip through apt-get and sudo -- and burned the
+# command's timeout doing it.
+#
+# The list lives here, once. The documents and the tool description name
+# it too, and tests/test_python_env_v2180.py is what keeps them from
+# drifting apart. An operator who wants a smaller image can trim it:
+#   docker build --build-arg AGENT_PYTHON_PACKAGES="numpy matplotlib".
+ARG AGENT_PYTHON_PACKAGES="numpy matplotlib pandas sqlalchemy openai requests httpx pillow sympy pytest tqdm"
+
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,6 +40,29 @@ COPY requirements.txt requirements-agent.txt /tmp/
 RUN pip3 install --no-cache-dir --break-system-packages \
         --prefix=/install -r /tmp/requirements-agent.txt \
     && rm /tmp/requirements.txt /tmp/requirements-agent.txt
+
+# The wheelhouse, and the preinstalled tree built out of it.
+#
+# ``pip download`` fetches the wheels once; the install then runs with
+# ``--no-index`` against that local directory, so the tree is assembled
+# from bytes that are already in the image and the build does not need
+# pypi to be reachable twice.
+#
+# The tree lands in /opt/pylibs with ``--target`` instead of in the
+# interpreter's site-packages, for two reasons:
+#
+#   * the interpreter is externally managed (PEP 668): a plain "pip
+#     install" must not write into it. The refusal is correct, and the
+#     tool description points the model at a virtual environment
+#     instead;
+#   * /opt/pylibs goes on PYTHONPATH for the model's shell only (see
+#     agent_api._tmux_environment), never for the agent service. The
+#     tree carries its own pydantic and httpx, and letting those
+#     shadow the service's pinned dependencies would break the service
+#     in a way that has nothing to do with the model.
+RUN python3 -m pip download --dest /opt/wheelhouse $AGENT_PYTHON_PACKAGES \
+    && python3 -m pip install --no-index --find-links=/opt/wheelhouse \
+        --target=/opt/pylibs $AGENT_PYTHON_PACKAGES
 
 # ---- runtime ----
 FROM ubuntu:26.04
@@ -56,19 +93,44 @@ FROM ubuntu:26.04
 # the default posture of a stock deployment does not change.
 ARG AGENT_ALLOW_SUDO=0
 
+# ``PIP_FIND_LINKS`` points pip at the wheelhouse that came with the
+# image: installing one of the preinstalled packages is then instant
+# and works without the network. The network stays available -- pip
+# falls back to it for everything the wheelhouse does not carry.
+#
+# ``PIP_DISABLE_PIP_VERSION_CHECK`` saves a round trip to pypi on every
+# pip call, which in a sandbox is a round trip the model's command
+# timeout has to pay for.
+#
+# ``PYTHONPATH`` is the *service's* import path, and it deliberately
+# does NOT carry /opt/pylibs: the preinstalled tree has its own
+# pydantic and httpx, and the service's pinned dependencies must not be
+# shadowed by them. The model's shell gets /opt/pylibs separately --
+# see agent_api._tmux_environment.
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH="/home/agent"
+    PYTHONPATH="/home/agent" \
+    PIP_FIND_LINKS="/opt/wheelhouse" \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Production system packages. No build-essential, no sshpass —
 # see comments in agent_api.py for what gets installed vs runtime needs.
 # ``sudo`` is in the list only when the privilege mode asks for it.
+#
+# ``python3-pip`` and ``python3-venv`` are runtime packages now, not
+# builder ones: the model installs python packages in this container,
+# and a sandbox without pip cannot do that without sudo and a round
+# trip through apt -- which is exactly the timeout the model was
+# complaining about. python3-venv brings ensurepip, so a virtual
+# environment can be made without root.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash tmux \
         openssh-client \
         git curl ca-certificates gnupg \
         jq ripgrep fd-find tree htop \
         python3 \
+        python3-pip \
+        python3-venv \
         $( [ "$AGENT_ALLOW_SUDO" = "1" ] && echo sudo ) \
     && rm -rf /var/lib/apt/lists/*
 
@@ -123,6 +185,21 @@ RUN if [ "$AGENT_ALLOW_SUDO" = "1" ]; then \
 # ``local`` component — see Dockerfile.openapi-proxy, where a plain
 # ``/install/`` copy is correct. The two differ on purpose.)
 COPY --from=builder /install/local/ /usr/local/
+
+# The preinstalled python tree, and the wheelhouse it was built from.
+#
+# Both are read-only for the agent's user (a+rX below): the tree is a
+# seed, not a place to install into. A package the model adds goes into
+# a virtual environment inside the workspace instead -- the workspace
+# is writable, it is executable, and it survives a container recreate,
+# so the venv survives it too.
+#
+# The wheelhouse is copied along with the tree on purpose: it is what
+# makes "pip install numpy" in a fresh venv an instant, offline
+# operation instead of a download.
+COPY --from=builder /opt/pylibs /opt/pylibs
+COPY --from=builder /opt/wheelhouse /opt/wheelhouse
+RUN chmod -R a+rX /opt/pylibs /opt/wheelhouse
 
 # uid/gid 1000 is the contract with the host bind-mount (see
 # docker-compose.yml ``user: "1000:1000"``). We reference it numerically
