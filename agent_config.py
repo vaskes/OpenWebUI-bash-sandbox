@@ -45,6 +45,7 @@ __all__ = [
     "MCP_READ_LIMIT_DEFAULT_BYTES",
     "PANE_HEIGHT",
     "PANE_WIDTH",
+    "PREINSTALLED_PYTHON_PATH",
     "STDOUT_LIMIT_BYTES",
     "parse_size",
 ]
@@ -235,6 +236,21 @@ MCP_ALLOWED_HOSTS: tuple[str, ...] = tuple(
 #: One line of a 200-column pane is 200 bytes, so this is the budget
 #: divided by the width, rounded up.
 HISTORY_LIMIT_LINES = -(-STDOUT_LIMIT_BYTES // MIN_LINE_WIDTH) + HISTORY_MARGIN_LINES
+
+#: Where the preinstalled python packages live in the sandbox image.
+#:
+#: The image ships a tree of packages the model keeps asking for (numpy,
+#: matplotlib, ...) plus the wheelhouse it was built from. The tree is
+#: put on PYTHONPATH for the **model's shell only** -- see
+#: ``agent_api._tmux_environment`` -- and deliberately not for the agent
+#: service: the tree carries its own pydantic and httpx, and letting
+#: those shadow the service's pinned dependencies would break the
+#: service for a reason that has nothing to do with the model.
+#:
+#: The path is a fact in two places (this constant and the Dockerfile),
+#: so ``tests/test_python_env_v2180.py`` compares the two instead of
+#: trusting either.
+PREINSTALLED_PYTHON_PATH = "/opt/pylibs"
 
 #: How far back a capture may reach. It has to cover the whole scrollback
 #: plus the visible pane, or the capture truncates what the pane still
