@@ -7,7 +7,7 @@ are set in `docker-compose.yml` unless noted otherwise.
 
 | Env var                | Default                                  | Description                                                    |
 |------------------------|------------------------------------------|----------------------------------------------------------------|
-| `AGENT_WORKSPACE`      | `/workspace`                              | Path the agent considers its writable surface. Bind-mount this. |
+| `AGENT_WORKSPACE`      | `/workspace`                              | Path the agent considers its writable surface. It is a volume over a filesystem with a ceiling — see `AGENT_WORKSPACE_SIZE`. |
 | `AGENT_SESSIONS_FILE`  | `/workspace/.agent-sessions.json`         | Where the per-session registry is persisted.                   |
 | `AGENT_TOKEN`          | (empty → 503)                             | Bearer token. Mirrored from `OPENAPI_PROXY_TOKEN`. Required.   |
 | `AGENT_INBOUND_TOKEN`  | = the proxy's token                       | Bearer token the **agent** accepts on its own doors. Set it to a different value to keep the operator's stack token out of the container the model runs in — see [docs/SECURITY.md](SECURITY.md), "The sandbox is not a boundary". |
@@ -63,6 +63,21 @@ sets:
 AGENT_READ_ONLY=false
 ```
 
+**The rule: where sudo is on, the root has to be writable.** A root
+that cannot write is a half-root, and a half-root is a deployment that
+passes every check and fails at the first `apt-get`. So the two knobs
+are not free: `AGENT_ALLOW_SUDO=1` with a read-only root filesystem is
+a contradiction, and `tools/check-posture.sh` refuses it —
+
+```bash
+bash tools/check-posture.sh   # AGENT_ALLOW_SUDO and AGENT_READ_ONLY from the environment
+```
+
+The stock deployment (no sudo, read-only root) passes it, and so does
+the privilege mode (sudo, writable root). The check is a refusal, not
+a fixer: it says what is wrong and stops, so the decision stays the
+operator's.
+
 The writable layer is the container's own: it is discarded when the
 container is recreated, and it does not move the boundary. The
 container stays the boundary either way.
@@ -114,49 +129,77 @@ to this agent already caps tool results far lower than 512k.
 
 ### `AGENT_WORKSPACE_SIZE`
 
-The ceiling on the sandbox's own storage. It is the size of the tmpfs
-that carries `/workspace`, and it is the whole bound: the sandbox cannot
-write more than this, and when it tries, the write fails with `ENOSPC`
-*inside the container*.
+The ceiling on the sandbox's own storage. It is the size of the
+filesystem that carries `/workspace`, and it is the whole bound: the
+sandbox cannot write more than this, and when it tries, the write
+fails with `ENOSPC` *inside the workspace*.
 
 Default: `1g` (`2g` in the production stack).
 
-**The workspace is a tmpfs inside the container, not a directory on the
-host.** That is not a preference, it is the difference between a
-scratchpad and a disk-filler with a shell in front of it. The workspace
-used to be a bind-mount of `/opt/agent-workspace`, which made the host's
-own partition the sandbox's scratchpad: `dd if=/dev/zero of=/workspace/x`
-filled the operator's disk, not the container's. Measured on the
-production host before the change: the bind pointed at the same ext4
-partition the whole host lives on (`nvme0n1p4`, 1.8 T, 94 % used, 106 G
-free) — the one class of damage that a container reset cannot undo.
+**The workspace is on disk, in a filesystem of exactly that size.** The
+ceiling cannot come from Docker: compose has no per-volume storage
+option, and `--storage-opt size` only ever worked with the devicemapper
+storage driver, which Docker no longer ships (this host runs
+overlayfs). A named volume is a directory on the host's disk by
+construction. So the ceiling comes from the filesystem instead:
+
+* `tools/setup-workspace.sh` makes an ext4 filesystem in a **sparse
+  file** of `AGENT_WORKSPACE_SIZE` and mounts it. The file costs what
+  the workspace actually holds, and it cannot grow: the filesystem
+  inside it runs out of space, and the write fails.
+* The stack's `owbs-workspace` volume binds that **mount point**, so
+  the container sees the filesystem and not a directory.
 
 Two rules come with the number:
 
 * **Keep it at or above `AGENT_BINARY_LIMIT`.** The file door accepts a
   file up to the binary limit and writes it into the workspace; a
   workspace smaller than the policy would refuse a file the door had
-  already promised to accept.
-* **The tmpfs is RAM, so the size is charged against `mem_limit`.** The
-  sum of all the tmpfs mounts has to stay below the container's memory
-  limit, or the container is killed by the OOM killer before its own
-  ceiling is reached. The shipped stacks are sized to fit: 1.75 GiB of
-  tmpfs against a 2 GiB limit in the default stack, 3 GiB against 4 GiB
-  in the production stack.
+  already promised to accept. `tools/setup-workspace.sh` compares the
+  two and refuses to make a workspace that cannot hold it.
+* **Changing the ceiling wipes the workspace.** The ceiling is the size
+  of the filesystem, and a different size is a different filesystem. The
+  script says so out loud before it does it.
 
-The price of the bound is honest and worth naming: the workspace is
-RAM, and it does not survive a container recreate. A file the model
-wrote is gone when the container is replaced, and so is the session
-registry (`/workspace/.agent-sessions.json`) — a fresh container starts
-with no remembered sessions, which is the same state a first deploy
-has. If a file has to outlive the container, it has to leave through the
-file door, not through the workspace.
+The price of the bound is honest and worth naming. The workspace is
+**on disk and durable**: it survives a container recreate, and so does
+the session registry (`/workspace/.agent-sessions.json`). What is *not*
+bounded is the container's own writable layer — it is a directory on
+the host's disk with no quota on it, so a deployment with a writable
+root (`AGENT_READ_ONLY=false`) cannot bound its own storage. That is
+the price of a root that can really write, and it is the operator's
+call.
+
+### `AGENT_WORKSPACE_PATH`
+
+Where the workspace lives on the host. It is the **mount point** of
+the filesystem `tools/setup-workspace.sh` makes, and the volume binds
+it.
+
+Default: `/opt/owbs-workspace` (the default stack),
+`/opt/telegrambot/sandbox-workspace` (production),
+`/tmp/owbs-workspace` (CI).
+
+The path has to be **absolute**: Docker resolves a relative `device`
+against the daemon's working directory, not against the compose file.
+
+Make the workspace once per host, and check it without root:
+
+```bash
+sudo bash tools/setup-workspace.sh "$AGENT_WORKSPACE_PATH" "$AGENT_WORKSPACE_SIZE"
+bash tools/setup-workspace.sh --check "$AGENT_WORKSPACE_PATH" "$AGENT_WORKSPACE_SIZE"
+```
+
+`make workspace` does the first one for the default stack, and
+`make up` runs the second one before it starts anything: a workspace
+that was never set up is an unbounded directory on the host's disk,
+which is exactly the hole the ceiling closes.
 
 ### Filesystem layout inside the container
 
 | Path                | Source                                  | Writable? |
 |---------------------|-----------------------------------------|-----------|
-| `/workspace`        | tmpfs inside the container, size `AGENT_WORKSPACE_SIZE` | yes (and capped) |
+| `/workspace`        | volume `owbs-workspace` over a filesystem of `AGENT_WORKSPACE_SIZE` | yes (and capped) |
 | `/home/agent`       | the image itself (the code lives there)  | no — the root filesystem is read-only; **never** mount a volume here either |
 | `/var/cache/apt`    | tmpfs (`128m` / `256m`)                 | yes (the download cache only) |
 | `/home/agent/.cache/pip`  | tmpfs (`64m` / `128m`)           | yes       |
@@ -361,13 +404,19 @@ lands on — are in the README, under "Monitoring".
 
 | Name                  | Mounted at                   | Purpose                              |
 |-----------------------|------------------------------|--------------------------------------|
+| `owbs-workspace`      | `/workspace`                 | The agent's workspace: a volume whose driver binds the mount point of a filesystem with a ceiling (`AGENT_WORKSPACE_SIZE`). Made by `tools/setup-workspace.sh`. |
 | `open-webui-data`     | `/app/backend/data`          | Open WebUI's SQLite DB (chats, users, settings) |
 
-The **agent has no named volume at all**. Every path the sandbox may
-write is a tmpfs mount with a ceiling, and that is deliberate: a named
-volume is a directory on the host's disk, and a writable one is a hole
-in exactly the bound the sandbox claims to have. The apt and pip
-caches were volumes until v2.16.0; they are tmpfs now.
+**The agent has exactly one named volume, and it is the workspace.** The
+name is a container for the filesystem, not a directory of Docker's own:
+its driver binds a host path (`AGENT_WORKSPACE_PATH`), and that path is
+the mount point of the ext4 filesystem that `tools/setup-workspace.sh`
+makes out of a file of `AGENT_WORKSPACE_SIZE`. That is how a ceiling
+that Docker cannot provide comes from the filesystem instead.
+
+Every *other* path the sandbox may write is a tmpfs mount with a
+ceiling. The apt and pip caches were volumes until v2.16.0; they are
+tmpfs now.
 
 The Open WebUI DB **must not** be bind-mounted into `/workspace` — that
 would let the LLM do `rm -rf /workspace/.open-webui-data` and wipe the
@@ -389,11 +438,12 @@ Delete these with `docker volume rm <name>` to start fresh.
 |----------------------------------------|-----------------------|-------|--------------------------------|
 | `/opt/agent-workspace/.ssh`            | `/home/agent/.ssh`    | ro    | SSH keys for outbound ssh      |
 
-The workspace is **not** in this table: it is a tmpfs inside the
-container (`AGENT_WORKSPACE_SIZE`), and the only host path the agent
-sees is the read-only SSH key directory. A read-only bind stays
-read-only even for a root command inside the container — remounting it
-needs `CAP_SYS_ADMIN`, which the container does not have.
+The workspace is **not** in this table: it is a volume (`owbs-workspace`)
+over a filesystem with a ceiling — see `AGENT_WORKSPACE_SIZE` and
+`AGENT_WORKSPACE_PATH`. The only host path the agent sees is the
+read-only SSH key directory. A read-only bind stays read-only even for
+a root command inside the container — remounting it needs
+`CAP_SYS_ADMIN`, which the container does not have.
 
 ## Ports (host → container)
 

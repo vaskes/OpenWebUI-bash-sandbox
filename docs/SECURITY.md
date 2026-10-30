@@ -62,7 +62,7 @@ tools**, and the exec limit is an **hour**.
 
 | Control                              | Status                                          |
 |--------------------------------------|-------------------------------------------------|
-| `read_only: true`                    | Enabled — writes go through bind-mounts + tmpfs |
+| `read_only: true`                    | Enabled — writes go through the workspace volume + tmpfs |
 | `user: 1000:1000`                    | Non-root inside the container                   |
 | `cap_drop: [ALL]`                    | All capabilities dropped                         |
 | `no-new-privileges: true`            | Enabled                                         |
@@ -115,12 +115,12 @@ The `cwd` parameter in `POST /sessions` is symlink-resolved and must
 lie inside the workspace root. Anything outside returns 400. The only
 files visible to the sandbox are:
 
-* `/workspace` (bind-mount — controlled by you)
+* `/workspace` (a volume over a filesystem with a ceiling — controlled by you)
 * `/home/agent` (the image itself — the code lives there, and **no
   volume is mounted there**; a volume there would shadow the code with
   the copy seeded on the first deploy)
 * `/home/agent/.ssh` (read-only bind-mount)
-* `/var/cache/apt`, `/home/agent/.cache/pip` (named volumes)
+* `/var/cache/apt`, `/home/agent/.cache/pip` (tmpfs with a ceiling)
 
 The `read_only: true` root filesystem + dropped caps prevent writes
 to anywhere else. The LLM runs as UID 1000, and it cannot modify
@@ -153,11 +153,14 @@ inside a real shell). Mitigations:
 
 **The sandbox's storage is capped, and the host's disk is out of reach.**
 
-Every path the sandbox may write is a tmpfs mount with a ceiling, and
-the ceiling is a number: `AGENT_WORKSPACE_SIZE` for the workspace,
-fixed sizes for `/tmp`, `/run` and the two download caches. The sum of
-those ceilings is kept below the container's `mem_limit`, so the whole
-writable surface is bounded by RAM and by nothing else.
+The workspace is a **named volume** (`owbs-workspace`) whose driver
+binds a host path (`AGENT_WORKSPACE_PATH`), and that path is the mount
+point of an ext4 filesystem living in a file of `AGENT_WORKSPACE_SIZE`.
+The file is sparse — it costs what the workspace holds — and it cannot
+grow: the filesystem runs out of space, the write fails with `ENOSPC`,
+and the file door answers **507**. Every other path the sandbox may
+write is a tmpfs with a ceiling, and the sum of those tmpfs stays below
+the container's `mem_limit`.
 
 Measured on the production host before v2.16.0: the workspace was a
 read-write bind of `/opt/telegrambot/sandbox-workspace`, and that
@@ -167,15 +170,20 @@ therefore filled the operator's disk — and unlike a wiped `/etc`, that
 damage does not die with the container: a reset brings `/etc` back and
 does not bring a disk back.
 
-The workspace is a tmpfs inside the container now. The same `dd` fails
-with `ENOSPC` inside the container, and the host's disk is none the
-wiser.
+The same `dd` now fails with `ENOSPC` inside the workspace's own
+filesystem, and the host's disk is none the wiser. The ceiling is
+exact, and it comes from the filesystem rather than from Docker: there
+is no per-volume quota in compose, and `--storage-opt size` only ever
+worked with the devicemapper storage driver, which Docker no longer
+ships. `tools/setup-workspace.sh` makes the filesystem; the volume
+binds its mount point.
 
 Two things follow from the bound, and both are worth knowing:
 
-* **The workspace is RAM.** A file the model wrote is gone when the
-  container is replaced, and so is the session registry. A file that
-  has to outlive the container leaves through the file door.
+* **The workspace is on disk, and it survives a container recreate.**
+  The files the model wrote are still there after a restart, and so is
+  the session registry. (Between v2.16.0 and v2.17.0 the workspace
+  was a tmpfs, and neither was.)
 * **The tmpfs sizes are charged against `mem_limit`.** The sum of the
   mounts has to stay below it, or the OOM killer stops the container
   before its own ceiling is reached.
@@ -184,10 +192,10 @@ One surface is still unbounded, and it is the privilege mode's fourth
 setting: `AGENT_READ_ONLY=false` makes the container's root filesystem
 writable, and the writable layer lives on the host's disk with no quota
 on it. Compose has no per-container storage quota, so a privileged
-deployment with a writable root **cannot** bound its own storage — the
-bound and the writable root are the same decision taken twice. If the
-disk has to stay out of reach, the root filesystem has to stay
-read-only, and `apt-get` inside the sandbox stops working.
+deployment with a writable root **cannot** bound its own storage. That
+is the price of a root that can really write, and it is the operator's
+call — the workspace, where the agent's files actually live, is bounded
+either way.
 
 ### 5. LLM spawns long-running processes
 
@@ -353,6 +361,21 @@ not: it decides whether the root is *useful*:
 | `AGENT_CAP_DROP=SYS_ADMIN` | the sandbox's environment | the capability bounding set is no longer empty, so the process can hold `CAP_SETUID` and `su` can change the user |
 | `AGENT_READ_ONLY=false` | the sandbox's environment | the container's root filesystem is writable, so the root shell can actually change something |
 
+**The rule: where sudo is on, the root has to be writable.** A root
+that cannot write is a half-root, and a half-root is a deployment that
+passes every check and fails at the first `apt-get`. So
+`AGENT_ALLOW_SUDO=1` together with `AGENT_READ_ONLY=true` is a
+contradiction, and `tools/check-posture.sh` refuses it:
+
+```bash
+AGENT_ALLOW_SUDO=1 AGENT_READ_ONLY=true  bash tools/check-posture.sh   # refuses
+AGENT_ALLOW_SUDO=1 AGENT_READ_ONLY=false bash tools/check-posture.sh   # passes
+AGENT_ALLOW_SUDO=0 AGENT_READ_ONLY=true  bash tools/check-posture.sh   # passes (the stock deployment)
+```
+
+The check is a refusal, not a fixer: it names the contradiction and
+stops, so the decision stays the operator's.
+
 The escalation gives the model a root shell; with a read-only root
 filesystem that shell owns the filesystem and cannot change a byte of
 it. `apt-get` needs three writable paths
@@ -378,8 +401,9 @@ namespaces.
 
 **What it does not give:** the host. The container is the boundary. The
 root shell can write anywhere *in the container* that the container's
-own filesystem allows — including the workspace, which is a bind-mount,
-so that means the files the host shares with the sandbox. It cannot
+own filesystem allows — including the workspace, which is a volume over
+a filesystem on the host, so that means the files the host shares with
+the sandbox. It cannot
 reach anything the container cannot see, and it cannot bypass the
 host's own permissions on the mount.
 
@@ -560,9 +584,12 @@ policy says so:
 
 Measured on a running default deployment: `rm -f /etc/hostname` and
 `touch /usr/local/x` both answer *Read-only file system*, and the only
-writable places are the tmpfs mounts — `/workspace` (the scratchpad,
-capped by `AGENT_WORKSPACE_SIZE`), `/tmp` and `/run`, plus the two
-download caches. None of them is a path on the host's disk.
+writable places are the tmpfs mounts — `/tmp` and `/run`, plus the two
+download caches — and the workspace, which is a volume over a
+filesystem with a ceiling (`AGENT_WORKSPACE_SIZE`). The workspace is
+the one of them that lives on the host's disk, and that is the point:
+it is a filesystem of a fixed size, not a directory in the host's
+partition.
 
 **The privilege mode is a different deployment, and the container is
 its blast radius.** With `AGENT_ALLOW_SUDO=1` and
@@ -601,20 +628,25 @@ found it before the operator did. It wrote into it with `dd`.
 So the rule is not "the scratchpad is allowed to be a host directory".
 It is:
 
-> **A privileged deployment gets no writable host bind at all.**
+> **The scratchpad is a filesystem with a ceiling, and nothing else is
+> writable on the host.**
 
-The workspace is a tmpfs inside the container, the download caches are
+The workspace is a volume over an ext4 filesystem in a file of
+`AGENT_WORKSPACE_SIZE` (`tools/setup-workspace.sh` makes the
+filesystem, the volume binds its mount point): it is on the host's
+disk, and it cannot grow past its ceiling — the filesystem runs out of
+space, and the write fails with `ENOSPC`. The download caches are
 tmpfs, and the only host path the agent sees is the read-only SSH key
 directory — which stays read-only even for root inside the container,
 because remounting it needs a capability the container does not have.
 
-One surface remains, and it is the writable root filesystem: the
-container's writable layer is a directory on the host's disk, and
+One surface remains unbounded, and it is the writable root filesystem:
+the container's writable layer is a directory on the host's disk, and
 compose has no per-container storage quota, so **a deployment with
 `AGENT_READ_ONLY=false` cannot bound its own storage**. That is the
-price of `apt-get` inside the sandbox, and the two cannot be had at the
-same time: the bound and the writable root are the same decision taken
-twice.
+price of a root that can really write, and it is the operator's call.
+The workspace, where the agent's files actually live, is bounded either
+way.
 
 **One class is the caller's to close.** The command policy in front of
 the sandbox refused `rm -rf /` and `dd of=/dev/nvme0n1p4`, and it had
@@ -752,7 +784,7 @@ This stack is designed for the **single-operator** deployment shape:
    │   • the Open WebUI instance                         │
    │   • the bearer token in TOOL_SERVER_CONNECTIONS     │
    │   • the AGENT_TOKEN env var on the sandbox-agent    │
-   │   • the sandbox's workspace (a tmpfs, capped)       │
+   │   • the sandbox's workspace (a volume with a ceiling)  │
    │   • all SSH keys mounted into the sandbox            │
    └─────────────────────────────────────────────────────┘
                           │
@@ -783,9 +815,14 @@ or re-architect.
 - [ ] Set `OPENAPI_PROXY_SSH_ALLOWLIST` to your actual fleet
 - [ ] Add a periodic janitor for old tmux sessions
 - [ ] Set `AGENT_WORKSPACE_SIZE` to the ceiling the sandbox may
-      occupy (default `1g`, `2g` in the production stack) — and
-      leave `AGENT_READ_ONLY=true`, or the writable root layer puts
-      the host's disk back in reach
+      occupy (default `1g`, `2g` in the production stack) and make the
+      workspace: `sudo bash tools/setup-workspace.sh "$AGENT_WORKSPACE_PATH" "$AGENT_WORKSPACE_SIZE"`
+- [ ] Decide the root's posture, and keep the two knobs consistent:
+      a deployment with `AGENT_ALLOW_SUDO=1` needs
+      `AGENT_READ_ONLY=false` (a root that cannot write is a
+      half-root) — `bash tools/check-posture.sh` refuses the
+      contradiction. The writable root layer is the one surface on the
+      host's disk that no ceiling covers.
 - [ ] Enable Docker user namespaces (`/etc/subuid` + `userns-remap`)
 - [ ] Run behind a reverse proxy (Caddy/Traefik) with TLS
 - [ ] Pipe JSON logs to your log aggregator
