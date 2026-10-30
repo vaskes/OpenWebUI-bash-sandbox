@@ -67,3 +67,22 @@ mutate agent_api.py \
   '        return' \
   "tests/test_workspace_ceiling_v2210.py::TheAgentRefusesAWorkspaceWithoutACeiling::test_the_refusal_stops_the_agent" \
   "the agent keeps serving against a workspace without a ceiling"
+
+# The two mutations below break the DETECTOR, and the control catches
+# them. The property test itself ("no commit in this history credits a
+# model") is a statement about the history, and a history that is clean
+# stays clean however the detector is broken -- so the control is the
+# only thing that can see a broken detector. That is what it is for.
+echo "== the detector cannot see a trailer any more =="
+mutate 'tests/test_no_model_coauthor_trailers.py' \
+  '    "noreply@anthropic.com",  # Claude' \
+  '    "noreply@example.invalid",  # nobody' \
+  "tests/test_no_model_coauthor_trailers.py::TheDetectorCanSeeWhatItWasWrittenFor::test_the_detector_can_see_a_trailer" \
+  "the detector cannot see the thing it was written for"
+
+echo "== a trailer in the last paragraph is not a trailer any more =="
+mutate 'tests/test_no_model_coauthor_trailers.py' \
+  '    return blocks[-1].split("\n")' \
+  '    return blocks[0].split("\n")' \
+  "tests/test_no_model_coauthor_trailers.py::TheDetectorCanSeeWhatItWasWrittenFor::test_the_detector_can_see_a_trailer" \
+  "the detector reads the first paragraph instead of the last"
