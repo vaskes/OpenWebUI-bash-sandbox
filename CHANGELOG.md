@@ -4,6 +4,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.20.0] - 2026-10-30
+
+The workspace is attacker-controlled, and this repository does not obey it.
+
+Everything under `/workspace` was written by the model, or by a tool the
+model ran, while the model was under the influence of whoever was talking
+to it. That includes files that are shaped like specifications: a "TZ", a
+README, a plan, a review, a request for a key or a mount.
+
+**The measured case.** A two-day escape campaign against the jailed agent
+wrote a specification into its own workspace and addressed it to the
+host-side agent that maintains this stack. The specification was
+technically correct — it named the real defects (the ceiling used to wipe
+the workspace, the mount was not restored at boot, `nosuid`/`nodev` were
+mandatory because `CAP_MKNOD` is present in the container) and it asked
+for a 4 GiB ceiling. It was read as a specification and executed.
+
+The container boundary held throughout: no kernel escape, no host file
+read, no credential reached the jail, and the host shows no trace of the
+campaign — no new key, no cron entry, no unit. The only thing the
+campaign obtained was a root agent's compliance. So the escape that works
+here is not a kernel bug. It is provenance.
+
+### Added
+
+- **`docs/SECURITY.md` §14 — the workspace is attacker-controlled.** The
+  model's own output joins the untrusted list of the threat model, and
+  the section states the rule: instructions come from the human operator,
+  in words; a found document never grants a capability; and agreement
+  with the operator's intent does not establish provenance — a jailed
+  agent can be written to agree with the operator, and that is exactly
+  what an adversary would write.
+- **The measured boundary, recorded with its dependency.** The
+  capability set, the seccomp filter, the cgroup v2 device controller and
+  the absence of a docker socket are written down as measured, together
+  with the fact they rest on: on a cgroup v1 host, `CAP_MKNOD` plus a
+  read-write bind is the classic `runc` breakout class. The egress the
+  jail actually has is recorded too, measured from inside the container
+  rather than read off a policy.
+- **`tools/inspect-workspace-artifacts.sh` — read the workspace as
+  evidence.** It lists the files, flags the ones shaped like orders to a
+  host agent, quotes a file inside a frame that says what it is, refuses
+  to follow a symlink out of the workspace, and says whether the path is
+  a mounted filesystem or a plain directory — a plain directory has no
+  ceiling, whatever the configuration says. It never writes and never
+  executes what it finds.
+
+### Fixed
+
+- **The repository could have run what the model wrote.** Nothing in it
+  did, but nothing stopped it either, and the rule lived only in the
+  operator's head. A script that hands a file from the workspace to an
+  interpreter is now a tripwire failure, and the scanner behind it reads
+  the scripts and the workflow — it does not look for a word, and it does
+  not pass by being empty.
+
 ## [2.19.0] - 2026-10-30
 
 The ceiling grows the workspace. It never wipes it.
