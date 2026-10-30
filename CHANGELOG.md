@@ -57,6 +57,17 @@ trip through apt-get and sudo -- paid out of the command's timeout.
 
 ### Fixed
 
+- **The upload door's containment check stands next to the write.**
+  The upload half of the file door resolved the path and checked it
+  behind a helper, which the static analyser cannot follow: it
+  reported five `py/path-injection` alerts on the code the door
+  writes through. The check now stands next to the write, in the shape
+  the analyser follows and the download half has used since v2.10.0 --
+  and the path is resolved before it is written, so a name that is a
+  symlink out of the workspace is refused with a **400** instead of
+  being replaced. The perimeter is now pinned on every way out
+  (traversal, an absolute path, a symlinked parent, a symlinked name),
+  and each pin was checked against a mutation.
 - `tools/mutation-check-v21411.sh` carried a copy of the line it
   replaced, so the new body of `_tmux_environment` left the pattern
   unmatched and the script would have reported a skip instead of a
