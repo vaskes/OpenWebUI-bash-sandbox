@@ -82,6 +82,17 @@ def _read(name: str) -> str:
     return (ROOT / name).read_text(encoding="utf-8")
 
 
+def _code_lines(text: str) -> list[str]:
+    """The lines that are code, not commentary.
+
+    A check that looks for a word finds it in the comment above the
+    command as easily as in the command itself, and a check that a
+    comment can satisfy is a check that cannot go red. The comment
+    stays a comment; the fact is looked for where it lives.
+    """
+    return [raw for raw in text.splitlines() if raw.strip() and not raw.lstrip().startswith("#")]
+
+
 def _service_block(text: str, service: str) -> str:
     """The body of one service, without the neighbouring services.
 
@@ -328,23 +339,27 @@ class TestTheWorkspaceIsOnDiskWithACeiling(unittest.TestCase):
         """
         script = ROOT / "tools" / "setup-workspace.sh"
         self.assertTrue(script.exists(), "tools/setup-workspace.sh is missing")
-        text = script.read_text(encoding="utf-8")
-        self.assertIn(
-            "truncate -s",
-            text,
+        # The commands, not the words: the script mentions truncate and
+        # mkfs.ext4 in its comments and in the list of tools it checks
+        # for, and a check that is satisfied by either of those is a
+        # check that a mutation cannot turn red.
+        code = "\n".join(_code_lines(script.read_text(encoding="utf-8")))
+        self.assertRegex(
+            code,
+            r"(?m)^\s*truncate\s+-s\s+",
             "the setup script does not make a file of the ceiling -- without "
             "the file there is no filesystem and no ceiling",
         )
-        self.assertIn(
-            "mkfs.ext4",
-            text,
+        self.assertRegex(
+            code,
+            r"(?m)^\s*mkfs\.ext4\s+",
             "the setup script does not make a filesystem -- a file on the "
             "host's disk is a directory with a size, not a filesystem that "
             "runs out of space",
         )
-        self.assertIn(
-            "mount -o loop",
-            text,
+        self.assertRegex(
+            code,
+            r"(?m)^\s*mount\s+-o\s+loop\s+",
             "the setup script does not mount the filesystem -- the volume "
             "binds a mount point, and a path that is not a mount point is "
             "just a directory",
@@ -358,9 +373,11 @@ class TestTheWorkspaceIsOnDiskWithACeiling(unittest.TestCase):
         the ceiling is a word.
         """
         workflow = _read(".github/workflows/ci.yml")
-        self.assertIn(
-            "tools/setup-workspace.sh",
+        # A run step, not a mention: the workflow explains in a comment
+        # which script it runs, and a comment is not a run.
+        self.assertRegex(
             workflow,
+            r"(?m)^\s*run:.*tools/setup-workspace\.sh",
             "the CI never makes the workspace -- the stack it starts has "
             "no ceiling, and the CI would be testing something the "
             "operator's deployment is not",
@@ -376,10 +393,14 @@ class TestTheWorkspaceIsOnDiskWithACeiling(unittest.TestCase):
         range. The script compares the two, where the ceiling is
         applied.
         """
-        script = (ROOT / "tools" / "setup-workspace.sh").read_text(encoding="utf-8")
-        self.assertIn(
-            "AGENT_BINARY_LIMIT",
-            script,
+        # The assignment, not the mention: the script names the policy in
+        # its error message as well, and a message is not a reading.
+        code = "\n".join(
+            _code_lines((ROOT / "tools" / "setup-workspace.sh").read_text(encoding="utf-8"))
+        )
+        self.assertRegex(
+            code,
+            r"(?m)^\s*POLICY=.*AGENT_BINARY_LIMIT",
             "the setup script does not know the file policy -- a ceiling "
             "smaller than the policy is a workspace that cannot hold a "
             "file the door accepts",
