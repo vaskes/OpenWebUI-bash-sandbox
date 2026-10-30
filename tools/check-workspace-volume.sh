@@ -11,7 +11,12 @@
 # is not the workspace says so instead of starting a stack whose
 # ceiling is a promise.
 #
-#   check-workspace-volume.sh [--remove] <workspace-path>
+#   check-workspace-volume.sh [--remove] <workspace-path> [project]
+#
+# The project is the compose project the deployment belongs to. It
+# matters: the host can carry more than one deployment, they use the
+# same logical volume name, and a check that reaches into another
+# deployment's volume takes away a volume that was exactly right.
 #
 # --remove takes the offending volumes away. The containers that use a
 # volume have to be down first: Docker refuses to remove a volume that
@@ -38,7 +43,14 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 2
 fi
 
-volumes="$(docker volume ls -q --filter "label=com.docker.compose.volume=${LOGICAL}" 2>/dev/null || true)"
+PROJECT="${2:-}"
+if [ -n "$PROJECT" ]; then
+    volumes="$(docker volume ls -q \
+        --filter "label=com.docker.compose.volume=${LOGICAL}" \
+        --filter "label=com.docker.compose.project=${PROJECT}" 2>/dev/null || true)"
+else
+    volumes="$(docker volume ls -q --filter "label=com.docker.compose.volume=${LOGICAL}" 2>/dev/null || true)"
+fi
 if [ -z "$volumes" ]; then
     # No volume yet: compose makes it when the stack starts, with the
     # driver the compose file asks for. Nothing to check.
