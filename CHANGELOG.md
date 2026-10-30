@@ -57,6 +57,15 @@ trip through apt-get and sudo -- paid out of the command's timeout.
 
 ### Fixed
 
+- **The workspace is mounted `nosuid,nodev`.** The workspace's root
+  directory is mode 1777 and, in the privilege mode, the agent can
+  become uid 0 inside the container -- which is uid 0 on the host.
+  Without `nosuid`, a binary in the workspace with the setuid bit set
+  is a setuid-root file on the host's disk. The tmpfs the workspace
+  used to be carried both flags; the filesystem on the disk did not.
+  The setup script mounts with them, `--check` reads the options of
+  the mount that is there and refuses a workspace without them, and a
+  deployment remounts an older workspace with them.
 - **The upload door's containment check stands next to the write.**
   The upload half of the file door resolved the path and checked it
   behind a helper, which the static analyser cannot follow: it
