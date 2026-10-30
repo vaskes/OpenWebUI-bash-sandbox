@@ -126,6 +126,8 @@ mcp = MCPServer(
         "symlink that leaves the workspace.\n\n"
         "The shell is the write path: there is no separate write tool, and a "
         "command that writes a file is the way to write one.\n\n"
+        "The shell can install python packages; the `bash` tool says which "
+        "packages are already there and how to add another one.\n\n"
         "The shell is persistent, and a session is shared: give every task that "
         "must not see another's state its own `session_id` (a name of your "
         "choosing, not the default one), or two conversations will read each "
@@ -145,7 +147,16 @@ mcp = MCPServer(
         "apart; use `cwd` to choose the working directory of a session (it must "
         "be inside the workspace). A session that already exists keeps the "
         "directory it is in — asking for another one is refused, and the answer "
-        "names the directory the session is really in."
+        "names the directory the session is really in. "
+        "The sandbox can install python packages: pip is in the image, and "
+        "numpy, matplotlib, pandas, sqlalchemy, openai, requests, httpx, "
+        "pillow, sympy, pytest and tqdm are already importable — no install "
+        "needed. To add another package, make a virtual environment inside "
+        "the workspace and install into it; the workspace is writable and "
+        "executable, and the environment survives a restart: "
+        "`python3 -m venv /workspace/.venv && /workspace/.venv/bin/pip install "
+        "<package>`. The wheels of the preinstalled packages are on disk, so "
+        "installing one of those is instant and needs no network."
     )
 )
 async def bash(
