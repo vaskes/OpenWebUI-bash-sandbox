@@ -414,12 +414,70 @@ class TestTheWorkspaceIsOnDiskWithACeiling(unittest.TestCase):
             "host's disk is a directory with a size, not a filesystem that "
             "runs out of space",
         )
+        # The fresh mount, and not any mount: the script also remounts
+        # an older workspace with the options, and a check that is
+        # satisfied by the remount says nothing about the mount that
+        # makes a new workspace.
         self.assertRegex(
             code,
-            r"(?m)^\s*mount\s+-o\s+loop\s+",
-            "the setup script does not mount the filesystem -- the volume "
-            "binds a mount point, and a path that is not a mount point is "
-            "just a directory",
+            r'(?m)^\s*mount\s+-o\s+"\$\{?WORKSPACE_MOUNT_OPTS\}?"\s+"\$\{?IMAGE',
+            "the setup script does not mount the filesystem with the "
+            "options it names -- the volume binds a mount point, and a "
+            "path that is not a mount point is just a directory",
+        )
+
+    def test_the_workspace_is_mounted_without_the_setuid_bit(self) -> None:
+        """The workspace is a directory any host user can reach.
+
+        In the privilege mode the agent can become uid 0 inside the
+        container, and without a user namespace that is uid 0 on the
+        host. So a binary dropped in the workspace with the setuid bit
+        set is a setuid-root file that lives on the host's disk, and
+        whoever runs it gets the host's root. The tmpfs the workspace
+        used to be carried ``nosuid`` and ``nodev``; the filesystem on
+        disk has to carry them too.
+        """
+        script = ROOT / "tools" / "setup-workspace.sh"
+        code = "\n".join(_code_lines(script.read_text(encoding="utf-8")))
+        match = re.search(r'WORKSPACE_MOUNT_OPTS="([^"]+)"', code)
+        self.assertIsNotNone(
+            match,
+            "the setup script does not name the options the workspace is "
+            "mounted with -- the options are the boundary, and a boundary "
+            "that is not written down is not one",
+        )
+        options = [option.strip() for option in match.group(1).split(",")]
+        for flag in ("nosuid", "nodev"):
+            self.assertIn(
+                flag,
+                options,
+                f"the workspace is mounted without {flag}: the setuid bit "
+                "and the device files in a directory any host user can "
+                "reach are the host's problem, not the sandbox's",
+            )
+
+    def test_the_check_reads_the_live_mount_and_not_the_script(self) -> None:
+        """A rule about the filesystem is only true of the filesystem.
+
+        The script may have been changed since the mount was made --
+        that is exactly what happened when the workspace moved from a
+        tmpfs to a filesystem on the disk. So the check reads the mount
+        that is there, and compares the options as tokens: "nosuidfoo"
+        is not "nosuid".
+        """
+        script = ROOT / "tools" / "setup-workspace.sh"
+        code = "\n".join(_code_lines(script.read_text(encoding="utf-8")))
+        self.assertRegex(
+            code,
+            r"findmnt\s+-no\s+OPTIONS",
+            "the script does not read the options the workspace is mounted "
+            "with -- the script's own text says what it would mount, not "
+            "what is mounted",
+        )
+        self.assertRegex(
+            code,
+            r"WORKSPACE_REQUIRED_OPTS",
+            "the script does not name the options the mount has to carry",
         )
 
     def test_the_workspace_is_writable_by_the_root_the_container_hands_out(self) -> None:
