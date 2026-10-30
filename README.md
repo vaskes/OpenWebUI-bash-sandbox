@@ -196,6 +196,8 @@ The most important knobs:
   filesystem of exactly that size**: Docker has no quota for a
   volume, so `tools/setup-workspace.sh` makes an ext4 filesystem in a
   sparse file and mounts it, and the volume binds that mount point. The
+  file keeps the workspace's high-water mark on the host's disk, so the
+  ceiling is the most the host can ever lose to the sandbox. The
   workspace is on disk (a bind-mount of a host directory would make the
   host's own partition the sandbox's scratchpad, and a scratchpad
   without a ceiling is a disk-filler), it has a hard ceiling, and it

@@ -156,9 +156,13 @@ inside a real shell). Mitigations:
 The workspace is a **named volume** (`owbs-workspace`) whose driver
 binds a host path (`AGENT_WORKSPACE_PATH`), and that path is the mount
 point of an ext4 filesystem living in a file of `AGENT_WORKSPACE_SIZE`.
-The file is sparse — it costs what the workspace holds — and it cannot
-grow: the filesystem runs out of space, the write fails with `ENOSPC`,
-and the file door answers **507**. Every other path the sandbox may
+The file cannot grow: the filesystem runs out of space, the write
+fails with `ENOSPC`, and the file door answers **507**. The host's disk
+pays the workspace's high-water mark — the file is sparse when it is
+made, and after the workspace has held a lot the file keeps those blocks
+(ext4 does not punch holes in the file it lives in), so the ceiling is
+the most the host can ever lose to the sandbox. Every other path the
+sandbox may
 write is a tmpfs with a ceiling, and the sum of those tmpfs stays below
 the container's `mem_limit`.
 
