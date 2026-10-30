@@ -48,8 +48,14 @@ fi
 
 bad=0
 for volume in $volumes; do
-    device="$(docker volume inspect "$volume" --format '{{.Options.Device}}' 2>/dev/null || echo "")"
-    if [ "$device" = "$WS_PATH" ]; then
+    # The keys of the options map are lower case ("device", "o", "type"),
+    # and the raw map is the fallback: a template that does not resolve
+    # prints "<no value>" or nothing at all, and both look like a volume
+    # that binds nothing -- which would send the deployment after a
+    # volume that is exactly right.
+    device="$(docker volume inspect "$volume" --format '{{index .Options "device"}}' 2>/dev/null || echo "")"
+    options="$(docker volume inspect "$volume" --format '{{.Options}}' 2>/dev/null || echo "")"
+    if [ "$device" = "$WS_PATH" ] || printf '%s' "$options" | grep -qF "device:$WS_PATH"; then
         echo "check-workspace-volume: $volume binds $WS_PATH."
         continue
     fi
