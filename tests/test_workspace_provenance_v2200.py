@@ -361,3 +361,28 @@ class TheInspectorIsSafeToUse(unittest.TestCase):
     def test_it_says_a_plain_directory_has_no_ceiling(self) -> None:
         result = self._inspect(str(self.ws))
         self.assertIn("NO CEILING", result.stdout)
+
+
+class TheReleaseNamesItself(unittest.TestCase):
+    """The release contract: the changelog, the handoff and the two
+    versions describe one tree."""
+
+    VERSION = "2.20.0"
+
+    def test_the_changelog_has_the_section(self) -> None:
+        self.assertIn(f"## [{self.VERSION}]", _read("CHANGELOG.md"))
+
+    def test_the_handoff_names_the_release(self) -> None:
+        self.assertIn(f"v{self.VERSION}", _read("docs/HANDOFF-binary-transport.md"))
+
+    def test_both_services_carry_the_version(self) -> None:
+        for name in ("agent_core.py", "proxy_core.py"):
+            self.assertIn(
+                f'__version__ = "{self.VERSION}"',
+                _read(name),
+                f"{name} does not carry {self.VERSION}",
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
