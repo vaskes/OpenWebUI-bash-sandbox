@@ -37,6 +37,21 @@
 # is a scratchpad, so that is the intended behaviour, but it is
 # announced loudly instead of done quietly.
 #
+# THE MODE OF THE SCRATCHPAD
+#
+# The filesystem's root directory is mode 1777, exactly like the tmpfs
+# this workspace replaced. It is not a detail: the agent's user writes
+# there, and so does the root the privilege mode hands out -- and a
+# container that drops every capability has no CAP_DAC_OVERRIDE, so
+# that root cannot write into a directory it does not own. A 755
+# directory owned by the agent's user is a scratchpad that the root
+# cannot use, and the CI found it: the deploy job's file-door step
+# asked the container's root to create a file, and the file was not
+# there afterwards.
+#
+# The sticky bit keeps the tmpfs's semantics: everybody may create and
+# delete their own files, and nobody may delete somebody else's.
+#
 # THE CEILING HAS TO HOLD WHAT THE DOOR ACCEPTS
 #
 # The file door accepts a file up to AGENT_BINARY_LIMIT and writes it
@@ -70,6 +85,9 @@ fi
 
 MOUNTPOINT="${1:?usage: setup-workspace.sh [--check] <mountpoint> [size]}"
 SIZE="${2:-${AGENT_WORKSPACE_SIZE:-1g}}"
+# The mode of the workspace's root directory. 1777, like the tmpfs this
+# workspace replaced: see the header.
+WORKSPACE_MODE=1777
 IMAGE="${WORKSPACE_IMAGE:-${MOUNTPOINT%/}.img}"
 POLICY="${AGENT_BINARY_LIMIT:-0}"
 
@@ -117,6 +135,11 @@ loop_device_for_image() {
 # The source device mounted at the mount point, if any.
 mounted_source() {
     findmnt -no SOURCE --target "$MOUNTPOINT" 2>/dev/null || true
+}
+
+# The mode of the workspace's root directory, as it is right now.
+workspace_mode() {
+    stat -c %a "$MOUNTPOINT" 2>/dev/null || echo 0
 }
 
 # The bytes the workspace can actually hold right now. A filesystem of
@@ -179,6 +202,31 @@ case "$kind" in
     ours)
         if [ "$have_bytes" = "$want_bytes" ]; then
             check_policy || exit 1
+            mode="$(workspace_mode)"
+            if [ "$CHECK_ONLY" -eq 1 ]; then
+                if [ "$mode" != "$WORKSPACE_MODE" ]; then
+                    echo "setup-workspace: $MOUNTPOINT is the workspace filesystem," >&2
+                    echo "setup-workspace: but its mode is $mode, not $WORKSPACE_MODE;" >&2
+                    echo "setup-workspace: a root without capabilities cannot write" >&2
+                    echo "setup-workspace: into a directory it does not own." >&2
+                    exit 1
+                fi
+                echo "setup-workspace: $MOUNTPOINT is the workspace filesystem ($SIZE)."
+                report
+                exit 0
+            fi
+            # The mode is part of the scratchpad's contract, and anything
+            # else may have changed it -- a chmod, a filesystem restored
+            # from an image, another tool. Put it back before saying the
+            # workspace is ready.
+            if [ "$mode" != "$WORKSPACE_MODE" ]; then
+                echo "setup-workspace: the mode of $MOUNTPOINT was $mode; setting it to $WORKSPACE_MODE."
+                chmod "$WORKSPACE_MODE" "$MOUNTPOINT" || {
+                    echo "setup-workspace: cannot set the mode of $MOUNTPOINT." >&2
+                    echo "setup-workspace: it takes root, or the ownership of the mount point." >&2
+                    exit 1
+                }
+            fi
             echo "setup-workspace: $MOUNTPOINT is the workspace filesystem ($SIZE)."
             report
             exit 0
@@ -224,6 +272,12 @@ fi
 
 echo "setup-workspace: mounting $IMAGE on $MOUNTPOINT"
 mount -o loop "$IMAGE" "$MOUNTPOINT"
+
+# The mode the tmpfs used to have. The agent's user writes here, and so
+# does the root the privilege mode hands out -- and a container that
+# drops every capability cannot write into a directory owned by
+# somebody else.
+chmod "$WORKSPACE_MODE" "$MOUNTPOINT"
 
 check_policy || exit 1
 report

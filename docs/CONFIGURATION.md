@@ -183,6 +183,20 @@ Default: `/opt/owbs-workspace` (the default stack),
 The path has to be **absolute**: Docker resolves a relative `device`
 against the daemon's working directory, not against the compose file.
 
+**The volume has to be the workspace.** Docker does not change a
+volume's options once the volume exists: a volume left over from an
+earlier stack keeps the driver it was made with, and a plain local
+volume is a directory in Docker's own directory -- on the host's
+partition, with nothing to stop it growing. So the volume is checked:
+
+```bash
+bash tools/check-workspace-volume.sh "$AGENT_WORKSPACE_PATH"
+```
+
+and a deployment that finds a volume which is not the workspace takes
+it away and lets compose make it again with the driver the compose file
+asks for. The check needs no root and changes nothing.
+
 Make the workspace once per host, and check it without root:
 
 ```bash

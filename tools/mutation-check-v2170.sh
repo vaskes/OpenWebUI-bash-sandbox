@@ -66,6 +66,30 @@ mutate docker-compose.yml \
   "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_volume_binds_a_host_path" \
   "the workspace path is the knob"
 
+echo "== the workspace's mode is not the scratchpad's mode =="
+mutate tools/setup-workspace.sh \
+  'WORKSPACE_MODE=1777' \
+  'WORKSPACE_MODE=0755' \
+  "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_workspace_is_writable_by_the_root_the_container_hands_out" \
+  "the workspace is writable by the root the container hands out"
+
+echo "== the setup script never sets the mode =="
+# The chmod is in two places -- the workspace that is already there and
+# the one this run makes -- so both copies have to go: breaking one
+# leaves the other in place, and the property survives.
+mutate_all tools/setup-workspace.sh \
+  'chmod "$WORKSPACE_MODE" "$MOUNTPOINT"' \
+  ':' \
+  "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_workspace_is_writable_by_the_root_the_container_hands_out" \
+  "the setup script sets the mode of the workspace"
+
+echo "== the volume check accepts any volume =="
+mutate tools/check-workspace-volume.sh \
+  'if [ "$device" = "$WS_PATH" ]; then' \
+  'if true; then' \
+  "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_workspace_volume_has_to_be_the_workspace" \
+  "the workspace volume has to be the workspace"
+
 echo "== the setup script stops making the file =="
 mutate tools/setup-workspace.sh \
   '    truncate -s "$SIZE" "$IMAGE"' \
