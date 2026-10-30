@@ -84,6 +84,10 @@ if [ "${1:-}" = "--check" ]; then
 fi
 
 MOUNTPOINT="${1:?usage: setup-workspace.sh [--check] <mountpoint> [size]}"
+# The canonical form of the path: findmnt answers with canonical
+# targets, and a path with a trailing slash or a symlink in it would
+# never equal them.
+MOUNTPOINT_CANON="$(realpath -m "$MOUNTPOINT" 2>/dev/null || echo "$MOUNTPOINT")"
 SIZE="${2:-${AGENT_WORKSPACE_SIZE:-1g}}"
 # The mode of the workspace's root directory. 1777, like the tmpfs this
 # workspace replaced: see the header.
@@ -91,7 +95,7 @@ WORKSPACE_MODE=1777
 IMAGE="${WORKSPACE_IMAGE:-${MOUNTPOINT%/}.img}"
 POLICY="${AGENT_BINARY_LIMIT:-0}"
 
-for tool in truncate mkfs.ext4 mount findmnt losetup df stat; do
+for tool in truncate mkfs.ext4 mount findmnt losetup df stat realpath; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "setup-workspace: $tool is not installed." >&2
         exit 1
@@ -133,7 +137,17 @@ loop_device_for_image() {
 }
 
 # The source device mounted at the mount point, if any.
+#
+# findmnt answers with the nearest mount that CONTAINS the path, so a
+# plain directory inside a mounted filesystem gets that filesystem too --
+# and the workspace's directory is exactly that: it lives on the host's
+# partition, and findmnt would have called it "already mounted from
+# /dev/nvme0n1p4". The workspace is mounted only when the path IS the
+# target of the mount.
 mounted_source() {
+    local target
+    target="$(findmnt -no TARGET --target "$MOUNTPOINT" 2>/dev/null || true)"
+    [ "$target" = "$MOUNTPOINT_CANON" ] || return 0
     findmnt -no SOURCE --target "$MOUNTPOINT" 2>/dev/null || true
 }
 
@@ -268,6 +282,15 @@ if [ ! -e "$IMAGE" ]; then
     echo "setup-workspace: making a $SIZE filesystem in $IMAGE"
     truncate -s "$SIZE" "$IMAGE"
     mkfs.ext4 -F -q -E root_owner=1000:1000 "$IMAGE"
+fi
+
+# The leftovers of an earlier workspace are in the way: the mount hides
+# them, and they keep the host's disk busy while they are hidden. The
+# workspace is a scratchpad, so they go -- and it is said out loud,
+# because a directory that is emptied is worth a word.
+if [ -n "$(ls -A "$MOUNTPOINT" 2>/dev/null)" ]; then
+    echo "setup-workspace: the directory is not empty; the leftovers of an earlier workspace are removed."
+    find "$MOUNTPOINT" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
 fi
 
 echo "setup-workspace: mounting $IMAGE on $MOUNTPOINT"
