@@ -41,6 +41,33 @@ mutation_require_python() {
     exit 2
 }
 
+# The tripwire has to be GREEN before anything is broken.
+#
+# A mutation script that runs against a red tree learns nothing: every
+# mutation "goes red", and the script reports catches for a tree that
+# was already broken. That is not a rare accident — a stage parser that
+# does not recognise the runtime stage of a Dockerfile is enough, and
+# the verdicts look perfectly fine while measuring nothing.
+#
+# So the script says it out loud and stops, instead of printing a green
+# line for a mutation that proved nothing.
+mutation_require_green() {
+    # mutation_require_green <selector>
+    local selector="$1" out rc=0
+    out="$(mktemp -p /tmp mut-green.XXXXXX)"
+    "$PY" -m pytest "$selector" -q >"$out" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "INVALID — the tripwire is not green on the clean tree (pytest exited $rc)."
+        echo "         Every mutation below would 'go red' for a reason that has"
+        echo "         nothing to do with the mutation. Fix the tree first."
+        tail -30 "$out"
+        rm -f "$out"
+        exit 2
+    fi
+    rm -f "$out"
+    echo "preflight: the tripwire is green on the clean tree"
+}
+
 # Replace the first occurrence of $2 with $3 in $1. Fails when the pattern
 # is gone: a mutation that does not apply proves nothing.
 mutation_apply() {
