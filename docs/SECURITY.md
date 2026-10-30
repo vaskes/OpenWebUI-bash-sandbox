@@ -192,6 +192,27 @@ Two things follow from the bound, and both are worth knowing:
   mounts has to stay below it, or the OOM killer stops the container
   before its own ceiling is reached.
 
+**The ceiling survives the host, not just the deployment.** The mount
+is a fact about the running kernel: after a reboot of the host the
+image is intact and nothing is mounted, so the directory the volume
+binds is an ordinary directory on the host's partition again — and a
+directory has no ceiling. The failure is quiet: the container starts,
+the agent writes, and the host's disk fills up. So the mount is
+installed into `/etc/fstab` (`tools/install-workspace-mount.sh`), and
+the entry carries `nosuid` and `nodev` like the mount itself does: the
+entry that is in force after a reboot is a boundary too.
+
+**A bigger ceiling grows the workspace, and the files stay.** The
+ceiling is the size of the image file, and the image file is the disk
+of the filesystem inside it, so raising the ceiling is the same disk
+with more room: the file grows, the loop device follows, and the
+filesystem is resized under the mount that is already there. It used to
+make a new filesystem instead, and that threw the agent's work away —
+the loss looked like "the sandbox wipes itself on restart", which was
+wrong about the cause and right about the pain. A *smaller* ceiling is
+refused, and refusing needs no privileges: the decision belongs to a
+human, because shrinking means deciding what to throw away.
+
 And one property of the filesystem itself, which the move to the disk
 would have taken away with it:
 

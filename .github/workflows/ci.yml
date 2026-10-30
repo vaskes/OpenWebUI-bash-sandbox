@@ -165,6 +165,35 @@ jobs:
       - name: The workspace gets its ceiling
         run: sudo bash tools/setup-workspace.sh "${AGENT_WORKSPACE_PATH:-/tmp/owbs-workspace}" "${AGENT_WORKSPACE_SIZE:-1g}"
 
+      # The grow path is the load-bearing new code, and it only means
+      # something on a real filesystem: a bigger ceiling has to make
+      # the filesystem bigger and LEAVE THE FILES ALONE, and a smaller
+      # one has to be refused with the files still there. A unit test
+      # can ask the script what it would do; only this can say whether
+      # what it does is right.
+      - name: A bigger ceiling grows the workspace, and the files stay
+        run: |
+          set -euo pipefail
+          WS=/tmp/owbs-grow-test
+          sudo bash tools/setup-workspace.sh "$WS" 64m
+          sudo touch "$WS/persist-probe"
+          sudo bash tools/setup-workspace.sh "$WS" 128m
+          sudo test -f "$WS/persist-probe"
+          df -h "$WS" | tail -1
+          df -i "$WS" | tail -1
+          # A smaller ceiling is refused -- and the refusal touches
+          # nothing.
+          if sudo bash tools/setup-workspace.sh "$WS" 32m; then
+            echo "::error::a smaller ceiling was accepted"; exit 1
+          fi
+          sudo test -f "$WS/persist-probe"
+          # The mount comes back at boot.
+          sudo bash tools/install-workspace-mount.sh "$WS"
+          bash tools/install-workspace-mount.sh --check "$WS"
+          sudo bash tools/install-workspace-mount.sh --remove "$WS"
+          sudo umount "$WS"
+          sudo rm -f "$WS" "$WS.img"
+
       - name: Build both images from a clean tree
         env:
           OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
