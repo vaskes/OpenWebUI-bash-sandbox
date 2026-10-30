@@ -71,6 +71,8 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 - ✅ **Singleton HTTP client** — no per-request TCP handshake
 - ✅ **systemd unit** for autostart on boot
 - ✅ **Multi-stage Dockerfiles** — small images
+- ✅ **Python packages out of the box** — pip in the image, a wheelhouse
+  for instant offline installs, and the usual suspects preinstalled
 - ✅ **998 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
@@ -552,6 +554,27 @@ it was capped, the payload ends with `[output truncated at N bytes]`. If
 the output was **larger than the session's scrollback**, the first line
 says the beginning is gone — that result is a tail, not a whole answer, and
 re-running the command in smaller pieces is the fix.
+
+### Installing python packages
+The sandbox image ships **pip** (`python3 -m pip`) and `python3-venv`, so
+a virtual environment can be made without root:
+
+```bash
+python3 -m venv /workspace/.venv
+/workspace/.venv/bin/pip install <package>
+```
+
+The workspace is writable and executable, and it is on disk — so the
+environment survives a container recreate. A plain `pip install` into the
+system interpreter is refused (PEP 668 — the interpreter is externally
+managed), and that refusal is correct: the image is not a package dump.
+
+The packages that come up most are **already there** and importable with
+no install at all: `numpy`, `matplotlib`, `pandas`, `sqlalchemy`,
+`openai`, `requests`, `httpx`, `pillow`, `sympy`, `pytest`, `tqdm`. The
+wheels they were built from ship with the image, so installing one of
+them into your own environment is local and instant — no network, no
+timeout.
 
 ### Setup from scratch
 1. `git clone https://github.com/vaskes/OpenWebUI-bash-sandbox.git`
