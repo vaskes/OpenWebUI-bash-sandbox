@@ -53,13 +53,29 @@ def _section(text: str, version: str) -> str:
     return match.group(1)
 
 
+def _newest_section_version() -> str:
+    """The version of the newest ``## [X.Y.Z]`` section of the changelog.
+
+    The version the services answer with is the version the changelog's
+    **newest** section describes -- not a literal written into this
+    file. A literal here is a number that rots: it goes stale on the
+    next release, and then it is either edited (so the test says
+    nothing) or left (so the suite is red for a reason that has nothing
+    to do with the code). The claims *of* v2.17.0 stay pinned by this
+    file; the version number moves on.
+    """
+    match = re.search(r"^## \[([0-9]+\.[0-9]+\.[0-9]+)\]", _source("CHANGELOG.md"), re.M)
+    assert match is not None, "the changelog has no version section"
+    return match.group(1)
+
+
 class TestTheVersionIsTheRelease(unittest.TestCase):
     def test_the_services_answer_with_this_version(self) -> None:
         import agent_core  # noqa: PLC0415
         import proxy_core  # noqa: PLC0415
 
         self.assertEqual(agent_core.__version__, proxy_core.__version__)
-        self.assertEqual(agent_core.__version__, VERSION)
+        self.assertEqual(agent_core.__version__, _newest_section_version())
 
     def test_the_changelog_has_the_section(self) -> None:
         self.assertIn(f"## [{VERSION}]", _source("CHANGELOG.md"))

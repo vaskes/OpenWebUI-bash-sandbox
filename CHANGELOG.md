@@ -4,6 +4,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.0] - 2026-10-30
+
+The sandbox can install python packages, and does not have to be told twice.
+
+The model asked for pip. It was right to ask: `python3-pip` was installed
+in the **builder** stage of the image only, to build the agent's own
+dependencies, and the runtime stage never got it. So the sandbox had no
+package manager at all, and every attempt to install one cost a round
+trip through apt-get and sudo -- paid out of the command's timeout.
+
+### Added
+
+- **A package manager in the runtime image.** `python3-pip` and
+  `python3-venv` are now installed in the runtime stage of
+  `Dockerfile.sandbox`. The second one brings `ensurepip`, so a virtual
+  environment can be made without root.
+- **A preinstalled tree of the packages the model keeps asking for.**
+  `numpy`, `matplotlib`, `pandas`, `sqlalchemy`, `openai`, `requests`,
+  `httpx`, `pillow`, `sympy`, `pytest` and `tqdm` are installed into
+  `/opt/pylibs` at build time and are importable in the model's shell
+  with no install at all. The list is the build argument
+  `AGENT_PYTHON_PACKAGES`, so a smaller image is one flag away.
+- **A wheelhouse.** The wheels the tree was built from ship with the
+  image in `/opt/wheelhouse`, and `PIP_FIND_LINKS` points pip at it: a
+  package from that set installs offline and instantly, and the network
+  stays available for everything else. Measured on the host: 72 MB of
+  wheels, 9 s to install the whole set out of them, 0.9 s to install
+  numpy into a fresh virtual environment.
+- **The tool description says so.** The `bash` tool now tells the model
+  what is preinstalled and how to add a package -- a virtual
+  environment inside the workspace, which is writable, executable, and
+  survives a container recreate.
+
+### Changed
+
+- The model's shell gets `/opt/pylibs` on `PYTHONPATH`
+  (`agent_api._tmux_environment`). The **service** deliberately does
+  not: the tree carries its own `pydantic` and `httpx`, and shadowing
+  the service's pinned dependencies with them would break the agent for
+  a reason that has nothing to do with the model.
+- `tools/mutation-lib.sh` grows `mutation_require_green`: a mutation
+  script that runs against a red tree reports catches for a tree that
+  was already broken, so the tripwire has to be green before anything
+  is broken -- or the script says so and exits 2.
+
+### Fixed
+
+- `tools/mutation-check-v21411.sh` carried a copy of the line it
+  replaced, so the new body of `_tmux_environment` left the pattern
+  unmatched and the script would have reported a skip instead of a
+  catch. It is re-aimed at the line that is in the tree now.
+
 ## [2.17.0] - 2026-10-30
 
 The workspace goes back to disk, and the root may write again.
