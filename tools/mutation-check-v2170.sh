@@ -97,6 +97,13 @@ mutate tools/check-workspace-volume.sh \
   "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_workspace_volume_has_to_be_the_workspace" \
   "the workspace volume has to be the workspace"
 
+echo "== the volume check reaches into another deployment =="
+mutate tools/check-workspace-volume.sh \
+  'if [ -n "$PROJECT" ]; then' \
+  'if false; then' \
+  "$RULE::TestTheWorkspaceIsOnDiskWithACeiling::test_the_workspace_volume_has_to_be_the_workspace" \
+  "the volume check is scoped to the deployment's own project"
+
 echo "== the setup script stops making the file =="
 mutate tools/setup-workspace.sh \
   '    truncate -s "$SIZE" "$IMAGE"' \
