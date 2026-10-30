@@ -197,15 +197,29 @@ Two things follow from the bound, and both are worth knowing:
   mounts has to stay below it, or the OOM killer stops the container
   before its own ceiling is reached.
 
-**The ceiling survives the host, not just the deployment.** The mount
-is a fact about the running kernel: after a reboot of the host the
-image is intact and nothing is mounted, so the directory the volume
-binds is an ordinary directory on the host's partition again — and a
-directory has no ceiling. The failure is quiet: the container starts,
-the agent writes, and the host's disk fills up. So the mount is
-installed into `/etc/fstab` (`tools/install-workspace-mount.sh`), and
-the entry carries `nosuid` and `nodev` like the mount itself does: the
-entry that is in force after a reboot is a boundary too.
+**The image survives the host; the mount does not.** The mount is a
+fact about the running kernel: after a reboot of the host the image is
+intact and nothing is mounted, so the directory the volume binds is an
+ordinary directory on the host's partition again — and a directory has
+no ceiling. The failure would be quiet: the container starts, the
+agent writes, and the host's disk fills up.
+
+Two things keep it loud instead of quiet:
+
+* the mount is **not** put into the host's `/etc/fstab`. It belongs to
+  the stack: it is made when the stack starts, and it is made by the
+  stack's own tooling. A host's boot does not silently bring a
+  filesystem with an agent's files into the picture;
+* the agent compares the size of the filesystem it is looking at with
+  the ceiling the deployment declared (`AGENT_WORKSPACE_SIZE`), and
+  **refuses to serve** when they disagree. A plain directory on the
+  host's partition is a different size, so the container does not come
+  up working against the host's disk: it comes up refusing, with the
+  reason in its log. A deployment that declares no ceiling is not
+  checked by this — the check is about a ceiling that was promised.
+
+The boundary the mount carries (`nosuid`, `nodev`) is the same in both
+cases — it is a property of the mount, not of the way it was made.
 
 **A bigger ceiling grows the workspace, and the files stay.** The
 ceiling is the size of the image file, and the image file is the disk
