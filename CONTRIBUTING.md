@@ -125,6 +125,52 @@ test(core): cover unicode in safe_id
 chore(deps): bump fastapi to 0.118
 ```
 
+## Who may be credited as a contributor
+
+A commit may not credit a model as a co-author.
+
+GitHub counts a `Co-Authored-By:` trailer as a contribution: the account
+named in it appears on the repository's contributors list. A model that
+wrote no line of the repository, holds no key and opened no pull request
+still appears there — and the page is public, so the attribution outlives
+the commit it sits in.
+
+The rule is mechanical:
+
+* a trailer belongs to the **last paragraph** of the commit message —
+  that is where git's convention puts it. A line quoted in the body is
+  prose, not a trailer, and a check that fires on prose fires on every
+  document that describes the problem, which is how a check gets
+  switched off;
+* `.mailmap` does not help: it applies to the author field, and a
+  co-author trailer is parsed as written;
+* the only cure is a history rewrite with the tags recreated
+  byte-for-byte — which is exactly why the check exists.
+
+`tests/test_no_model_coauthor_trailers.py` is the tripwire: it reads the
+history, it reads only the last paragraph, and it checks itself — it must
+see a real trailer, must not see a quote of one, and must not see a
+human co-author.
+
+### Seeing the list
+
+The sidebar panel draws from a snapshot that GitHub refreshes on its own
+schedule, so a name can outlive the commit that put it there:
+
+```bash
+# what the panel draws -- the sidebar asks for exactly this
+curl -H 'Accept: application/json' \
+  https://github.com/vaskes/OpenWebUI-bash-sandbox/graphs/contributors-data
+
+# what the API counts
+curl https://api.github.com/repos/vaskes/OpenWebUI-bash-sandbox/stats/contributors
+```
+
+If the first one still names an account after the history was cleaned,
+the stale copy is in the reader's browser, not in the repository: that
+JSON is served with `Cache-Control: max-age=0, private, must-revalidate`,
+so a hard reload fetches it again.
+
 ## Pull-request flow
 
 1. Fork the repo, branch from `main`.
