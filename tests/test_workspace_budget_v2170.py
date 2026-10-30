@@ -49,8 +49,11 @@ them: a list of facts that lives in the tree is checked where it lives.
 
 from __future__ import annotations
 
+import os
+import pathlib
 import re
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -364,6 +367,115 @@ class TestTheWorkspaceIsOnDiskWithACeiling(unittest.TestCase):
             "binds a mount point, and a path that is not a mount point is "
             "just a directory",
         )
+
+    def test_the_workspace_is_writable_by_the_root_the_container_hands_out(self) -> None:
+        """The scratchpad has to be writable by the root as well.
+
+        The workspace's root directory was mode 755, owned by the
+        agent's user. That is fine for the agent -- and it is not fine
+        for the root the privilege mode hands out: a container that
+        drops every capability has no CAP_DAC_OVERRIDE, so uid 0 cannot
+        write into a directory it does not own. The CI found it: the
+        deploy job's file-door step asked the container's root to create
+        a file, and the file was not there afterwards.
+
+        The mode is 1777, like the tmpfs this workspace replaced.
+        """
+        code = "\n".join(
+            _code_lines((ROOT / "tools" / "setup-workspace.sh").read_text(encoding="utf-8"))
+        )
+        self.assertRegex(
+            code,
+            r"(?m)^\s*WORKSPACE_MODE=1777\s*$",
+            "the workspace's mode is not 1777 -- the agent's user writes there, "
+            "and so does the root the privilege mode hands out, and a root "
+            "without capabilities cannot write into a directory owned by "
+            "somebody else",
+        )
+        self.assertRegex(
+            code,
+            r'(?m)^\s*chmod\s+"\$WORKSPACE_MODE"\s+"\$MOUNTPOINT"',
+            "the setup script never sets the mode of the workspace -- the "
+            "filesystem's root directory keeps the mode mkfs gave it, and "
+            "that mode is not the one the scratchpad needs",
+        )
+
+    def test_the_workspace_volume_has_to_be_the_workspace(self) -> None:
+        """A volume that is not the workspace has no ceiling.
+
+        Docker does not change a volume's options once the volume
+        exists: a volume left over from an earlier stack keeps the
+        driver it was made with, and a plain local volume is a
+        directory on the host's partition with nothing to stop it
+        growing. That is exactly the hole the filesystem closes, so the
+        volume has to be the workspace -- and the check that says so is
+        *run* here, against a fake docker that answers like one.
+        """
+        script = ROOT / "tools" / "check-workspace-volume.sh"
+        self.assertTrue(script.exists(), "tools/check-workspace-volume.sh is missing")
+        self.assertTrue(
+            os.access(script, os.X_OK),
+            "tools/check-workspace-volume.sh is not executable -- a check that "
+            "cannot be run is a check that does not happen",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_bin = pathlib.Path(tmp)
+            fake_docker = fake_bin / "docker"
+            fake_docker.write_text(
+                "#!/bin/sh\n"
+                'case "$1 $2" in\n'
+                "  'volume ls') printf '%s\\n' \"$OWBS_FAKE_VOLUMES\" ;;\n"
+                "  'volume inspect')\n"
+                '    for a in "$@"; do\n'
+                '      case "$a" in\n'
+                '        good-volume) echo "$OWBS_FAKE_GOOD_DEVICE" ;;\n'
+                '        plain-volume) echo "$OWBS_FAKE_PLAIN_DEVICE" ;;\n'
+                "      esac\n"
+                "    done\n"
+                "    ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_docker.chmod(0o755)
+
+            def check(
+                volumes: str, device: str, plain: str, *args: str
+            ) -> subprocess.CompletedProcess:
+                env = {
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                    "OWBS_FAKE_VOLUMES": volumes,
+                    "OWBS_FAKE_GOOD_DEVICE": device,
+                    "OWBS_FAKE_PLAIN_DEVICE": plain,
+                }
+                return subprocess.run(
+                    ["bash", str(script), *args, "/opt/owbs-workspace"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=env,
+                )
+
+            good = check("good-volume", "/opt/owbs-workspace", "", "/opt/owbs-workspace")
+            self.assertEqual(
+                good.returncode,
+                0,
+                f"the check refused the workspace volume: {good.stdout}{good.stderr}",
+            )
+
+            plain = check("plain-volume", "/opt/owbs-workspace", "", "/opt/owbs-workspace")
+            self.assertNotEqual(
+                plain.returncode,
+                0,
+                "a volume that is not the workspace passed the check -- that "
+                "volume is a plain directory on the host's partition, with no "
+                "ceiling on it",
+            )
+            self.assertIn(
+                "plain-volume",
+                plain.stderr,
+                "the check does not name the volume that is not the workspace",
+            )
 
     def test_the_deployment_runs_the_setup_script(self) -> None:
         """A script nobody runs is a promise nobody checks.
