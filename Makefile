@@ -41,19 +41,20 @@ up: check-env workspace-check ## Start the full stack in the background (refuses
 # ceiling changes -- which now GROWS the filesystem and keeps the files
 # in it. A smaller ceiling is refused: that is a human's decision.
 #
-# The mount is also put into /etc/fstab, so it comes back after a
-# reboot of the host. Without it, the volume would bind a plain
-# directory after a reboot -- and a plain directory has no ceiling.
+# The mount belongs to the stack: it is made here, when the stack
+# starts, and it is deliberately not in the host's /etc/fstab. The
+# image on disk survives a reboot of the host; the mount comes back
+# with the next start of the stack. A container that comes up without
+# it refuses to serve rather than write into a plain directory, which
+# has no ceiling.
 workspace: ## Give the sandbox its workspace: a filesystem with a ceiling (needs sudo)
 	sudo bash tools/setup-workspace.sh "$(WORKSPACE_PATH)" "$(WORKSPACE_SIZE)"
-	sudo bash tools/install-workspace-mount.sh "$(WORKSPACE_PATH)"
 
 # The same question as `make workspace`, without root and without
 # changing anything: is the workspace really there, is its ceiling the
 # one that was asked for, and will it be there after a reboot?
 workspace-check: ## Check that the workspace is mounted with the right ceiling
 	bash tools/setup-workspace.sh --check "$(WORKSPACE_PATH)" "$(WORKSPACE_SIZE)"
-	bash tools/install-workspace-mount.sh --check "$(WORKSPACE_PATH)"
 
 down: ## Stop and remove containers
 	$(COMPOSE) down

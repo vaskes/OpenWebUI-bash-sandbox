@@ -196,22 +196,36 @@ operating system's own error. The ceiling is the whole bound: the
 sandbox cannot write more than this, and neither can the agent that
 runs in it.
 
-**The mount is put back at boot.** The filesystem is a fact about the
-running kernel, not about the file: after a reboot of the host the
-image is intact and nothing is mounted, so the directory the volume
-binds is an ordinary directory on the host's partition again — and a
-directory has no ceiling. The failure is quiet, which is the worst
-kind. So the mount is installed into `/etc/fstab`:
+**The mount belongs to the stack, not to the host's boot.** The
+filesystem is a fact about the running kernel, not about the file:
+after a reboot of the host the image is intact and nothing is mounted,
+so the directory the volume binds is an ordinary directory on the
+host's partition again — and a directory has no ceiling. The failure
+would be quiet, which is the worst kind, so it is made loud instead:
+
+* the mount is made when the stack starts (`make workspace`, or the
+  deploy script), and it is deliberately **not** written into the
+  host's `/etc/fstab` — the mount is part of the stack's lifecycle,
+  not of the host's boot;
+* the mount carries `nosuid` and `nodev` (the same boundary the
+  workspace root needs — it is mode 1777 on the host's disk, and the
+  privilege mode's root is the host's root);
+* the agent compares the size of the filesystem it is looking at with
+  the ceiling that was asked for. The ceiling travels into the
+  container as `AGENT_WORKSPACE_SIZE`, and the deployment declares it
+  (`AGENT_WORKSPACE_SIZE=4g` in the deployment's environment). A plain
+  directory on the host's partition is a different size, so the agent
+  **refuses to serve** against it instead of filling the host's disk.
+  The stack is then started again — which is what makes the mount.
+
+A deployment that declares no ceiling has no such check: the check is
+about a ceiling that was promised, and a deployment that promises
+nothing is not caught by it.
 
 ```bash
-sudo bash tools/install-workspace-mount.sh "$AGENT_WORKSPACE_PATH"
-bash tools/install-workspace-mount.sh --check "$AGENT_WORKSPACE_PATH"
+make workspace                       # make the filesystem and mount it
+make workspace-check                 # ask the same question, change nothing
 ```
-
-The entry carries `nosuid` and `nodev` (the same boundary the mount
-itself carries — the workspace root is mode 1777 on the host's disk,
-and the privilege mode's root is the host's root) and `nofail`, so a
-missing image cannot keep the host from booting.
 
 The price of the bound is honest and worth naming. The workspace is
 **on disk and durable**: it survives a container recreate, and so does

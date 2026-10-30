@@ -53,7 +53,6 @@ from pathlib import Path
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SETUP = ROOT / "tools" / "setup-workspace.sh"
-INSTALL_MOUNT = ROOT / "tools" / "install-workspace-mount.sh"
 
 
 def _read(name: str) -> str:
@@ -80,19 +79,6 @@ def _plan(mountpoint: Path, size: str) -> str:
         cwd=str(ROOT),
     )
     return done.stdout.strip()
-
-
-def _install_mount(fstab: Path, mountpoint: str, image: str) -> subprocess.CompletedProcess[str]:
-    env = dict(os.environ)
-    env["FSTAB"] = str(fstab)
-    return subprocess.run(
-        ["bash", str(INSTALL_MOUNT), mountpoint, image],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        cwd=str(ROOT),
-        env=env,
-    )
 
 
 class ThePlanSaysWhatWouldHappen(unittest.TestCase):
@@ -206,151 +192,6 @@ class TheWorkspaceIsNotWiped(unittest.TestCase):
             r"(?m)^WORKSPACE_SIZE \?= 4g$",
             "the Makefile's default ceiling is not 4 GiB: `make workspace` "
             "would build a different workspace than the script's default",
-        )
-
-
-class TheWorkspaceIsMountedAtBoot(unittest.TestCase):
-    """The mount survives the host, not just the deployment."""
-
-    @staticmethod
-    def _target(makefile: str, name: str) -> str:
-        """The body of one Makefile target.
-
-        A Makefile has more than one target, and a check that reads the
-        whole file is satisfied by any of them: the `workspace` target
-        installs the boot entry and the `workspace-check` target checks
-        it, so a check for "the string is in the Makefile" says nothing
-        about the one that has to install it. The body is read from the
-        target's header to the next target.
-        """
-        body: list[str] = []
-        inside = False
-        for line in makefile.splitlines():
-            if not inside:
-                if line.startswith(f"{name}:"):
-                    inside = True
-                continue
-            if line and not line[0].isspace():
-                break
-            body.append(line)
-        return "\n".join(body)
-
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.fstab = Path(self._tmp.name) / "fstab"
-        self.fstab.write_text("UUID=abc / ext4 defaults 0 1\n", encoding="utf-8")
-
-    def tearDown(self) -> None:
-        self._tmp.cleanup()
-
-    def _entry(self) -> str:
-        for line in self.fstab.read_text(encoding="utf-8").splitlines():
-            fields = line.split()
-            if len(fields) > 1 and fields[1] == "/opt/owbs-workspace":
-                return line
-        return ""
-
-    def test_the_entry_carries_the_boundary(self) -> None:
-        """nosuid and nodev: the entry in force after a reboot is a boundary.
-
-        The workspace root is mode 1777 on the host's disk, and in the
-        privilege mode the agent can become uid 0 inside the container
-        -- which is uid 0 on the host. Without nosuid a file in the
-        workspace with the setuid bit is a setuid-root file on the
-        host; without nodev a device node in it is a device node.
-        """
-        _install_mount(self.fstab, "/opt/owbs-workspace", "/opt/owbs-workspace.img")
-        entry = self._entry()
-        self.assertTrue(entry, "no entry for the workspace was written")
-        options = entry.split()[3]
-        self.assertIn("nosuid", options.split(","), "the boot entry mounts without nosuid")
-        self.assertIn("nodev", options.split(","), "the boot entry mounts without nodev")
-        self.assertIn(
-            "loop", options.split(","), "the boot entry does not mount the image as a filesystem"
-        )
-
-    def test_the_entry_does_not_stop_the_boot(self) -> None:
-        """A missing image must not keep the host from booting."""
-        _install_mount(self.fstab, "/opt/owbs-workspace", "/opt/owbs-workspace.img")
-        options = self._entry().split()[3]
-        self.assertIn(
-            "nofail",
-            options.split(","),
-            "the boot entry is not nofail: a missing image would stop the host "
-            "from booting, and a host that does not boot helps nobody",
-        )
-
-    def test_the_entry_is_written_once(self) -> None:
-        """Installing twice does not install twice."""
-        _install_mount(self.fstab, "/opt/owbs-workspace", "/opt/owbs-workspace.img")
-        _install_mount(self.fstab, "/opt/owbs-workspace", "/opt/owbs-workspace.img")
-        entries = [
-            line
-            for line in self.fstab.read_text(encoding="utf-8").splitlines()
-            if len(line.split()) > 1 and line.split()[1] == "/opt/owbs-workspace"
-        ]
-        self.assertEqual(len(entries), 1, "the boot entry was written more than once")
-
-    def test_the_entry_is_checked(self) -> None:
-        """The check accepts the entry it would write."""
-        _install_mount(self.fstab, "/opt/owbs-workspace", "/opt/owbs-workspace.img")
-        env = dict(os.environ)
-        env["FSTAB"] = str(self.fstab)
-        done = subprocess.run(
-            [
-                "bash",
-                str(INSTALL_MOUNT),
-                "--check",
-                "/opt/owbs-workspace",
-                "/opt/owbs-workspace.img",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd=str(ROOT),
-            env=env,
-        )
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-
-    def test_a_tampered_entry_is_refused(self) -> None:
-        """An entry without the boundary is not the entry it should be."""
-        _install_mount(self.fstab, "/opt/owbs-workspace", "/opt/owbs-workspace.img")
-        text = self.fstab.read_text(encoding="utf-8").replace("nosuid,", "")
-        self.fstab.write_text(text, encoding="utf-8")
-        env = dict(os.environ)
-        env["FSTAB"] = str(self.fstab)
-        done = subprocess.run(
-            [
-                "bash",
-                str(INSTALL_MOUNT),
-                "--check",
-                "/opt/owbs-workspace",
-                "/opt/owbs-workspace.img",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd=str(ROOT),
-            env=env,
-        )
-        self.assertNotEqual(done.returncode, 0, "an entry without nosuid passed the check")
-
-    def test_the_makefile_installs_the_boot_entry(self) -> None:
-        """`make workspace` puts the mount back at boot too.
-
-        The entry is the only thing that survives a reboot of the host,
-        and the Makefile is how a host is set up. A `make workspace` that
-        made the filesystem and stopped would leave a host whose ceiling
-        quietly disappears on the next boot.
-        """
-        target = self._target(_read("Makefile"), "workspace")
-        self.assertTrue(target, "the Makefile has no `workspace` target")
-        self.assertIn(
-            "tools/install-workspace-mount.sh",
-            target,
-            "the `workspace` target does not install the boot entry: after a "
-            "reboot the workspace would be a plain directory, and a plain "
-            "directory has no ceiling",
         )
 
 
