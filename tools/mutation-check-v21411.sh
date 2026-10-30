@@ -28,8 +28,8 @@ mutate agent_api.py \
 
 echo "== the environment builder stops dropping the credentials =="
 mutate agent_api.py \
-  '    return {name: value for name, value in os.environ.items() if name not in _secret_env_names()}' \
-  '    return dict(os.environ)' \
+  '    env = {name: value for name, value in os.environ.items() if name not in _secret_env_names()}' \
+  '    env = dict(os.environ)' \
   "$RULE" \
   "the credentials are dropped from the tmux environment"
 
