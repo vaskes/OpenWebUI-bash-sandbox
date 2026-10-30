@@ -268,6 +268,18 @@ Two rules the image keeps:
   the agent service's pinned dependencies would break the service for a
   reason that has nothing to do with the model.
 
+One consequence of the second rule is worth knowing, because it is
+measured and not obvious: `PYTHONPATH` comes **before** a virtual
+environment's own `site-packages`. So a version the model installs into
+its own environment does **not** override a preinstalled one — pip reports
+the install as successful, and the preinstalled version is what runs. The
+way out is one environment variable:
+
+```bash
+env -u PYTHONPATH /workspace/.venv/bin/pip install "pandas==2.2.0"
+env -u PYTHONPATH /workspace/.venv/bin/python script.py
+```
+
 ### Healthcheck
 
 ```
