@@ -24,6 +24,7 @@ mutation_require_python
 # The tree has to be green before anything is broken: a mutation sweep
 # against a red tree reports catches for a tree nobody broke.
 mutation_require_green "tests/test_workspace_ceiling_v2210.py"
+mutation_require_green "tests/test_ci_history_depth.py"
 
 echo "== the tool that wrote into the host's boot table is back =="
 mutate 'tests/test_workspace_ceiling_v2210.py' \
@@ -86,3 +87,23 @@ mutate 'tests/test_no_model_coauthor_trailers.py' \
   '    return blocks[0].split("\n")' \
   "tests/test_no_model_coauthor_trailers.py::TheDetectorCanSeeWhatItWasWrittenFor::test_the_detector_can_see_a_trailer" \
   "the detector reads the first paragraph instead of the last"
+
+# The gate that reads the history has to be able to see it. A depth-1
+# pull-request checkout is the MERGE ref: one synthetic commit, and none
+# of the branch's own messages -- so the gate was green on a branch that
+# credited a model. Measured, not assumed: the same commit is red with
+# the full history and green without it.
+echo "== the suite runs on a shallow checkout =="
+mutate .github/workflows/ci.yml \
+  '          # This job runs the suite itself, on four Python versions.
+          fetch-depth: 0' \
+  '          # This job runs the suite itself, on four Python versions.' \
+  "tests/test_ci_history_depth.py::TheGateCanSeeTheHistory::test_the_jobs_that_run_the_suite_fetch_the_whole_history" \
+  "the suite runs on a shallow checkout, so the history-reading tripwires are blind"
+
+echo "== the detector reads no history at all =="
+mutate 'tests/test_no_model_coauthor_trailers.py' \
+  '        self.messages = proc.stdout' \
+  '        self.messages = ""' \
+  "tests/test_no_model_coauthor_trailers.py::NoCommitCreditsAModel::test_the_history_is_read_at_all" \
+  "the detector reads no history and still reports a clean bill of health"
