@@ -40,6 +40,17 @@ jobs:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The suite reads the history, not only the tree: the tripwire
+          # that keeps a model out of the contributors list reads the
+          # commit messages of the whole repository. A default checkout
+          # is depth-1, and in a pull request it is the MERGE ref -- one
+          # synthetic commit whose message GitHub wrote, with none of the
+          # branch's own messages in it. The gate would then be blind
+          # exactly where it matters, and its green would mean nothing.
+          #
+          # This job runs the suite itself, on four Python versions.
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
@@ -87,6 +98,18 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The suite reads the history, not only the tree: the tripwire
+          # that keeps a model out of the contributors list reads the
+          # commit messages of the whole repository. A default checkout
+          # is depth-1, and in a pull request it is the MERGE ref -- one
+          # synthetic commit whose message GitHub wrote, with none of the
+          # branch's own messages in it. The gate would then be blind
+          # exactly where it matters, and its green would mean nothing.
+          #
+          # This job runs the same suite with tmux taken away, so it
+          # needs the history for the same reason.
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
@@ -695,6 +718,19 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The suite reads the history, not only the tree: the tripwire
+          # that keeps a model out of the contributors list reads the
+          # commit messages of the whole repository. A default checkout
+          # is depth-1, and in a pull request it is the MERGE ref -- one
+          # synthetic commit whose message GitHub wrote, with none of the
+          # branch's own messages in it. The gate would then be blind
+          # exactly where it matters, and its green would mean nothing.
+          #
+          # This job runs the mutation harnesses, and one of them breaks
+          # the model-attribution detector on purpose -- a blind detector
+          # would make that mutation meaningless.
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
