@@ -127,13 +127,16 @@ chore(deps): bump fastapi to 0.118
 
 ## Who may be credited as a contributor
 
-A commit may not credit a model as a co-author.
+A commit may not credit a model as a co-author, and may not be authored
+by one.
 
 GitHub counts a `Co-Authored-By:` trailer as a contribution: the account
 named in it appears on the repository's contributors list. A model that
 wrote no line of the repository, holds no key and opened no pull request
 still appears there — and the page is public, so the attribution outlives
-the commit it sits in.
+the commit it sits in. The author line is the second door: a commit whose
+`author=` is a model's address puts the model on the same list, with no
+trailer anywhere.
 
 The rule is mechanical:
 
@@ -142,23 +145,56 @@ The rule is mechanical:
   prose, not a trailer, and a check that fires on prose fires on every
   document that describes the problem, which is how a check gets
   switched off;
-* `.mailmap` does not help: it applies to the author field, and a
-  co-author trailer is parsed as written;
-* the only cure is a history rewrite with the tags recreated
-  byte-for-byte — which is exactly why the check exists.
+* the key is **case-insensitive**, like git's own parser: `git
+  interpret-trailers --parse` treats `co-authored-by:` as a trailer, and
+  GitHub's documentation writes it in that spelling;
+* the author address is read **raw** (`%ae`, not `%aE`): GitHub's rule is
+  about "the email address used to make or co-author the commits", and
+  `.mailmap` rewrites the author for display without un-crediting the
+  commit;
+* `.mailmap` does not help with a trailer: it applies to the author
+  field, and a co-author trailer is parsed as written;
+* only addresses that **resolve to a GitHub account** are forbidden: an
+  address with no account behind it cannot reach the contributors list,
+  and a list of such addresses is a list that rots;
+* the only cure for a credit that already landed is a history rewrite
+  with the tags recreated byte-for-byte — which is exactly why the check
+  exists.
 
 `tests/test_no_model_coauthor_trailers.py` is the tripwire: it reads the
-history, it reads only the last paragraph, and it checks itself — it must
-see a real trailer, must not see a quote of one, and must not see a
-human co-author.
+history, it reads the trailer block and the author address, and it checks
+itself — it must see a real trailer in any spelling of the key, must see
+a model in the author slot, must not see a quote of a trailer, must not
+see a human co-author, and must not carry an address that resolves to no
+account. `tests/test_ci_history_depth.py` is what keeps the tripwire
+honest: it refuses to let a shallow checkout pass as a full one, because
+a depth-1 pull-request checkout is the merge ref and the gate would be
+blind exactly where it matters.
 
 ### Seeing the list
 
-The sidebar panel draws from a snapshot that GitHub refreshes on its own
-schedule, so a name can outlive the commit that put it there:
+The panel on the repository's page is drawn from the sidebar, so the
+sidebar is the oracle:
 
 ```bash
 # what the panel draws -- the sidebar asks for exactly this
+curl -H 'Accept: application/json' \
+  -H 'X-Requested-With: XMLHttpRequest' \
+  https://github.com/vaskes/OpenWebUI-bash-sandbox/_sidebar
+```
+
+The JSON carries `contributors.contributorCount` and, for each entry,
+`contributors[].login` and `contributors[].avatarUrl` — and the avatar
+URL is where the **uid** is:
+`https://avatars.githubusercontent.com/u/988884?s=64&v=4`. Read the uid,
+not the login: a login can be renamed and a uid cannot, and a login that
+looks like a machine's name (`devin`, `mavis`) belongs to a living
+person more often than not.
+
+Two other endpoints answer, and neither of them is the panel:
+
+```bash
+# another snapshot of the same graph, with its own cache
 curl -H 'Accept: application/json' \
   https://github.com/vaskes/OpenWebUI-bash-sandbox/graphs/contributors-data
 
@@ -166,10 +202,33 @@ curl -H 'Accept: application/json' \
 curl https://api.github.com/repos/vaskes/OpenWebUI-bash-sandbox/stats/contributors
 ```
 
-If the first one still names an account after the history was cleaned,
-the stale copy is in the reader's browser, not in the repository: that
-JSON is served with `Cache-Control: max-age=0, private, must-revalidate`,
-so a hard reload fetches it again.
+`graphs/contributors-data` is a different snapshot, and it is the one
+half the advice on the internet quotes. It can also answer `202` with an
+empty body while GitHub recomputes the graph, so an empty answer is not
+an answer — ask the sidebar.
+
+**A stale panel.** The panel is a cached aggregate: a name can outlive
+the commit that put it there, and the history is the source of truth.
+To make GitHub recompute the aggregate, move the default branch onto
+another branch that exists and move it back:
+
+```bash
+gh api -X PATCH repos/vaskes/OpenWebUI-bash-sandbox \
+  -f default_branch=<another-branch>
+gh api -X PATCH repos/vaskes/OpenWebUI-bash-sandbox \
+  -f default_branch=main
+```
+
+Measured on this repository on 2026-10-31: the switch works, and for
+about a minute afterwards the sidebar answers with `contributorCount: 1`
+and an **empty** list of contributors. That is the recomputation, not a
+clean panel. Read it again a minute later — a non-empty count with an
+empty list means "not read yet", never "clean".
+
+If a name is still there after the history was cleaned, the stale copy
+may be in the reader's browser: the JSON is served with
+`Cache-Control: max-age=0, private, must-revalidate`, so a hard reload
+fetches it again.
 
 ## Pull-request flow
 
