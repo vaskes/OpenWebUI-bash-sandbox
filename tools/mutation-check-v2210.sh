@@ -76,8 +76,8 @@ mutate agent_api.py \
 # only thing that can see a broken detector. That is what it is for.
 echo "== the detector cannot see a trailer any more =="
 mutate 'tests/test_no_model_coauthor_trailers.py' \
-  '    "noreply@anthropic.com",  # Claude' \
-  '    "noreply@example.invalid",  # nobody' \
+  '    "noreply@anthropic.com": ("claude", 81847),' \
+  '    "noreply@example.invalid": ("nobody", 0),' \
   "tests/test_no_model_coauthor_trailers.py::TheDetectorCanSeeWhatItWasWrittenFor::test_the_detector_can_see_a_trailer" \
   "the detector cannot see the thing it was written for"
 
@@ -100,6 +100,27 @@ mutate .github/workflows/ci.yml \
   '          # This job runs the suite itself, on four Python versions.' \
   "tests/test_ci_history_depth.py::TheGateCanSeeTheHistory::test_the_jobs_that_run_the_suite_fetch_the_whole_history" \
   "the suite runs on a shallow checkout, so the history-reading tripwires are blind"
+
+echo "== the trailer key is matched with its case again =="
+mutate 'tests/test_no_model_coauthor_trailers.py' \
+  '    return line.lower().startswith(TRAILER_KEY.lower())' \
+  '    return line.startswith(TRAILER_KEY)' \
+  "tests/test_no_model_coauthor_trailers.py::TheDetectorCanSeeWhatItWasWrittenFor::test_the_detector_sees_a_trailer_in_any_case" \
+  "the detector matches the trailer key with its case, so the spelling the documentation and the house style use is invisible"
+
+echo "== the author slot is not read any more =="
+mutate 'tests/test_no_model_coauthor_trailers.py' \
+  '    return author_email.strip().lower() in FORBIDDEN' \
+  '    return False' \
+  "tests/test_no_model_coauthor_trailers.py::TheDetectorCanSeeWhatItWasWrittenFor::test_the_detector_sees_a_model_in_the_author_slot" \
+  "a commit authored by a model is invisible"
+
+echo "== a dead address gets into the forbidden list =="
+mutate 'tests/test_no_model_coauthor_trailers.py' \
+  'FORBIDDEN = tuple(RESOLVES_TO_ACCOUNT)' \
+  'FORBIDDEN = tuple(RESOLVES_TO_ACCOUNT) + ("mavis@kuduza.ai",)' \
+  "tests/test_no_model_coauthor_trailers.py::TheForbiddenListIsMeasured::test_the_forbidden_list_is_exactly_the_measured_one" \
+  "the forbidden list holds an address that resolves to no account, so it can only rot"
 
 echo "== the detector reads no history at all =="
 mutate 'tests/test_no_model_coauthor_trailers.py' \
