@@ -48,7 +48,7 @@ They are two serialisations of the same capabilities:
 | auth | the same bearer token | the same bearer token |
 | comparison | constant-time, shared helper | the same shared helper |
 | refusals | HTTP status + a named reason | JSON-RPC result with `isError = true` and the reason in the tool text |
-| tools | — | the seven tools named in the next paragraph |
+| tools | — | the eight tools named in the next paragraph |
 
 Rules that keep the two doors honest:
 
@@ -93,8 +93,16 @@ Rules that keep the two doors honest:
   refused with a reason. The write path is the one that matters: a model
   that writes through `bash` leaves the file door's own accounting empty,
   and the fence it walks past is the fence these tools enforce.
+* **The one door that is not narrower is the one the operator opened.**
+  `vision_analyze` hands a picture to the operator's own vision endpoint,
+  and that *is* a capability the shell does not have. It is the
+  operator's to grant: the endpoint is named by `AGENT_VISION_URL`, the
+  door is closed while that is empty, and the tool takes a path inside the
+  workspace — **not a URL**, because a door that fetches a URL the model
+  names is a retrieval door wearing a different hat (retrieval is not this
+  project's, v2.13.0).
 
-The MCP door exposes seven tools: `bash`, `read_file`, `file_info`, `delete_file`, `write_file`, `patch`, `search_files`.
+The MCP door exposes eight tools: `bash`, `read_file`, `file_info`, `delete_file`, `write_file`, `patch`, `search_files`, `vision_analyze`.
 
 ## Component responsibilities
 
@@ -247,7 +255,7 @@ agent_config.py       # Environment parsing: stdout, binary, history limits
 agent_core.py         # Pure functions: safe_id, tmux_name, path checks
 body_limit.py         # Pure-ASGI body-size limiter, shared by both services
 json_logging.py       # JSON log formatting for the app and uvicorn
-mcp_server.py         # MCP server: the seven tools, refusals, protocol
+mcp_server.py         # MCP server: the eight tools, refusals, protocol
 metrics.py            # Prometheus metrics
 openapi_proxy.py      # FastAPI app — OpenAPI surface, relay, WS, /mcp relay
 proxy_core.py         # Pure constants: command prefixes, timeouts, WS tunables
@@ -290,6 +298,10 @@ under a path (`/home/agent/.cache/pip`), never over the code.
 | size of a file read by the MCP `read_file` tool | the smallest of `AGENT_MCP_MAX_READ_BYTES` (1 MiB), `AGENT_BINARY_LIMIT` and 64 MiB | agent |
 | size of a file the MCP `write_file` tool writes | the smallest of `AGENT_MCP_MAX_WRITE_BYTES` (1 MiB), `AGENT_BINARY_LIMIT` and 2 MiB (the transport's own ceiling) | agent |
 | matches one MCP `search_files` call returns | `AGENT_MCP_MAX_SEARCH_RESULTS` (100), and the walk stops after 30 s | agent |
+| picture the MCP `vision_analyze` tool hands to the endpoint | `AGENT_VISION_MAX_BYTES` (8 MiB) | agent |
+| question the MCP `vision_analyze` tool forwards | `AGENT_VISION_MAX_PROMPT_BYTES` (8 KiB) | agent |
+| answer the MCP `vision_analyze` tool hands back | `AGENT_VISION_MAX_ANSWER_BYTES` (64 KiB) | agent |
+| one call to the vision endpoint | `AGENT_VISION_TIMEOUT` (60 s) | agent |
 | one command's runtime | `AGENT_EXEC_TIMEOUT`, 60 s default (5..3600); the agent's own request default is 30 s and its hard cap 3600 s | the proxy asks, the agent runs |
 | the MCP relay's patience | 3660 s — longer than the agent's own 3600 s cap | proxy |
 

@@ -411,6 +411,7 @@ class TestTheToolsAreTheDocumentedTools(_Base):
                 "patch",
                 "read_file",
                 "search_files",
+                "vision_analyze",
                 "write_file",
             ],
         )
@@ -433,6 +434,7 @@ class TestTheToolsAreTheDocumentedTools(_Base):
                     "patch",
                     "read_file",
                     "search_files",
+                    "vision_analyze",
                     "write_file",
                 ]
             ),
