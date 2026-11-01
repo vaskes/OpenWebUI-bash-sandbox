@@ -4,6 +4,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.23.0] - 2026-11-01
+
+The agent gets eyes — through the operator's own endpoint.
+
+### Added
+
+- **One more tool on the MCP door: `vision_analyze`.** It takes a
+  picture that is **already in the workspace**, hands it to the
+  **operator's** vision endpoint and returns the answer as text. Two
+  things are fixed, and neither of them is the model's to choose: the
+  picture is read through the file fence every other file operation
+  uses (a path that points out is refused, a symlink that points out is
+  not followed), and the endpoint is named by `AGENT_VISION_URL`.
+- **The door is closed by default.** While `AGENT_VISION_URL` is empty
+  the tool refuses and says the door is closed. A capability the
+  operator has not granted is not a capability, and a door that quietly
+  did something else would be worse than one that does nothing.
+- **The tool takes a path and not a URL.** A door that fetched a URL
+  the model named would be a retrieval door wearing a different hat, and
+  retrieval is not this project's (v2.13.0 — the research capability
+  belongs to another MCP, on another host). A URL-shaped path is a
+  path: it is resolved against the workspace, it is not there, and it is
+  refused.
+- **Three budgets and a timeout.** `AGENT_VISION_MAX_BYTES` (8 MiB),
+  `AGENT_VISION_MAX_PROMPT_BYTES` (8 KiB) and
+  `AGENT_VISION_MAX_ANSWER_BYTES` (64 KiB), plus
+  `AGENT_VISION_TIMEOUT` (60 s). The answer travels into the model's
+  context, so it is truncated over the budget — and a truncated answer
+  says that it is truncated.
+- **The vision door is counted.**
+  `sandbox_agent_vision_requests_total` and
+  `sandbox_agent_vision_refused_total`.
+
+### Changed
+
+- **"The MCP door grants nothing the HTTP door does not" now has one
+  named exception.** `vision_analyze` is a capability the shell does
+  not have — it is the operator's to open, and to close again by
+  emptying the knob. The sentence was true before this wave and is
+  still true, but it is now true with an exception, and the exception
+  is written down instead of being discovered later.
+- **`docs/ROADMAP.md` records wave C as shipped**, with the two things
+  the wave fixed about itself: the endpoint is the operator's, and the
+  tool takes no URL.
+
+### Security
+
+- A misconfigured endpoint is loud at startup, not at the first
+  picture: a URL that is not http(s) is refused, and a URL without
+  `AGENT_VISION_MODEL` is refused.
+
 ## [2.22.0] - 2026-11-01
 
 The agent writes and searches through the fence.
