@@ -40,7 +40,7 @@ llama.cpp-style client speaks). Both doors open the same sandbox.
 ## Two doors, one sandbox
 
 The HTTP API and the MCP endpoint are not two implementations of the sandbox.
-They are two serialisations of the same four capabilities:
+They are two serialisations of the same capabilities:
 
 | | HTTP | MCP |
 |---|---|---|
@@ -48,7 +48,7 @@ They are two serialisations of the same four capabilities:
 | auth | the same bearer token | the same bearer token |
 | comparison | constant-time, shared helper | the same shared helper |
 | refusals | HTTP status + a named reason | JSON-RPC result with `isError = true` and the reason in the tool text |
-| tools | — | the four tools named in the next paragraph |
+| tools | — | the seven tools named in the next paragraph |
 
 Rules that keep the two doors honest:
 
@@ -85,8 +85,16 @@ Rules that keep the two doors honest:
   `AGENT_MCP_MAX_READ_BYTES` (1 MiB by default) and never above the file
   policy or the 64 MiB ceiling. A model-facing budget that was the HTTP
   door's would make one tool call cost 50 MiB of prompt.
+* **A tool is not a wider door.** The MCP door has tools the HTTP API does
+  not expose as routes — `write_file`, `patch`, `search_files` — and that is
+  not a new capability: the HTTP door's own `bash` door already allows
+  everything they do, and each of them is a **narrower** path than the
+  shell it stands in for. Inside the workspace, bounded, counted, and
+  refused with a reason. The write path is the one that matters: a model
+  that writes through `bash` leaves the file door's own accounting empty,
+  and the fence it walks past is the fence these tools enforce.
 
-The MCP door exposes four tools: `bash`, `read_file`, `file_info`, `delete_file`.
+The MCP door exposes seven tools: `bash`, `read_file`, `file_info`, `delete_file`, `write_file`, `patch`, `search_files`.
 
 ## Component responsibilities
 
@@ -239,7 +247,7 @@ agent_config.py       # Environment parsing: stdout, binary, history limits
 agent_core.py         # Pure functions: safe_id, tmux_name, path checks
 body_limit.py         # Pure-ASGI body-size limiter, shared by both services
 json_logging.py       # JSON log formatting for the app and uvicorn
-mcp_server.py         # MCP server: the four tools, refusals, protocol
+mcp_server.py         # MCP server: the seven tools, refusals, protocol
 metrics.py            # Prometheus metrics
 openapi_proxy.py      # FastAPI app — OpenAPI surface, relay, WS, /mcp relay
 proxy_core.py         # Pure constants: command prefixes, timeouts, WS tunables
@@ -280,6 +288,8 @@ under a path (`/home/agent/.cache/pip`), never over the code.
 | text returned by one command | `AGENT_STDOUT_LIMIT`, 512 KB | agent |
 | size of a file served by `/files` | `AGENT_BINARY_LIMIT`, 2 MiB (`0` = unlimited) | agent |
 | size of a file read by the MCP `read_file` tool | the smallest of `AGENT_MCP_MAX_READ_BYTES` (1 MiB), `AGENT_BINARY_LIMIT` and 64 MiB | agent |
+| size of a file the MCP `write_file` tool writes | the smallest of `AGENT_MCP_MAX_WRITE_BYTES` (1 MiB), `AGENT_BINARY_LIMIT` and 2 MiB (the transport's own ceiling) | agent |
+| matches one MCP `search_files` call returns | `AGENT_MCP_MAX_SEARCH_RESULTS` (100), and the walk stops after 30 s | agent |
 | one command's runtime | `AGENT_EXEC_TIMEOUT`, 60 s default (5..3600); the agent's own request default is 30 s and its hard cap 3600 s | the proxy asks, the agent runs |
 | the MCP relay's patience | 3660 s — longer than the agent's own 3600 s cap | proxy |
 

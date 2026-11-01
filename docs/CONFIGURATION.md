@@ -17,6 +17,8 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_BINARY_LIMIT`   | `2048k`                                   | How large a file `/files` will serve. `0` = unlimited.         |
 | `AGENT_UPLOAD_MAX_BYTES` | `64m`                                   | The **transport** ceiling of the upload door (`POST /files`): how many bytes are read before the request is refused. `0` = unlimited. It is not the file policy — that is `AGENT_BINARY_LIMIT` — and it has to be **at least** as large, or the transport refuses an upload the door itself would have accepted. Every other door keeps the 2 MB body guard. |
 | `AGENT_MCP_MAX_READ_BYTES` | `1m`                                  | How many bytes one MCP `read_file` may put into a model's context. `0` = no budget of its own. 0..64m. A file over the budget is refused, and the refusal names the file's size and the limit. The HTTP `/files` door keeps `AGENT_BINARY_LIMIT` — there the bytes land in a file, not in a prompt. |
+| `AGENT_MCP_MAX_WRITE_BYTES` | `1m`                                 | How many bytes one MCP `write_file` (or one `patch`) may put on disk. 64k..2m. The ceiling is the transport's own: the bytes travel in the request, and the request body is capped at 2 MiB — a budget above that would be a budget the transport silently clamps. A write over the budget is refused, and nothing is written. The file policy (`AGENT_BINARY_LIMIT`) applies here too: a file the model writes is a file the door may serve. |
+| `AGENT_MCP_MAX_SEARCH_RESULTS` | `100`                              | How many matches one MCP `search_files` call returns. 1..1000. A search may return **fewer** — the walk also stops after 30 seconds — and the answer says so when it stops early. |
 | `AGENT_ALLOW_SUDO`     | `0`                                       | Build the image with `sudo`, so a command can become root. **Private, secured deployments only.** |
 | `AGENT_NO_NEW_PRIVILEGES` | `true`                                  | The container's `no-new-privileges` flag. `false` is required by the privilege mode. |
 | `AGENT_CAP_DROP`       | `ALL`                                     | Capabilities dropped from the container. `SYS_ADMIN` in the privilege mode. |
@@ -518,6 +520,10 @@ having.
 | `sandbox_agent_exec_refused_total`    | agent   | commands refused before they were typed, because they would stick the shell |
 | `sandbox_agent_exec_stuck_resets_total` | agent | shells freed after they waited for the rest of an unfinished command |
 | `sandbox_agent_active_sessions`       | agent   | sessions held right now             |
+| `sandbox_agent_file_writes_total`      | agent   | files written through the file tools |
+| `sandbox_agent_file_patches_total`     | agent   | patches applied through the file tools |
+| `sandbox_agent_file_searches_total`    | agent   | searches run through the file tools  |
+| `sandbox_agent_file_ops_refused_total` | agent   | file operations refused before they touched the filesystem |
 
 The counters live in the process, so they reset when the container
 restarts — that is what a counter is for. The rates Prometheus computes

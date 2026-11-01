@@ -41,9 +41,9 @@ mutate agent_api.py \
   "the symlink refusal names the reason"
 
 echo "== the read loses its ceiling =="
-mutate mcp_server.py \
-  'def _read_limit() -> int:' \
-  'def _read_limit() -> int:
+mutate agent_config.py \
+  'def model_read_limit() -> int:' \
+  'def model_read_limit() -> int:
     return 0' \
   'tests/test_review_v2120.py' \
   "the read ceiling is gone"

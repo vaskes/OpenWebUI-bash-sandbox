@@ -4,10 +4,18 @@ This is the contract for whoever drives the sandbox over the Model
 Context Protocol: a telegram harness, an Open WebUI instance, a
 llama.cpp-style caller, anything that speaks MCP.
 
-The point of the document is that **the MCP door grants exactly what
-the HTTP door grants**. The tools are the same capabilities, the
-containment is the same containment, and the bearer token is the same
-gate. Nothing is reachable over MCP that is not reachable over HTTP.
+The point of the document is that **the MCP door grants nothing the
+HTTP door does not**. The containment is the same containment, and the
+bearer token is the same gate. Nothing is reachable over MCP that is not
+reachable over HTTP.
+
+Three of the tools — `write_file`, `patch`, `search_files` — have no
+HTTP twin, and that is deliberate. The HTTP door's own `bash` door
+already allows everything they do; what these three add is a **narrower
+path** than the shell: inside the workspace, bounded, counted, and
+refused with a reason. A model that writes through `bash` leaves the
+file door's own accounting empty, and the fence it walks past is the
+fence these tools enforce.
 
 ---
 
@@ -116,8 +124,10 @@ it look like a truncated result of the new command. The output of a
 command that *did* run is cut at the command's own begin marker, so a
 foreign session's output never reaches it.
 
-**There is no write tool.** The shell is the write path: a command that
-writes a file is the way to write one.
+**The shell is still the shell.** `write_file`, `patch` and
+`search_files` are the *checked* paths; `bash` can do all of it too, and
+nothing stops it. What the tools add is the fence and the accounting,
+not a restriction.
 
 ### `read_file`
 
@@ -167,6 +177,100 @@ policy. Use it before `read_file` when the size is the question.
 Removes a file from the workspace. The workspace is a scratchpad, not
 storage: once a file has been read out, the caller can remove it.
 
+### `write_file`
+
+Writes a text file into the workspace.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `path` | string, **required** | the file, relative to the workspace or absolute inside it |
+| `content` | string, **required** | the text to write |
+
+Returns `name`, `path` and `size`.
+
+**The write is atomic.** The bytes land in a temporary file in the
+target's own directory and are moved onto the target with `os.replace`:
+a reader never sees a half-written file under the target's name.
+
+**The write replaces the file that is there.** This is the model's
+scratchpad, not storage — and the model could delete the file with the
+shell anyway. The *delivery* door (`POST /files`) keeps its
+no-overwrite rule, because there the caller is handing a file in and
+delivery does not remove.
+
+**The parent directory is made if it is missing.** Otherwise the first
+write of every task needs a shell command first — and the workaround is
+the unfenced path.
+
+**The write is bounded** by `AGENT_MCP_MAX_WRITE_BYTES` (1 MiB by
+default; the ceiling is the transport's own 2 MiB body limit, because
+the bytes travel in the request). A write over the budget is refused and
+nothing is written — not even the directories.
+
+**The path is checked before the bytes land.** A path outside the
+workspace is refused, and so is a symlink that points out of it — as
+the name itself and as a directory on the way. The write is made
+relative to a descriptor of the target's directory, every component
+opened with `O_NOFOLLOW`, so a directory that is swapped for a symlink
+between the check and the write is refused too.
+
+### `patch`
+
+Applies a unified diff to a file in the workspace.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `path` | string, **required** | the file to patch, inside the workspace |
+| `diff` | string, **required** | a unified diff — the format `diff -u` and `git diff` produce |
+
+Returns `name`, `path`, `size` and `applied`.
+
+**The diff is applied here, not by a shell.** The new text is built in
+memory and written once, at the end — and only if every hunk matched.
+**A patch that does not apply cleanly is refused and changes nothing at
+all.** That is the property the tool is worth.
+
+**The diff must be about one file.** The `path` argument says which
+one; a diff that carries a second file's header is refused.
+
+**The hunk headers have to match their bodies.** A diff whose counts do
+not line up — truncated, or written by hand — is refused with the
+counts it found.
+
+**A file that is not text cannot be patched.** The diff applies to
+text, and a binary file is refused.
+
+### `search_files`
+
+Finds files in the workspace, or lines inside them.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `pattern` | string, **required** | literal text (content) or a glob (name) |
+| `path` | string | where to look; the workspace root by default |
+| `kind` | string | `content` (the default) or `name` |
+| `max_results` | integer | fewer matches than the budget — never more |
+
+Returns `matches` (each with `path`, `line` and `text`), `files_scanned`,
+`files_skipped`, `truncated`, `reason` and `limit`. The text of the
+answer is one line per match: `path:line: text`.
+
+**The pattern is literal text, not a regular expression.** A regular
+expression can cost time proportional to the square of its input, and
+the workspace is attacker-controlled. Use `bash` with `rg` for a regular
+expression — that path is not fenced, and it is not counted either.
+
+**The search never leaves the workspace.** The root it walks is
+resolved and checked against the perimeter first, so a path outside it
+is refused with a reason; a symlink is not followed at all, so a link
+that points out is never read.
+
+**The answer is bounded** by `AGENT_MCP_MAX_SEARCH_RESULTS` (100 by
+default) and by a time budget of 30 seconds. A search that stops early
+says so — `truncated` is true and `reason` says why. A file bigger than
+the read budget is skipped rather than read, and counted in
+`files_skipped`.
+
 ---
 
 ## What a refusal looks like
@@ -194,6 +298,14 @@ The refusals that can come back:
 | `the file is N bytes, which is over the limit of M bytes` | the read limit — the budget, the file policy or the ceiling, whichever is the smallest |
 | `the file grew past the limit of M bytes while it was being read` | the file grew between the size check and the read |
 | `the file was replaced while it was being opened: …` | the path became a symlink after the containment check |
+| `the content is N bytes, over the write limit of M bytes` | the write budget |
+| `the patch does not apply: …` | a hunk did not match, or the diff was malformed — and **nothing was changed** |
+| `the file is not text — a patch applies to text` | a patch on a binary file |
+| `the diff covers more than one file — …` | a diff with a second file in it |
+| `the diff has no hunks — there is nothing to apply` | a diff with no hunk in it |
+| `path outside the workspace: …` | a search or a write that named a path outside the perimeter |
+| `unknown kind: …` | a search that asked for something other than `content` or `name` |
+| `the pattern is empty` | a search with no pattern |
 
 ---
 
@@ -243,8 +355,17 @@ The refusals that can come back:
 | `read_file` | `GET /files?path=P` |
 | `file_info` | `GET /files/meta?path=P` |
 | `delete_file` | `DELETE /files?path=P` |
+| `write_file` | no twin — the shell is the equivalent, and narrower |
+| `patch` | no twin — the shell is the equivalent, and narrower |
+| `search_files` | no twin — the shell is the equivalent, and narrower |
 
 Both doors call the same functions in the same process, so the code
 cannot drift apart — and the tests check that it does not. The budgets
 are the one thing that differs on purpose; `read_file` above says how
 and why.
+
+The three tools without a twin are there because the model holds the
+MCP surface, not the HTTP one: a model that writes through `bash` leaves
+the file door's accounting empty. They are **narrower** than the shell
+they stand in for — inside the workspace, bounded, counted — so the
+MCP door is not a wider door than the HTTP one.

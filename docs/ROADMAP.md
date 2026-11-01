@@ -103,12 +103,13 @@ image    bash tmux jq ripgrep fd-find tree htop, numpy/matplotlib/pandas/
 ## The gaps, ordered by how much they cost us
 
 **1. The agent cannot write or search files through the tools it was given.**
-The HTTP side has `POST /files` and `DELETE /files`, but the MCP surface — the
-part the model actually holds — offers no write and no search. The model
-therefore writes files through `bash` (`cat > …`), which is exactly the path
-that bypasses the file fence: the audit trail of the file tools is empty while
-the model is busy writing. This is the cheapest gap to close and the most
-embarrassing one to have.
+— **shipped in v2.22.0**; see *Shipped* below. The gap was this: the HTTP side
+has `POST /files` and `DELETE /files`, but the MCP surface — the part the model
+actually holds — offered no write and no search. The model therefore wrote
+files through `bash` (`cat > …`), which is exactly the path that bypasses the
+file fence: the audit trail of the file tools was empty while the model was
+busy writing. This was the cheapest gap to close and the most embarrassing one
+to have.
 
 **2. The executor and the agent are the same container.** Our `exec` runs in
 tmux inside the agent's own container. Whatever the model wrote into the
@@ -161,6 +162,28 @@ of scope: it needs a desktop to control, and we do not have one.
 the agent drives them through `bash`; `process_manage` would make that
 first-class and auditable.
 
+## Shipped
+
+A wave that landed, with the release that shipped it and the mutation that
+proves its fence is red.
+
+### Wave A — the agent writes and searches through the fence — v2.22.0
+
+The MCP surface grew three tools: `write_file`, `patch` and `search_files`.
+They are inside the workspace, bounded, counted, and refused with a reason —
+and each one is a **narrower** path than the shell it stands in for.
+
+*Red:* `tools/mutation-check-v2220.sh` breaks every fence above on purpose
+and expects the named test to go red.
+
+**The first version of this plan was wrong about what already existed**, and
+the correction is worth more than the wave: it said "the HTTP side of all three
+already exists and is already tested". Measuring the routes instead of reading
+the document showed that the HTTP door has `POST /files` — a write, with a
+*different* policy, since delivery never overwrites — and neither a patch nor
+a search. So wave A was not a thin layer over code we own: the **fence** was
+code we own, and the three operations on top of it were written for this wave.
+
 ## The waves
 
 Each wave is one release: one purpose, one green commit, mutation-verified,
@@ -181,10 +204,14 @@ New MCP tools, implemented here:
   *Red:* the search cannot reach outside the workspace; a search over a
   forbidden path returns nothing and says why.
 
-Why first: the HTTP side of all three already exists and is already tested,
-so this is a thin, well-fenced layer over code we own — and it closes the
-"the model writes through bash" hole, which is the one that makes our own
-audit trail incomplete.
+Why first: the *fence* is code we own — the file door's own containment
+checks, its own limits, its own atomic write — so the three operations land on
+a perimeter that is already measured. And it closes the "the model writes
+through bash" hole, which is the one that makes our own audit trail
+incomplete.
+
+**Shipped in v2.22.0** — see *Shipped* above. The claim this section used to
+make about the HTTP side was false; the correction is recorded there.
 
 ### Wave B — the executor gets its own container
 

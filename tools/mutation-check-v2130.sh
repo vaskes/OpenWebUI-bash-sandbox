@@ -18,7 +18,7 @@ PASS=0
 FAIL=0
 
 echo "== the read budget stops counting =="
-mutate mcp_server.py \
+mutate agent_config.py \
     'budget = MCP_READ_LIMIT_BYTES' \
     'budget = 0' \
     'tests/test_mcp_read_limit_v2130.py::TestTheChain::test_the_budget_wins_when_the_policy_is_larger' \
@@ -48,7 +48,7 @@ mutate mcp_server.py \
 echo "== file_info reports a limit that is not enforced =="
 mutate mcp_server.py \
     'limit=_read_limit(),' \
-    'limit=_binary_limit(),' \
+    'limit=0,' \
     'tests/test_mcp_read_limit_v2130.py::TestTheBudgetInTheWire::test_file_info_reports_the_limit_that_applies' \
     "file_info reports the limit that applies"
 

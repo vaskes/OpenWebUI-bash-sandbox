@@ -10,7 +10,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 1094](https://img.shields.io/badge/tests-1094_total-brightgreen)](tests/)
+[![Tests: 1131](https://img.shields.io/badge/tests-1131_total-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -58,8 +58,9 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 
 - ✅ **One `bash` tool** — runs any shell command in a persistent sandbox
 - ✅ **MCP endpoint** — the same sandbox over the Model Context Protocol
-  (`POST /mcp`): `bash`, `read_file`, `file_info`, `delete_file`, for any
-  client that is not Open WebUI
+  (`POST /mcp`): `bash`, `read_file`, `file_info`, `delete_file`,
+  `write_file`, `patch`, `search_files`, for any client that is not
+  Open WebUI
 - ✅ **Persistent state** — cwd, env vars, history survive across LLM calls
 - ✅ **Auto-wire** — `TOOL_SERVER_CONNECTIONS` env var pre-loads the tool
 - ✅ **Zero patches** — uses Open WebUI's built-in External Tool Servers
@@ -73,7 +74,7 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 - ✅ **Multi-stage Dockerfiles** — small images
 - ✅ **Python packages out of the box** — pip in the image, a wheelhouse
   for instant offline installs, and the usual suspects preinstalled
-- ✅ **1094 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **1131 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -163,7 +164,7 @@ Short version:
         │  sandbox-agent   :8082       internal only, bearer token   │
         │  HTTP door:  /sessions · /files · /metrics · /healthz     │
         │  MCP door:   POST /mcp → bash · read_file · file_info ·   │
-        │                                    delete_file             │
+        │              delete_file · write_file · patch · search_files│
         └────────────────────────────┬───────────────────────────────┘
                                      ▼
                  tmux session `agent_<id>`  ·  /workspace files
@@ -317,22 +318,26 @@ curl -sS -H "Authorization: Bearer $OPENAPI_PROXY_TOKEN" \
      http://127.0.0.1:8099/mcp
 ```
 
-Four tools, one per capability — the same ones the HTTP API exposes:
+Seven tools — the capabilities the HTTP API exposes, and the three
+checked paths through the file fence:
 
-| Tool          | What it does                                              |
-|---------------|-----------------------------------------------------------|
-| `bash`        | run a command, get stdout, the exit code and the timing   |
-| `read_file`   | take a file out of the workspace (text as text, binary as a base64 blob) |
-| `file_info`   | name, size, mime and mtime — without reading the file      |
-| `delete_file` | remove a file from the workspace                           |
+| Tool            | What it does                                              |
+|-----------------|-----------------------------------------------------------|
+| `bash`          | run a command, get stdout, the exit code and the timing   |
+| `read_file`     | take a file out of the workspace (text as text, binary as a base64 blob) |
+| `file_info`     | name, size, mime and mtime — without reading the file      |
+| `delete_file`   | remove a file from the workspace                           |
+| `write_file`    | write a text file into the workspace — atomically          |
+| `patch`         | apply a unified diff to a file; a diff that does not apply changes nothing |
+| `search_files`  | find files by name, or lines by content                    |
 
 The full contract — the tool schemas, the error shapes, what the
 session handling means — is in
 [docs/HANDOFF-mcp.md](docs/HANDOFF-mcp.md). The short version: the
-MCP door grants exactly what the HTTP door grants, and the token is
+MCP door grants nothing the HTTP door does not, and the token is
 the same gate.
 
-Four things about the MCP door differ from the HTTP door, and all four
+Five things about the MCP door differ from the HTTP door, and all five
 are worth knowing before a caller is written:
 
 - **The shell is persistent and shared.** A `bash` call runs in a tmux
@@ -360,6 +365,12 @@ are worth knowing before a caller is written:
   `stdout` and a `stderr` that says the command did not start because
   the session is busy. The pane still holds the command that is running
   and is never handed over as if it were the new command's output.
+- **`write_file`, `patch` and `search_files` are the checked paths.**
+  The shell can do all of it — but a write through `bash` leaves the
+  file door's own accounting empty. These three are inside the
+  workspace, bounded (`AGENT_MCP_MAX_WRITE_BYTES`,
+  `AGENT_MCP_MAX_SEARCH_RESULTS`), counted, and refused with a reason.
+  A `patch` that does not apply cleanly changes nothing at all.
 
 ## Monitoring
 
@@ -375,6 +386,10 @@ required, like every other endpoint):
 | `sandbox_agent_exec_total`            | agent   | commands executed                     |
 | `sandbox_agent_exec_timeouts_total`   | agent   | commands that ran out of time         |
 | `sandbox_agent_active_sessions`       | agent   | sessions held right now               |
+| `sandbox_agent_file_writes_total`      | agent   | files written through the file tools  |
+| `sandbox_agent_file_patches_total`     | agent   | patches applied through the file tools|
+| `sandbox_agent_file_searches_total`    | agent   | searches run through the file tools   |
+| `sandbox_agent_file_ops_refused_total` | agent   | file operations refused               |
 
 A ready-made stack — Prometheus, Grafana and cAdvisor — is in
 `docker-compose.monitoring.yml`. It is a **separate** compose project,
