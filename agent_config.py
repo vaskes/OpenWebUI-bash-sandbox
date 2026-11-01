@@ -24,6 +24,19 @@ again:
   binary limit at 50 MiB on purpose, and that limit must not become the
   price of one tool call.
 
+And two more came with the file tools, on the axes those tools travel on:
+
+* ``AGENT_MCP_MAX_WRITE_BYTES`` — how many bytes one MCP ``write_file``
+  (or one ``patch``) may put on disk. The bytes here travel the other way
+  round: they are in the request, and the request body is capped by the
+  transport. So the ceiling is the transport's number, and the budget
+  defaults to the same size as the read budget — a file the model cannot
+  read back is a file it should not have written.
+* ``AGENT_MCP_MAX_SEARCH_RESULTS`` — how many matches one search
+  returns. A count, not a size: the walk is bounded by the machine and by
+  a time budget, and the count is what keeps one call's answer from
+  becoming the whole workspace.
+
 The stdout budget is only meaningful if the tmux pane can actually hold it.
 A pane that is smaller than the budget loses the *beginning* of the output
 silently — no truncation marker, no error — so the scrollback depth is
@@ -43,10 +56,20 @@ __all__ = [
     "MCP_READ_CEILING_BYTES",
     "MCP_READ_LIMIT_BYTES",
     "MCP_READ_LIMIT_DEFAULT_BYTES",
+    "MCP_SEARCH_CEILING_RESULTS",
+    "MCP_SEARCH_DEFAULT_RESULTS",
+    "MCP_SEARCH_MAX_RESULTS",
+    "MCP_SEARCH_TIME_BUDGET_SECONDS",
+    "MCP_WRITE_CEILING_BYTES",
+    "MCP_WRITE_LIMIT_BYTES",
+    "MCP_WRITE_LIMIT_DEFAULT_BYTES",
     "PANE_HEIGHT",
     "PANE_WIDTH",
     "PREINSTALLED_PYTHON_PATH",
     "STDOUT_LIMIT_BYTES",
+    "model_read_limit",
+    "model_write_limit",
+    "parse_count",
     "parse_size",
 ]
 
@@ -137,6 +160,34 @@ def parse_size(
     return value
 
 
+def parse_count(
+    raw: str,
+    *,
+    name: str,
+    minimum: int,
+    maximum: int,
+) -> int:
+    """Parse a plain integer knob, and check it against its range.
+
+    Not every budget is a size — a count of matches is a number, and a
+    number with a suffix in it is a typo. The rule is the same as for
+    every other knob here: a value outside the documented range is a
+    **startup failure**, not a clamp, because a silently clamped limit
+    is indistinguishable from a limit that was never applied.
+    """
+    text = str(raw).strip()
+    if not text:
+        raise ValueError(f"{name} is empty")
+    if not text.isdigit():
+        raise ValueError(f"{name}={raw!r} is not a whole number")
+    value = int(text)
+    if value < minimum:
+        raise ValueError(f"{name}={raw!r} is {value}, below the minimum of {minimum}")
+    if value > maximum:
+        raise ValueError(f"{name}={raw!r} is {value}, above the maximum of {maximum}")
+    return value
+
+
 #: The stdout budget is bounded on purpose. 32k is enough for a command that
 #: prints a result; 1024k is the ceiling, and going above it buys nothing
 #: because the client truncates far earlier anyway.
@@ -214,6 +265,60 @@ MCP_READ_LIMIT_BYTES = parse_size(
     maximum=MCP_READ_CEILING_BYTES,
 )
 
+#: The hard ceiling for one MCP write, independent of any configured limit.
+#:
+#: A write travels the other way round from a read: the bytes are in the
+#: request, and the request body is capped by the transport
+#: (``MAX_BODY_BYTES``, 2 MiB). So the ceiling here is not a policy the
+#: operator sets — it is the largest write the door can physically
+#: carry, and a budget above it would be a budget the transport
+#: silently clamps. That is why the ceiling is the transport's number
+#: and not a round one of our own.
+MCP_WRITE_CEILING_BYTES = 2 * _MIB
+
+#: The default model-facing write budget: one mebibyte. A file the model
+#: writes is a file it is going to read back, so the write budget and
+#: the read budget are the same size on purpose: a file the model
+#: cannot read back is a file it should not have written.
+MCP_WRITE_LIMIT_DEFAULT_BYTES = 1 * _MIB
+
+#: The model-facing write budget. Unlike the read budget this one has no
+#: "0 means unlimited" convention: the transport makes an unlimited
+#: write impossible, and a knob that offers a value the door cannot
+#: deliver is a knob that lies. The range ends at the transport
+#: ceiling, because a value above it would be silently clamped.
+MCP_WRITE_LIMIT_BYTES = parse_size(
+    os.environ.get("AGENT_MCP_MAX_WRITE_BYTES", str(MCP_WRITE_LIMIT_DEFAULT_BYTES)),
+    name="AGENT_MCP_MAX_WRITE_BYTES",
+    minimum=64 * _KIB,
+    maximum=MCP_WRITE_CEILING_BYTES,
+)
+
+#: How many matches one search may return. The ceiling is what the tool
+#: promises at most; the budget is what it returns by default.
+MCP_SEARCH_CEILING_RESULTS = 1000
+MCP_SEARCH_DEFAULT_RESULTS = 100
+
+#: The model-facing search budget: how many matches one search returns
+#: unless the caller asks for fewer. It is a count and not a size, so it
+#: is parsed as one — with the same rule as every other knob: a value
+#: outside the range is a startup failure, not a clamp.
+MCP_SEARCH_MAX_RESULTS = parse_count(
+    os.environ.get("AGENT_MCP_MAX_SEARCH_RESULTS", str(MCP_SEARCH_DEFAULT_RESULTS)),
+    name="AGENT_MCP_MAX_SEARCH_RESULTS",
+    minimum=1,
+    maximum=MCP_SEARCH_CEILING_RESULTS,
+)
+
+#: How long one search may walk the workspace, in seconds.
+#:
+#: A constant and not a knob: the walk is bounded by the machine, not
+#: by a policy the operator has an opinion about. A search that runs
+#: out of time says so — it returns what it found and names the
+#: reason, because a truncated answer that does not say it is
+#: truncated is a lie the model will act on.
+MCP_SEARCH_TIME_BUDGET_SECONDS = 30
+
 #: The hosts the MCP endpoint answers for.
 #:
 #: An empty list means "no check": the protection against DNS rebinding
@@ -231,6 +336,63 @@ MCP_ALLOWED_HOSTS: tuple[str, ...] = tuple(
     for item in os.environ.get("AGENT_MCP_ALLOWED_HOSTS", "").split(",")
     if item.strip()
 )
+
+
+def model_read_limit() -> int:
+    """How many bytes one MCP read may return.
+
+    Three limits, and the smallest one wins:
+
+    * the model-facing budget (``AGENT_MCP_MAX_READ_BYTES``) — how much
+      one call may put into a model's context;
+    * the file policy the HTTP door applies (``AGENT_BINARY_LIMIT``) — a
+      limit of 0 means "no limit" and does not apply here;
+    * the hard ceiling (:data:`MCP_READ_CEILING_BYTES`) — the guard that
+      stays when the policy is 0.
+
+    The budget is the reason this function exists. The binary limit is
+    about a file that travels to a client, where the bytes land in a
+    file; the deployment runs it at 50 MiB on purpose. Here the bytes
+    land in a prompt: the file is held in memory and base64-encoded on
+    the way out, and a megabyte of text is already more than a text
+    model can use. The HTTP door keeps its own limit — untouched.
+
+    It lives here, and not in the MCP module, because more than one
+    tool needs it: the search reads files too, and a search that reads
+    a file the read door would refuse is a hole in the read door.
+    """
+    limit = MCP_READ_CEILING_BYTES
+    policy = BINARY_LIMIT_BYTES
+    if policy:
+        limit = min(limit, policy)
+    budget = MCP_READ_LIMIT_BYTES
+    if budget:
+        limit = min(limit, budget)
+    return limit
+
+
+def model_write_limit() -> int:
+    """How many bytes one MCP write may put on disk.
+
+    The same three limits as the read, on the write's own axis: the
+    model-facing budget (``AGENT_MCP_MAX_WRITE_BYTES``), the file policy
+    the HTTP door applies (``AGENT_BINARY_LIMIT``) and the transport
+    ceiling (:data:`MCP_WRITE_CEILING_BYTES`).
+
+    The file policy is in the list for the same reason it is in the
+    read's: a file the model writes is a file the door may serve, and a
+    file the door may not serve is a file the model should not have
+    written.
+    """
+    limit = MCP_WRITE_CEILING_BYTES
+    policy = BINARY_LIMIT_BYTES
+    if policy:
+        limit = min(limit, policy)
+    budget = MCP_WRITE_LIMIT_BYTES
+    if budget:
+        limit = min(limit, budget)
+    return limit
+
 
 #: Scrollback the pane must hold for the stdout budget to be deliverable.
 #: One line of a 200-column pane is 200 bytes, so this is the budget

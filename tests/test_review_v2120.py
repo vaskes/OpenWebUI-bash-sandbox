@@ -75,48 +75,48 @@ class TestAReadCannotCostTheMachineTooMuch(unittest.TestCase):
     """
 
     def test_the_ceiling_exists(self) -> None:
-        import mcp_server  # noqa: PLC0415
+        import agent_config  # noqa: PLC0415
 
-        self.assertGreater(mcp_server.MCP_READ_CEILING_BYTES, 0)
+        self.assertGreater(agent_config.MCP_READ_CEILING_BYTES, 0)
 
     def test_the_configured_limit_wins_when_it_is_smaller(self) -> None:
-        import mcp_server  # noqa: PLC0415
+        import agent_config  # noqa: PLC0415
 
-        original = mcp_server._binary_limit
-        mcp_server._binary_limit = lambda: 1024
+        original = agent_config.BINARY_LIMIT_BYTES
+        agent_config.BINARY_LIMIT_BYTES = 1024
         try:
-            self.assertEqual(mcp_server._read_limit(), 1024)
+            self.assertEqual(agent_config.model_read_limit(), 1024)
         finally:
-            mcp_server._binary_limit = original
+            agent_config.BINARY_LIMIT_BYTES = original
 
     def test_the_ceiling_wins_when_the_limit_is_unlimited(self) -> None:
         # "0 means no limit" is a legal configuration. A read that takes
         # the configuration at its word can ask the machine for
         # everything it has, so the ceiling decides instead.
-        import mcp_server  # noqa: PLC0415
+        import agent_config  # noqa: PLC0415
 
-        original_policy = mcp_server._binary_limit
-        original_budget = mcp_server.MCP_READ_LIMIT_BYTES
-        mcp_server._binary_limit = lambda: 0
-        mcp_server.MCP_READ_LIMIT_BYTES = 0
+        original_policy = agent_config.BINARY_LIMIT_BYTES
+        original_budget = agent_config.MCP_READ_LIMIT_BYTES
+        agent_config.BINARY_LIMIT_BYTES = 0
+        agent_config.MCP_READ_LIMIT_BYTES = 0
         try:
-            self.assertEqual(mcp_server._read_limit(), mcp_server.MCP_READ_CEILING_BYTES)
+            self.assertEqual(agent_config.model_read_limit(), agent_config.MCP_READ_CEILING_BYTES)
         finally:
-            mcp_server._binary_limit = original_policy
-            mcp_server.MCP_READ_LIMIT_BYTES = original_budget
+            agent_config.BINARY_LIMIT_BYTES = original_policy
+            agent_config.MCP_READ_LIMIT_BYTES = original_budget
 
     def test_the_ceiling_wins_when_the_limit_is_huge(self) -> None:
-        import mcp_server  # noqa: PLC0415
+        import agent_config  # noqa: PLC0415
 
-        original_policy = mcp_server._binary_limit
-        original_budget = mcp_server.MCP_READ_LIMIT_BYTES
-        mcp_server._binary_limit = lambda: mcp_server.MCP_READ_CEILING_BYTES * 100
-        mcp_server.MCP_READ_LIMIT_BYTES = 0
+        original_policy = agent_config.BINARY_LIMIT_BYTES
+        original_budget = agent_config.MCP_READ_LIMIT_BYTES
+        agent_config.BINARY_LIMIT_BYTES = agent_config.MCP_READ_CEILING_BYTES * 100
+        agent_config.MCP_READ_LIMIT_BYTES = 0
         try:
-            self.assertEqual(mcp_server._read_limit(), mcp_server.MCP_READ_CEILING_BYTES)
+            self.assertEqual(agent_config.model_read_limit(), agent_config.MCP_READ_CEILING_BYTES)
         finally:
-            mcp_server._binary_limit = original_policy
-            mcp_server.MCP_READ_LIMIT_BYTES = original_budget
+            agent_config.BINARY_LIMIT_BYTES = original_policy
+            agent_config.MCP_READ_LIMIT_BYTES = original_budget
 
     def test_the_read_is_bounded_by_the_limit(self) -> None:
         # The read must ask for one byte more than the limit allows:
@@ -162,7 +162,15 @@ class TestAFailingToolLeavesATrace(unittest.TestCase):
 
     def test_every_tool_logs_before_it_refuses(self) -> None:
         source = _source("mcp_server.py")
-        for tool in ("mcp.read_file", "mcp.file_info", "mcp.delete_file", "mcp.bash"):
+        for tool in (
+            "mcp.read_file",
+            "mcp.file_info",
+            "mcp.delete_file",
+            "mcp.bash",
+            "mcp.write_file",
+            "mcp.patch",
+            "mcp.search_files",
+        ):
             self.assertIn(f'logger.exception("{tool}', source)
 
     def test_every_except_handler_traces(self) -> None:

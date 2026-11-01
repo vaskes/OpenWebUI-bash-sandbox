@@ -481,6 +481,228 @@ def build_exec_block(command: str, begin_marker: str, ec_var: str, marker: str) 
 
 
 # ---------------------------------------------------------------------------
+# The unified diff
+# ---------------------------------------------------------------------------
+# The patch tool applies a diff **here**, in this process, and not by
+# handing it to a shell. Two reasons, and the second one is the rule
+# the whole repository is built on:
+#
+# * a shell that applies a diff is a shell that reads the file and
+#   writes the file — and the file is workspace content, which is
+#   attacker-controlled (v2.20.0). Handing workspace content to an
+#   interpreter is exactly what the inspector exists to catch;
+# * the answer has to be checkable. A diff that does not apply has to
+#   change **nothing**, and the only way to promise that is to build the
+#   new text in memory and write it once, at the end, if every hunk
+#   matched.
+#
+# The format is the unified diff — the one ``diff -u`` and ``git diff``
+# produce. The parser is strict about what it does not accept: a diff
+# that carries more than one file is refused, because the tool is given
+# one path and a diff that quietly means two files is a diff that
+# quietly patches the wrong one.
+
+
+class PatchError(ValueError):
+    """A diff that does not apply.
+
+    The message says why, in words a model can act on: a diff that
+    fails at line 12 and a diff that names two files are different
+    mistakes, and "the patch failed" does not tell the caller which one
+    it made.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+#: The header of a hunk: ``@@ -12,7 +12,9 @@ optional section heading``.
+#:
+#: The counts are optional: ``@@ -12 +12 @@`` means one line on each
+#: side, which is what every diff writes for a one-line hunk.
+_HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+#: The marker that says "the line before this one has no newline at its
+#: end". It is the only line in a unified diff that starts with a
+#: backslash, because every other line starts with a space, a plus or a
+#: minus.
+_NO_NEWLINE_MARKER = "\\"
+
+
+def _diff_line_content(line: str) -> str:
+    """The content of a source line, without its line ending.
+
+    Only the newline is stripped. A carriage return stays where it is:
+    a file with CRLF endings has them in the diff as well, so stripping
+    them on one side and not the other would make every line of such a
+    file look like a mismatch.
+    """
+    if line.endswith("\n"):
+        return line[:-1]
+    return line
+
+
+def _parse_unified_diff(diff: str) -> list[tuple[int, int, list[tuple[str, str, bool]]]]:
+    """Parse a unified diff into hunks.
+
+    Returns a list of ``(old_start, old_count, body)``, where *body* is
+    a list of ``(kind, content, no_newline)`` with *kind* one of
+    ``" "`` (context), ``"-"`` (removed) and ``"+"`` (added).
+
+    The body of a hunk is read by **count**, not by "until the next
+    ``@@``": a removed line whose text starts with ``--`` looks exactly
+    like a file header, and only the count tells the two apart.
+    """
+    lines = diff.splitlines()
+    hunks: list[tuple[int, int, list[tuple[str, str, bool]]]] = []
+    index = 0
+    seen_hunk = False
+
+    while index < len(lines):
+        line = lines[index]
+        header = _HUNK_HEADER.match(line)
+        if header is None:
+            if line.startswith("diff --git ") or line.startswith("--- "):
+                if seen_hunk:
+                    raise PatchError(
+                        "the diff covers more than one file — send the diff of one "
+                        "file, and name that file in the path argument"
+                    )
+            elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
+                raise PatchError("the diff is about a binary file — a patch applies to text")
+            index += 1
+            continue
+
+        old_start = int(header.group(1))
+        old_count = 1 if header.group(2) is None else int(header.group(2))
+        new_count = 1 if header.group(4) is None else int(header.group(4))
+        index += 1
+
+        body: list[tuple[str, str, bool]] = []
+        seen_old = 0
+        seen_new = 0
+        while True:
+            if seen_old >= old_count and seen_new >= new_count:
+                # The marker may still follow the last line of the hunk.
+                if index < len(lines) and lines[index].startswith(_NO_NEWLINE_MARKER):
+                    index += 1
+                    kind, content, _ = body[-1]
+                    body[-1] = (kind, content, True)
+                    continue
+                break
+            if index >= len(lines):
+                break
+            raw = lines[index]
+            index += 1
+            if raw.startswith(_NO_NEWLINE_MARKER):
+                if not body:
+                    raise PatchError("the diff has a stray '\\ No newline' marker")
+                kind, content, _ = body[-1]
+                body[-1] = (kind, content, True)
+                continue
+            if raw == "":
+                # Some tools strip the trailing space of an empty context
+                # line. An empty line is an empty context line.
+                kind, content = " ", ""
+            else:
+                kind, content = raw[0], raw[1:]
+                if kind not in (" ", "-", "+"):
+                    raise PatchError(
+                        "the diff has a line that is neither context, an addition nor "
+                        f"a removal: {raw!r}"
+                    )
+            if kind in (" ", "-"):
+                seen_old += 1
+            if kind in (" ", "+"):
+                seen_new += 1
+            body.append((kind, content, False))
+
+        if seen_old != old_count or seen_new != new_count:
+            raise PatchError(
+                f"the diff's hunk header says -{old_start},{old_count} +{old_start},"
+                f"{new_count}, but the hunk carries {seen_old} old line(s) and "
+                f"{seen_new} new one(s) — the diff is truncated, or its header was "
+                "written by hand and does not match its body"
+            )
+        hunks.append((old_start, old_count, body))
+        seen_hunk = True
+
+    return hunks
+
+
+def apply_unified_diff(original: str, diff: str) -> str:
+    """Apply a unified diff to *original* and return the new text.
+
+    Raises :class:`PatchError` when the diff does not apply — and then
+    nothing has been changed, because nothing is written until every
+    hunk has matched.
+
+    The rules:
+
+    * the diff must carry at least one hunk;
+    * the diff must be about one file — a second file's header is
+      refused;
+    * every context and removed line must match the file **exactly**;
+    * a hunk that does not apply is a refusal, not a partial patch.
+    """
+    hunks = _parse_unified_diff(diff)
+    if not hunks:
+        raise PatchError("the diff has no hunks — there is nothing to apply")
+
+    source = original.splitlines(keepends=True)
+    out: list[str] = []
+    cursor = 0
+
+    for old_start, old_count, body in hunks:
+        # A hunk that only adds lines names the line it adds *after*,
+        # with a count of zero; every other hunk names its first line.
+        index = old_start if old_count == 0 else old_start - 1
+        if index < cursor:
+            raise PatchError("the diff's hunks overlap each other")
+        if index > len(source):
+            raise PatchError(
+                f"the diff does not apply: the file has {len(source)} lines, "
+                f"and the hunk starts at line {old_start}"
+            )
+
+        old_side = [item for item in body if item[0] in (" ", "-")]
+        for offset, (_kind, expected, no_newline) in enumerate(old_side):
+            actual_index = index + offset
+            if actual_index >= len(source):
+                raise PatchError(
+                    f"the diff does not apply: the file has {len(source)} lines, "
+                    f"and the hunk wants line {actual_index + 1}"
+                )
+            actual_line = source[actual_index]
+            if _diff_line_content(actual_line) != expected:
+                raise PatchError(
+                    f"the diff does not apply at line {actual_index + 1}: the file "
+                    f"has {_diff_line_content(actual_line)!r}, the diff wants {expected!r}"
+                )
+            if no_newline and actual_line.endswith("\n"):
+                raise PatchError(
+                    f"the diff does not apply at line {actual_index + 1}: the diff "
+                    "says the line has no newline, and the file has one"
+                )
+
+        out.extend(source[cursor:index])
+        old_pos = 0
+        for kind, content, no_newline in body:
+            if kind == " ":
+                out.append(source[index + old_pos])
+                old_pos += 1
+            elif kind == "-":
+                old_pos += 1
+            else:
+                out.append(content if no_newline else content + "\n")
+        cursor = index + old_pos
+
+    out.extend(source[cursor:])
+    return "".join(out)
+
+
+# ---------------------------------------------------------------------------
 # Secret redaction for the command preview that goes into the log
 # ---------------------------------------------------------------------------
 

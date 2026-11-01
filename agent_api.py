@@ -66,11 +66,13 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import fnmatch
 import json
 import logging
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import tempfile
 import time
@@ -91,16 +93,23 @@ from agent_config import (
 from agent_config import (
     CAPTURE_DEPTH_LINES,
     HISTORY_LIMIT_LINES,
+    MCP_SEARCH_CEILING_RESULTS,
+    MCP_SEARCH_MAX_RESULTS,
+    MCP_SEARCH_TIME_BUDGET_SECONDS,
     PANE_HEIGHT,
     PANE_WIDTH,
     PREINSTALLED_PYTHON_PATH,
     STDOUT_LIMIT_BYTES,
     UPLOAD_MAX_BYTES,
+    model_read_limit,
+    model_write_limit,
 )
 from agent_core import (
     CONTINUATION_PROMPT,
     SESSION_ID_MAX_LEN,
+    PatchError,
     __version__,
+    apply_unified_diff,
     build_exec_block,
     command_would_stick,
     is_a_continuation_prompt,
@@ -265,6 +274,13 @@ METRICS.gauge(
     "active_sessions",
     "Sessions the agent currently holds.",
     lambda: float(len(SESSIONS)),
+)
+METRICS.counter("file_writes_total", "Files written through the file tools.")
+METRICS.counter("file_patches_total", "Patches applied through the file tools.")
+METRICS.counter("file_searches_total", "Searches run through the file tools.")
+METRICS.counter(
+    "file_ops_refused_total",
+    "File operations refused before they touched the filesystem.",
 )
 
 
@@ -2403,6 +2419,458 @@ async def upload_file(
                 pass
 
     return {"name": name, "path": target, "size": written}
+
+
+# ---------------------------------------------------------------------------
+# The file door, the other way round: write, patch, search
+# ---------------------------------------------------------------------------
+# The door above puts a file IN, and hands files OUT. What it could not
+# do was let the **model** put a file in: the MCP surface had no write,
+# no patch and no search, so the model wrote through ``bash``
+# (``cat > …``), which is the path that leaves no trace in the file
+# door's own accounting.
+#
+# These three operations close that gap. They are the same fence as the
+# rest of the door — inside the workspace, symlinks resolved, a size
+# limit — and they are narrower than the shell they replace: a path
+# outside the workspace is refused here and is a perfectly ordinary
+# ``cat`` there. That is the point. The shell stays the shell; these
+# are the paths that are checked.
+#
+# They are not HTTP routes. The MCP door is where the model holds the
+# tools, and a published route for each of them would be a second
+# surface to keep in step with the first.
+
+
+def _safe_write_target(candidate: str) -> str:
+    """Resolve a client-supplied path to a file that may be written.
+
+    The rule is the upload door's rule, in the same order and in the
+    same words: the name has to be a name, and the target has to be
+    inside the workspace — resolved first, so a symlink that points out
+    of the workspace is refused rather than followed.
+
+    The check is made **once**, on the resolved target, and that is the
+    check that decides. The target is where the bytes land, so a target
+    inside the workspace is a write inside the workspace — whatever the
+    path looked like on the way there. (A write through a symlink that
+    stays inside the workspace lands on the file the link points at,
+    which is the same rule the delivery door applies.)
+
+    The difference from the delivery door is the last check: an
+    existing file is not a refusal here. This is the model's own
+    scratchpad, and a write that cannot replace a file is a write that
+    can only ever be used once.
+    """
+    raw = str(candidate or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="path is required")
+    name = os.path.basename(raw)
+    if not name or name in (".", ".."):
+        raise HTTPException(status_code=400, detail=f"invalid file name: {candidate!r}")
+
+    parent = _anchor(os.path.dirname(raw) or ".", allow_root=True)
+    # The shared rule: resolve the path, and confirm the result is
+    # inside the workspace. The refusal names the path the caller
+    # asked for — a refusal that names something else is a refusal the
+    # model cannot act on.
+    target = _inside_workspace(os.path.join(parent, name))
+    if target == WORKSPACE_REAL or os.path.isdir(target):
+        raise HTTPException(status_code=400, detail=f"path is a directory, not a file: {candidate}")
+    return target
+
+
+def _make_parent_dir(resolved: str) -> None:
+    """Create the directories of a write target, inside the workspace.
+
+    A write to ``notes/report.md`` has to have a ``notes`` to land in.
+    The directories are made **here**, component by component, relative
+    to a descriptor of the workspace and with ``O_NOFOLLOW`` on every
+    component — so a component that is a symlink is not followed and is
+    not created either. A directory that points out of the workspace is
+    refused by the containment check before this is called.
+
+    Making the directory is the point: a write tool that needs a shell
+    command before every first write is a write tool the model will
+    work around, and the workaround is the unfenced path this wave
+    exists to close.
+    """
+    if resolved == WORKSPACE_REAL:
+        # The root exists; there is nothing to make.
+        return
+    if not resolved.startswith(WORKSPACE_PREFIX):
+        raise HTTPException(status_code=400, detail=f"path outside the workspace: {resolved}")
+    relative = resolved[len(WORKSPACE_PREFIX) :]
+    parts = [part for part in relative.split(os.sep) if part]
+
+    dir_fd = os.open(WORKSPACE_REAL, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in parts:
+            try:
+                next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, 0o755, dir_fd=dir_fd)
+                except FileExistsError:
+                    # Somebody else made it between the two calls.
+                    pass
+                try:
+                    next_fd = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd
+                    )
+                except OSError as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"the directory was replaced while it was being made: {resolved}. "
+                            "It — or one of its parents — is a symlink now; the sandbox "
+                            "refuses to follow one."
+                        ),
+                    ) from exc
+            os.close(dir_fd)
+            dir_fd = next_fd
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"cannot make the directory {resolved}: {exc}",
+        ) from exc
+    finally:
+        os.close(dir_fd)
+
+
+def _open_dir_inside_workspace(resolved: str) -> int:
+    """Open a directory inside the workspace without following a symlink.
+
+    The read door opens a file one component at a time, relative to a
+    descriptor of the workspace, every component with ``O_NOFOLLOW``
+    (see :func:`_open_inside_workspace`). The write door needs the
+    same thing for the **directory** the file goes into: a process
+    inside the sandbox can replace a directory of the path with a
+    symlink that points out between the check and the write, and a
+    write that follows it lands outside the workspace.
+    """
+    if resolved == WORKSPACE_REAL:
+        # The root itself: there is nothing to walk, and the root is
+        # where every write that does not name a directory lands.
+        return os.open(WORKSPACE_REAL, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    if not resolved.startswith(WORKSPACE_PREFIX):
+        raise HTTPException(status_code=400, detail=f"path outside the workspace: {resolved}")
+    relative = resolved[len(WORKSPACE_PREFIX) :]
+    parts = [part for part in relative.split(os.sep) if part]
+
+    dir_fd = os.open(WORKSPACE_REAL, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in parts:
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+            os.close(dir_fd)
+            dir_fd = next_fd
+    except OSError as exc:
+        os.close(dir_fd)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"the directory was replaced while it was being opened: {resolved}. "
+                "It — or one of its parents — is a symlink now; the sandbox "
+                "refuses to follow one."
+            ),
+        ) from exc
+    return dir_fd
+
+
+def _write_bytes_atomic(target: str, payload: bytes) -> None:
+    """Put *payload* on disk at *target*, atomically and without following links.
+
+    The bytes land in a temporary file **in the target's own directory**
+    and are moved onto the target with ``os.replace``: same filesystem,
+    same directory, so the move is atomic and a reader never sees a
+    half-written file under the target's name.
+
+    Both the temporary file and the move are made **relative to a
+    descriptor of that directory**, and every component of the
+    directory is opened with ``O_NOFOLLOW`` (see
+    :func:`_open_dir_inside_workspace`). The check that says "this
+    path is inside the workspace" holds at one moment in time; the
+    workspace is writable by the model, so a background process can
+    swap a directory in between. A check that holds only while nobody
+    is looking is not a check.
+
+    The temporary name is ours: nothing the caller sent goes into a
+    path, not even into the name of the file that is about to be
+    replaced.
+    """
+    parent = os.path.dirname(target)
+    name = os.path.basename(target)
+    tmp_name = f".agent-write.{os.getpid()}.{secrets.token_hex(6)}.tmp"
+
+    dir_fd = _open_dir_inside_workspace(parent)
+    try:
+        try:
+            fd = os.open(
+                tmp_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=dir_fd,
+            )
+        except OSError as exc:
+            if exc.errno == errno.ENOSPC:
+                raise HTTPException(
+                    status_code=507,
+                    detail=_workspace_is_full_detail(),
+                ) from exc
+            raise
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+        except BaseException:
+            os.unlink(tmp_name, dir_fd=dir_fd)
+            raise
+        os.replace(tmp_name, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            raise HTTPException(status_code=507, detail=_workspace_is_full_detail()) from exc
+        raise HTTPException(status_code=400, detail=f"cannot write {name}: {exc}") from exc
+    finally:
+        os.close(dir_fd)
+
+
+def write_workspace_file(path: str, content: str) -> dict[str, Any]:
+    """Write *content* to *path* inside the workspace.
+
+    The write is atomic (see :func:`_write_bytes_atomic`) and bounded
+    (see :func:`agent_config.model_write_limit`). An existing file is
+    replaced — this is the model's scratchpad, and the model could
+    delete the file with the shell anyway; the *delivery* door keeps
+    its no-overwrite rule, because there the caller is handing a file
+    in and delivery does not remove.
+    """
+    target = _safe_write_target(path)
+    payload = content.encode("utf-8")
+    limit = model_write_limit()
+    if len(payload) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"the content is {len(payload)} bytes, over the write limit of "
+                f"{limit} bytes — write it in pieces"
+            ),
+        )
+    # The directories are made last: a write that is refused for its
+    # size must not leave a directory behind.
+    _make_parent_dir(os.path.dirname(target))
+    _write_bytes_atomic(target, payload)
+    METRICS.inc("file_writes_total")
+    logger.info("file written: %s (%d bytes)", target, len(payload))
+    return {"name": os.path.basename(target), "path": target, "size": len(payload)}
+
+
+def patch_workspace_file(path: str, diff: str) -> dict[str, Any]:
+    """Apply a unified diff to a file inside the workspace.
+
+    The diff is applied **here**: the new text is built in memory and
+    written once, at the end, and only if every hunk matched. A patch
+    that does not apply cleanly changes nothing at all — that is the
+    property the tool is worth, and it is the reason the diff is not
+    handed to a shell.
+
+    The file is rewritten in one piece, so the file and the result both
+    have to fit in one write (see :func:`agent_config.model_write_limit`).
+    """
+    target = _safe_file(path)
+    limit = model_write_limit()
+
+    try:
+        with _open_for_download(target) as handle:
+            data = handle.read(limit + 1)
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"cannot read the file: {exc}") from exc
+    if len(data) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"the file is over the limit of {limit} bytes — a patch rewrites the "
+                "file in one piece, so the file has to fit in one write"
+            ),
+        )
+
+    try:
+        original = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="the file is not text — a patch applies to text",
+        ) from exc
+
+    try:
+        patched = apply_unified_diff(original, diff)
+    except PatchError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"the patch does not apply: {exc.reason}",
+        ) from exc
+
+    payload = patched.encode("utf-8")
+    if len(payload) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"the patched file would be {len(payload)} bytes, over the write "
+                f"limit of {limit} bytes"
+            ),
+        )
+    _write_bytes_atomic(target, payload)
+    METRICS.inc("file_patches_total")
+    logger.info("file patched: %s (%d bytes)", target, len(payload))
+    return {
+        "name": os.path.basename(target),
+        "path": target,
+        "size": len(payload),
+        "applied": True,
+    }
+
+
+def _search_line_limit() -> int:
+    """How many characters of a matching line the answer carries.
+
+    A line can be long — a minified file, a line of base64 — and the
+    answer is a prompt, not a file. The line is cut, and the cut is
+    visible in the answer (the ellipsis), because a line that looks
+    complete and is not is a lie the model will quote.
+    """
+    return 200
+
+
+def search_workspace(
+    pattern: str,
+    path: str = ".",
+    kind: str = "content",
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    """Find files by name, or lines by content, inside the workspace.
+
+    The search never leaves the workspace: the root it walks is resolved
+    and checked against the perimeter first, and a file that resolves
+    outside it is skipped rather than read. Symlinks are not followed
+    at all — a link is not a file, and a link that points out of the
+    workspace is exactly the case the fence is about.
+
+    Two bounds: the number of matches the answer carries, and the time
+    the walk may take. Both are reported when they bite — an answer
+    that stops early says so, because "here are the matches" and
+    "here are the matches I found before the clock ran out" are
+    different claims.
+    """
+    if kind not in ("content", "name"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown kind: {kind!r} — use 'content' or 'name'",
+        )
+    if not pattern:
+        raise HTTPException(status_code=400, detail="the pattern is empty")
+
+    root = _safe_parent(_anchor(path or ".", allow_root=True))
+    budget = MCP_SEARCH_MAX_RESULTS
+    cap = budget if max_results is None else max(1, min(int(max_results), budget))
+    cap = min(cap, MCP_SEARCH_CEILING_RESULTS)
+    per_file = model_read_limit()
+    deadline = time.monotonic() + MCP_SEARCH_TIME_BUDGET_SECONDS
+
+    matches: list[dict[str, Any]] = []
+    scanned = 0
+    skipped = 0
+    truncated = False
+    reason = ""
+
+    seen: set[str] = set()
+    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+        # ``followlinks=False`` is os.walk's own rule: a symlinked
+        # directory is listed but not descended into, so a link that
+        # points at an ancestor cannot make the walk loop.
+        for name in sorted(filenames):
+            if len(matches) >= cap:
+                truncated = True
+                reason = f"the search stopped at {cap} matches"
+                break
+            if time.monotonic() > deadline:
+                truncated = True
+                reason = f"the search stopped after {MCP_SEARCH_TIME_BUDGET_SECONDS} seconds"
+                break
+            full = os.path.join(dirpath, name)
+            # The file is resolved and checked against the perimeter —
+            # one check, and it is the decisive one. A file that points
+            # out of the workspace (a symlink, or a file that became one
+            # between the walk and the read) is skipped and counted,
+            # never read.
+            real = os.path.realpath(full)
+            if not real.startswith(WORKSPACE_PREFIX):
+                skipped += 1
+                continue
+            if real in seen:
+                # The same file, reached twice: once by its own name and
+                # once through a link. It is searched once.
+                continue
+            seen.add(real)
+            relative = os.path.relpath(real, WORKSPACE_REAL)
+            scanned += 1
+
+            if kind == "name":
+                if fnmatch.fnmatch(relative, pattern):
+                    matches.append({"path": relative, "line": 0, "text": ""})
+                continue
+
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                continue
+            if size > per_file:
+                # A file the read door would refuse is a file the search
+                # does not read: the budget that guards a prompt guards
+                # this read too.
+                skipped += 1
+                continue
+            try:
+                with open(full, "rb") as handle:
+                    data = handle.read(per_file + 1)
+            except OSError:
+                continue
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError:
+                skipped += 1
+                continue
+            for number, line in enumerate(text.splitlines(), start=1):
+                if pattern not in line:
+                    continue
+                cut = line[: _search_line_limit()]
+                matches.append(
+                    {
+                        "path": relative,
+                        "line": number,
+                        "text": cut + ("…" if len(line) > len(cut) else ""),
+                    }
+                )
+                if len(matches) >= cap:
+                    break
+        if truncated:
+            break
+
+    METRICS.inc("file_searches_total")
+    logger.info(
+        "search over %s: %d match(es), %d file(s) scanned, %d skipped",
+        root,
+        len(matches),
+        scanned,
+        skipped,
+    )
+    return {
+        "matches": matches,
+        "files_scanned": scanned,
+        "files_skipped": skipped,
+        "truncated": truncated,
+        "reason": reason,
+        "limit": cap,
+    }
 
 
 if __name__ == "__main__":

@@ -354,7 +354,15 @@ class TestTheToolsAreAdvertised(_Base):
 
         self.assertEqual(
             sorted(mcp_server.tool_names()),
-            ["bash", "delete_file", "file_info", "read_file"],
+            [
+                "bash",
+                "delete_file",
+                "file_info",
+                "patch",
+                "read_file",
+                "search_files",
+                "write_file",
+            ],
         )
 
     def test_the_tools_are_listed_over_the_wire(self) -> None:
@@ -367,7 +375,15 @@ class TestTheToolsAreAdvertised(_Base):
         tools = response.json()["result"]["tools"]
         self.assertEqual(
             sorted(tool["name"] for tool in tools),
-            ["bash", "delete_file", "file_info", "read_file"],
+            [
+                "bash",
+                "delete_file",
+                "file_info",
+                "patch",
+                "read_file",
+                "search_files",
+                "write_file",
+            ],
         )
         for tool in tools:
             self.assertTrue(tool.get("description"), f"{tool['name']} has no description")
@@ -514,7 +530,18 @@ class TestARealClientTalksToIt(unittest.TestCase):
                 async with self.Client(transport) as client:
                     tools = await client.list_tools()
                     names = sorted(t.name for t in tools.tools)
-                    self.assertEqual(names, ["bash", "delete_file", "file_info", "read_file"])
+                    self.assertEqual(
+                        names,
+                        [
+                            "bash",
+                            "delete_file",
+                            "file_info",
+                            "patch",
+                            "read_file",
+                            "search_files",
+                            "write_file",
+                        ],
+                    )
                     self.assertTrue(client.server_info)
                     self.assertTrue(client.server_info.name)
 

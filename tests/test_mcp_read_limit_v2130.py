@@ -128,17 +128,17 @@ class TestTheChain(unittest.TestCase):
     """Three limits, and the smallest one wins."""
 
     def _limit(self, policy: int, budget: int) -> int:
-        import mcp_server  # noqa: PLC0415
+        import agent_config  # noqa: PLC0415
 
-        original_policy = mcp_server._binary_limit
-        original_budget = mcp_server.MCP_READ_LIMIT_BYTES
-        mcp_server._binary_limit = lambda: policy
-        mcp_server.MCP_READ_LIMIT_BYTES = budget
+        original_policy = agent_config.BINARY_LIMIT_BYTES
+        original_budget = agent_config.MCP_READ_LIMIT_BYTES
+        agent_config.BINARY_LIMIT_BYTES = policy
+        agent_config.MCP_READ_LIMIT_BYTES = budget
         try:
-            return mcp_server._read_limit()
+            return agent_config.model_read_limit()
         finally:
-            mcp_server._binary_limit = original_policy
-            mcp_server.MCP_READ_LIMIT_BYTES = original_budget
+            agent_config.BINARY_LIMIT_BYTES = original_policy
+            agent_config.MCP_READ_LIMIT_BYTES = original_budget
 
     def test_the_budget_wins_when_the_policy_is_larger(self) -> None:
         # The deployment runs the file policy at 50 MiB. The budget is

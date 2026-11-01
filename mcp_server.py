@@ -15,10 +15,16 @@ What the tools are:
 * ``read_file`` — read a file out of the workspace (text as text, binary
   as a base64 blob, which is how MCP carries bytes);
 * ``file_info`` — the cheap door: name, size, mime, mtime;
-* ``delete_file`` — remove a file from the workspace.
+* ``delete_file`` — remove a file from the workspace;
+* ``write_file`` — write a text file into the workspace, atomically;
+* ``patch`` — apply a unified diff to a file, in this process;
+* ``search_files`` — find files by name, or lines by content.
 
-What the tools are **not**: a wider sandbox. The MCP door grants exactly
-what the HTTP door grants, and the bearer token is the same gate. A
+What the tools are **not**: a wider sandbox. The MCP door grants
+nothing the HTTP door does not: every one of these tools does something
+the HTTP door's own ``bash`` door already allows, and each of them is a
+**narrower** path than the shell it stands in for — inside the
+workspace, bounded, and counted. The bearer token is the same gate. A
 caller that can talk MCP can do what a caller that can talk HTTP can
 do — no more.
 
@@ -39,6 +45,7 @@ proxy) without session affinity.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import json
@@ -56,8 +63,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from agent_config import (
     MCP_ALLOWED_HOSTS,
-    MCP_READ_CEILING_BYTES,
-    MCP_READ_LIMIT_BYTES,
+    model_read_limit,
 )
 
 logger = logging.getLogger("sandbox-mcp")
@@ -71,10 +77,11 @@ SERVER_NAME = "openwebui-bash-sandbox"
 DEFAULT_SESSION_ID = "mcp"
 
 #: How much of a file a single ``read_file`` call may return is decided by
-#: :func:`_read_limit`: the smallest of the model-facing budget
-#: (``AGENT_MCP_MAX_READ_BYTES``), the file policy the HTTP door applies
-#: (``AGENT_BINARY_LIMIT``) and the hard ceiling. All three live in
-#: ``agent_config``, which is where a knob is read and validated once.
+#: :func:`agent_config.model_read_limit`: the smallest of the model-facing
+#: budget (``AGENT_MCP_MAX_READ_BYTES``), the file policy the HTTP door
+#: applies (``AGENT_BINARY_LIMIT``) and the hard ceiling. All three live in
+#: ``agent_config``, which is where a knob is read and validated once — and
+#: where the search's own file cap is derived from the same rule.
 
 #: Hosts the MCP endpoint answers for **when the check is on**. The MCP
 #: SDK refuses a request whose ``Host`` header is not on this list — the
@@ -114,6 +121,42 @@ class DeleteResult(TypedDict):
     size: int
 
 
+class WriteResult(TypedDict):
+    """What a write did."""
+
+    name: str
+    path: str
+    size: int
+
+
+class PatchResult(TypedDict):
+    """What a patch did."""
+
+    name: str
+    path: str
+    size: int
+    applied: bool
+
+
+class SearchMatch(TypedDict):
+    """One match: a file name, or a line in a file."""
+
+    path: str
+    line: int
+    text: str
+
+
+class SearchResult(TypedDict):
+    """What a search found."""
+
+    matches: list[SearchMatch]
+    files_scanned: int
+    files_skipped: int
+    truncated: bool
+    reason: str
+    limit: int
+
+
 mcp = MCPServer(
     name=SERVER_NAME,
     version="0.0.0",  # replaced below, once the agent's version is known
@@ -124,8 +167,14 @@ mcp = MCPServer(
         "reading it, and `delete_file` to remove one. Every path is inside the "
         "sandbox workspace; a path that points outside is refused, and so is a "
         "symlink that leaves the workspace.\n\n"
-        "The shell is the write path: there is no separate write tool, and a "
-        "command that writes a file is the way to write one.\n\n"
+        "To write, use `write_file` — it writes text, atomically, and replaces "
+        "the file if it is already there. To change a file that exists, use "
+        "`patch` with a unified diff: a patch that does not apply cleanly is "
+        "refused and changes nothing. To look around, use `search_files`: by "
+        "name with kind='name', by content with kind='content' (the pattern is "
+        "literal text, not a regular expression — use `bash` with rg for that). "
+        "The shell can do all of it too, but these three are the paths that are "
+        "checked, counted and bounded.\n\n"
         "The shell can install python packages; the `bash` tool says which "
         "packages are already there and how to add another one.\n\n"
         "The shell is persistent, and a session is shared: give every task that "
@@ -409,6 +458,116 @@ async def delete_file(path: str) -> DeleteResult:
     return DeleteResult(deleted=True, path=target, size=size)
 
 
+@mcp.tool(
+    description=(
+        "Write a text file into the sandbox workspace. The write is atomic: the "
+        "file is complete or it is not there. A file that is already there is "
+        "replaced — this is the model's scratchpad, not storage. A path outside "
+        "the workspace is refused, and so is a symlink that points out of it. "
+        "The content has a size limit; a refusal names the limit."
+    )
+)
+async def write_file(path: str, content: str) -> WriteResult:
+    """Write a text file into the workspace."""
+    from agent_api import write_workspace_file  # noqa: PLC0415
+
+    try:
+        result = write_workspace_file(path, content)
+    except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.write_file refused %s", path)
+        _note_refusal()
+        raise ToolError(f"cannot write the file: {_reason(exc)}") from exc
+    return WriteResult(
+        name=str(result["name"]),
+        path=str(result["path"]),
+        size=int(result["size"]),
+    )
+
+
+@mcp.tool(
+    description=(
+        "Apply a unified diff to a file in the sandbox workspace. The diff is "
+        "applied in the sandbox, not by a shell: every hunk has to match the "
+        "file exactly, and a diff that does not apply cleanly is refused and "
+        "changes nothing at all. The diff must be about one file — the path "
+        "argument says which one."
+    )
+)
+async def patch(path: str, diff: str) -> PatchResult:
+    """Apply a unified diff to a file in the workspace."""
+    from agent_api import patch_workspace_file  # noqa: PLC0415
+
+    try:
+        result = patch_workspace_file(path, diff)
+    except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.patch refused %s", path)
+        _note_refusal()
+        raise ToolError(f"cannot patch the file: {_reason(exc)}") from exc
+    return PatchResult(
+        name=str(result["name"]),
+        path=str(result["path"]),
+        size=int(result["size"]),
+        applied=bool(result["applied"]),
+    )
+
+
+@mcp.tool(
+    description=(
+        "Find files in the sandbox workspace, or lines inside them. With "
+        "kind='name' the pattern is a glob matched against the path relative "
+        "to the workspace (for example '*.py'); with kind='content' it is "
+        "literal text — not a regular expression — and the answer carries the "
+        "file, the line number and the line. The search never leaves the "
+        "workspace: a path outside it is refused, and symlinks are not "
+        "followed. The answer is bounded, and it says so when it is "
+        "truncated."
+    )
+)
+async def search_files(
+    pattern: str,
+    path: str = ".",
+    kind: str = "content",
+    max_results: int | None = None,
+) -> CallToolResult:
+    """Find files by name, or lines by content, in the workspace."""
+    from agent_api import search_workspace  # noqa: PLC0415
+
+    try:
+        # The walk is a filesystem scan and can take seconds, so it runs
+        # in a thread: the event loop keeps serving while it goes.
+        result = await asyncio.to_thread(search_workspace, pattern, path, kind, max_results)
+    except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.search_files refused %s", pattern)
+        _note_refusal()
+        raise ToolError(f"cannot search: {_reason(exc)}") from exc
+
+    # The answer is built by hand, like ``read_file``'s: the result is
+    # not a flat shape (it carries a list of matches), and a tool that
+    # builds its own result decides what the model reads and what a
+    # program gets.
+    lines = []
+    for match in result["matches"]:
+        if int(match["line"]):
+            lines.append(f"{match['path']}:{match['line']}: {match['text']}")
+        else:
+            lines.append(str(match["path"]))
+    if not lines:
+        lines.append("no matches")
+    if result["truncated"]:
+        lines.append(f"(the search stopped early: {result['reason']})")
+    return CallToolResult(
+        content=[TextContent(type="text", text="\n".join(lines))],
+        structured_content={
+            "matches": [SearchMatch(**match) for match in result["matches"]],
+            "files_scanned": int(result["files_scanned"]),
+            "files_skipped": int(result["files_skipped"]),
+            "truncated": bool(result["truncated"]),
+            "reason": str(result["reason"]),
+            "limit": int(result["limit"]),
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -427,40 +586,31 @@ def _reason(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
-def _binary_limit() -> int:
-    """The size limit the HTTP door applies, read from the agent's config."""
-    from agent_api import BINARY_LIMIT_BYTES  # noqa: PLC0415
+def _note_refusal() -> None:
+    """Count a file operation that was refused before it touched the disk.
 
-    return int(BINARY_LIMIT_BYTES)
+    The counter lives in the agent, because the agent is what exposes
+    ``/metrics``. A refusal is counted here — where the refusal becomes
+    visible to the caller — and not in the operation, because the
+    operation is not the only way to be refused.
+    """
+    try:
+        from agent_api import METRICS  # noqa: PLC0415
+
+        METRICS.inc("file_ops_refused_total")
+    except Exception:  # noqa: BLE001 - a counter must never break a refusal
+        logger.exception("mcp cannot count a refused file operation")
 
 
 def _read_limit() -> int:
     """How many bytes one MCP read may return.
 
-    Three limits, and the smallest one wins:
-
-    * the model-facing budget (``AGENT_MCP_MAX_READ_BYTES``) — how much
-      one call may put into a model's context;
-    * the file policy the HTTP door applies (``AGENT_BINARY_LIMIT``) — a
-      limit of 0 means "no limit" and does not apply here;
-    * the hard ceiling (:data:`agent_config.MCP_READ_CEILING_BYTES`) —
-      the guard that stays when the policy is 0.
-
-    The budget is the reason this function exists. The binary limit is
-    about a file that travels to a client, where the bytes land in a
-    file; the deployment runs it at 50 MiB on purpose. Here the bytes
-    land in a prompt: the file is held in memory and base64-encoded on
-    the way out, and a megabyte of text is already more than a text
-    model can use. The HTTP door keeps its own limit — untouched.
+    The rule itself lives in :mod:`agent_config` (``model_read_limit``),
+    because more than one tool needs it: the search reads files too, and
+    a search that reads a file the read door would refuse is a hole in
+    the read door. This is a call site, not a second copy of the rule.
     """
-    limit = MCP_READ_CEILING_BYTES
-    policy = _binary_limit()
-    if policy:
-        limit = min(limit, policy)
-    budget = MCP_READ_LIMIT_BYTES
-    if budget:
-        limit = min(limit, budget)
-    return limit
+    return model_read_limit()
 
 
 def _default_timeout() -> int:
@@ -618,13 +768,25 @@ def set_version(version: str) -> None:
 
 def tool_names() -> list[str]:
     """The names of the tools this server offers (for the docs and tests)."""
-    return ["bash", "read_file", "file_info", "delete_file"]
+    return [
+        "bash",
+        "delete_file",
+        "file_info",
+        "patch",
+        "read_file",
+        "search_files",
+        "write_file",
+    ]
 
 
 __all__ = [
     "BashResult",
     "DeleteResult",
     "FileInfo",
+    "PatchResult",
+    "SearchMatch",
+    "SearchResult",
+    "WriteResult",
     "allowed_hosts",
     "bash",
     "build_app",
@@ -632,8 +794,11 @@ __all__ = [
     "file_info",
     "lifespan",
     "mcp",
+    "patch",
     "read_file",
+    "search_files",
     "set_version",
     "tool_names",
     "transport_security",
+    "write_file",
 ]
