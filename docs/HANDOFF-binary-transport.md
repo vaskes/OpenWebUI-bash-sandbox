@@ -2,11 +2,11 @@
 
 **For:** the agent that maintains the bot (`vaskes/llama.cpp_telegram`).
 **From:** the sandbox side (`vaskes/OpenWebUI-bash-sandbox`).
-**Code against:** sandbox tag **`v2.22.0`** (the contract below was written
+**Code against:** sandbox tag **`v2.23.0`** (the contract below was written
 against `v2.7.0`; §6 lists what changed since, and the status-code table
 in §3 is the current one).
 **Written:** 2026-10-25. **Status codes last verified:** 2026-11-01 against
-`v2.22.0`.
+`v2.23.0`.
 
 This is the contract between the two halves of the system. Everything in
 it is measured or verified — the numbers are not aspirations, they are
@@ -424,6 +424,7 @@ know:
 | v2.20.0 | the workspace is named as attacker-controlled, and the repository no longer runs what the model writes there | the door's contract did not change: the same five routes, the same status codes; a file the model wrote in the workspace is still just a file |
 | v2.21.0 | the workspace's mount is no longer in the host's boot, and a workspace that has lost its ceiling is refused instead of filling the host's disk | the door's contract did not change: the same five routes, the same status codes; a workspace with no room left is still a **507** |
 | v2.22.0 | the MCP door grew `write_file`, `patch` and `search_files` | the door's contract did not change: the same five routes, the same status codes; the three new tools are on the MCP door only, and they are inside the workspace, bounded and counted |
+| v2.23.0 | the MCP door grew `vision_analyze` — the operator's own vision endpoint, closed while `AGENT_VISION_URL` is empty | the door's contract did not change: the same five routes, the same status codes; the new tool is on the MCP door only, it takes a path inside the workspace and not a URL, and it is closed until the operator names an endpoint |
 
 The route list itself did not change until **v2.15.0**, which added
 `POST /files`: `POST /sessions/{id}/exec`, `GET /files`,
