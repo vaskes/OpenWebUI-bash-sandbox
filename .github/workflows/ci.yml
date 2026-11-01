@@ -339,7 +339,7 @@ jobs:
           printf '%s' "$tools" | python3 -c "
           import json,sys
           names = sorted(t['name'] for t in json.load(sys.stdin)['result']['tools'])
-          assert names == ['bash','delete_file','file_info','patch','read_file','search_files','write_file'], names
+          assert names == ['bash','delete_file','file_info','patch','read_file','search_files','vision_analyze','write_file'], names
           " || { echo "::error::the tool catalogue is not the documented one"; exit 1; }
 
           out=$(call '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"bash","arguments":{"command":"echo ci-mcp-ok"}}}')

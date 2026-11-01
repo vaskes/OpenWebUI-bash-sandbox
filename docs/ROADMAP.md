@@ -184,10 +184,31 @@ the document showed that the HTTP door has `POST /files` — a write, with a
 a search. So wave A was not a thin layer over code we own: the **fence** was
 code we own, and the three operations on top of it were written for this wave.
 
-## The waves
+### Wave C — eyes — v2.23.0
 
-Each wave is one release: one purpose, one green commit, mutation-verified,
-and no history rewrite. Every wave states how it is proved red.
+The MCP surface grew one more tool: `vision_analyze`. It takes a picture
+that is **already in the workspace**, hands it to the **operator's** own
+vision endpoint, and returns the answer as text.
+
+Two things are fixed, and neither is the model's to choose: the picture
+is read through the file fence every other file operation uses, and the
+endpoint is named by `AGENT_VISION_URL`. The door is closed while that
+is empty — the refusal says so. The tool takes a path and **not a URL**,
+because a door that fetches a URL the model names is a retrieval door
+wearing a different hat, and retrieval is not ours (v2.13.0).
+
+The picture, the question and the answer are each bounded, and a
+truncated answer says that it is truncated.
+
+*Red:* `tools/mutation-check-v2230.sh` breaks every fence above on
+purpose and expects the named test to go red.
+
+**This is the one tool that is not narrower than the shell.** It is a
+capability the operator opens on purpose and closes again by emptying
+the knob — so the sentence "the MCP door grants nothing the HTTP door
+does not" now has exactly one exception, and the exception is named.
+
+## The waves
 
 ### Wave A — the agent writes and searches through the fence
 
@@ -246,6 +267,10 @@ container of its own — so B should land before F rather than beside it.
 Retrieval of a URL the operator named is deliberately **not** in this wave: the
 research capability is not this project's (v2.13.0), and retrieval is close
 enough to it that it deserves its own decision, not a footnote.
+
+**Shipped in v2.23.0** — see *Shipped* above. The tool takes a path
+inside the workspace and not a URL, the endpoint is the operator's, and
+the door is closed while `AGENT_VISION_URL` is empty.
 
 ### Wave D — planning, memory, recall, clarification
 

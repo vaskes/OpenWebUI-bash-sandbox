@@ -140,6 +140,19 @@ services:
       # How many matches one MCP search_files call returns. The walk also
       # stops after 30 seconds; the answer says so when it stops early.
       - AGENT_MCP_MAX_SEARCH_RESULTS=${AGENT_MCP_MAX_SEARCH_RESULTS:-100}
+      # The operator's vision endpoint. Empty = the door is closed: the
+      # MCP vision_analyze tool refuses and says so. The endpoint is the
+      # operator's choice and the model has no way to name another one --
+      # the tool takes a path inside the workspace, not a URL.
+      - AGENT_VISION_URL=${AGENT_VISION_URL:-}
+      - AGENT_VISION_MODEL=${AGENT_VISION_MODEL:-}
+      - AGENT_VISION_API_KEY=${AGENT_VISION_API_KEY:-}
+      # The budgets of the vision door: the picture, the question and the
+      # answer, and how long the endpoint may take.
+      - AGENT_VISION_MAX_BYTES=${AGENT_VISION_MAX_BYTES:-8m}
+      - AGENT_VISION_MAX_PROMPT_BYTES=${AGENT_VISION_MAX_PROMPT_BYTES:-8k}
+      - AGENT_VISION_MAX_ANSWER_BYTES=${AGENT_VISION_MAX_ANSWER_BYTES:-64k}
+      - AGENT_VISION_TIMEOUT=${AGENT_VISION_TIMEOUT:-60}
       # Same token as OPENAPI_PROXY_TOKEN — the proxy forwards it on
       # every call. The agent refuses to serve if this is empty.
       # The token the agent accepts on its own doors. It defaults to the

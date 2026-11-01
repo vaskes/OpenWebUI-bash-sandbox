@@ -37,6 +37,15 @@ And two more came with the file tools, on the axes those tools travel on:
   a time budget, and the count is what keeps one call's answer from
   becoming the whole workspace.
 
+And one door that is not a budget on a file: the **vision door**. The
+operator may name an endpoint of their own that looks at pictures
+(``AGENT_VISION_URL``), and the door has budgets of its own — the
+picture, the question and the answer. The endpoint is the operator's
+choice and the model's is not: while the URL is empty the door is
+closed, and the tool takes a path inside the workspace rather than a
+URL, because a door that fetches a URL the model names is a retrieval
+door wearing a different hat.
+
 The stdout budget is only meaningful if the tmux pane can actually hold it.
 A pane that is smaller than the budget loses the *beginning* of the output
 silently — no truncation marker, no error — so the scrollback depth is
@@ -47,6 +56,7 @@ right on paper.
 from __future__ import annotations
 
 import os
+from urllib.parse import urlsplit
 
 __all__ = [
     "BINARY_LIMIT_BYTES",
@@ -67,6 +77,16 @@ __all__ = [
     "PANE_WIDTH",
     "PREINSTALLED_PYTHON_PATH",
     "STDOUT_LIMIT_BYTES",
+    "model_read_limit",
+    "model_write_limit",
+    "VISION_API_KEY",
+    "VISION_MAX_ANSWER_BYTES",
+    "VISION_MAX_BYTES",
+    "VISION_MAX_CEILING_BYTES",
+    "VISION_MAX_PROMPT_BYTES",
+    "VISION_MODEL",
+    "VISION_TIMEOUT_SECONDS",
+    "VISION_URL",
     "model_read_limit",
     "model_write_limit",
     "parse_count",
@@ -310,6 +330,19 @@ MCP_SEARCH_MAX_RESULTS = parse_count(
     maximum=MCP_SEARCH_CEILING_RESULTS,
 )
 
+#: The default picture budget: eight mebibytes.
+VISION_MAX_DEFAULT_BYTES = 8 * _MIB
+
+#: The default answer budget: 64 KiB. The answer goes into a model's
+#: context, where a megabyte of text costs attention and memory.
+VISION_MAX_ANSWER_DEFAULT_BYTES = 64 * _KIB
+
+#: The default prompt budget: 8 KiB.
+VISION_MAX_PROMPT_DEFAULT_BYTES = 8 * _KIB
+
+#: The default timeout for one call to the vision endpoint: a minute.
+VISION_TIMEOUT_DEFAULT_SECONDS = 60
+
 #: How long one search may walk the workspace, in seconds.
 #:
 #: A constant and not a knob: the walk is bounded by the machine, not
@@ -318,6 +351,84 @@ MCP_SEARCH_MAX_RESULTS = parse_count(
 #: reason, because a truncated answer that does not say it is
 #: truncated is a lie the model will act on.
 MCP_SEARCH_TIME_BUDGET_SECONDS = 30
+
+# ---------------------------------------------------------------------------
+# The vision door
+# ---------------------------------------------------------------------------
+#: The endpoint that looks at pictures. Empty means the door is **closed**:
+#: ``vision_analyze`` refuses and says the door is closed.
+#:
+#: The endpoint is the operator's choice and nobody else's. There is no
+#: knob the model can reach, and the tool takes a path inside the
+#: workspace — not a URL — because a door that fetches a URL the model
+#: names is a retrieval door wearing a different hat.
+VISION_URL = os.environ.get("AGENT_VISION_URL", "").strip()
+
+#: The bearer for that endpoint, when it wants one. Empty means no header.
+VISION_API_KEY = os.environ.get("AGENT_VISION_API_KEY", "").strip()
+
+#: The model name the endpoint expects.
+#:
+#: Required when the URL is set: an endpoint without a model name is a
+#: misconfiguration, and a misconfiguration is loud at startup — not a
+#: surprise at the first picture.
+VISION_MODEL = os.environ.get("AGENT_VISION_MODEL", "").strip()
+
+#: The ceiling for one picture: 32 MiB. The picture travels in the
+#: request to the endpoint as a base64 data URI, so the request is about
+#: a third bigger than the picture — the ceiling is on the picture, and
+#: the request that carries it.
+VISION_MAX_CEILING_BYTES = 32 * _MIB
+
+#: The largest picture the door will hand to the endpoint.
+VISION_MAX_BYTES = parse_size(
+    os.environ.get("AGENT_VISION_MAX_BYTES", str(VISION_MAX_DEFAULT_BYTES)),
+    name="AGENT_VISION_MAX_BYTES",
+    minimum=64 * _KIB,
+    maximum=VISION_MAX_CEILING_BYTES,
+)
+
+#: How long the door waits for the answer.
+VISION_TIMEOUT_SECONDS = parse_count(
+    os.environ.get("AGENT_VISION_TIMEOUT", str(VISION_TIMEOUT_DEFAULT_SECONDS)),
+    name="AGENT_VISION_TIMEOUT",
+    minimum=1,
+    maximum=600,
+)
+
+#: The largest answer the door will hand back. The answer travels into the
+#: model's context, so it is bounded the way a read is bounded: a
+#: truncated answer says that it is truncated.
+VISION_MAX_ANSWER_BYTES = parse_size(
+    os.environ.get("AGENT_VISION_MAX_ANSWER_BYTES", str(VISION_MAX_ANSWER_DEFAULT_BYTES)),
+    name="AGENT_VISION_MAX_ANSWER_BYTES",
+    minimum=1024,
+    maximum=MCP_READ_CEILING_BYTES,
+)
+
+#: The largest prompt the door will forward. A prompt is text the model
+#: wrote; there is no reason for it to be long, and a long one is the
+#: cheapest way to make the endpoint's answer expensive.
+VISION_MAX_PROMPT_BYTES = parse_size(
+    os.environ.get("AGENT_VISION_MAX_PROMPT_BYTES", str(VISION_MAX_PROMPT_DEFAULT_BYTES)),
+    name="AGENT_VISION_MAX_PROMPT_BYTES",
+    minimum=16,
+    maximum=MCP_READ_CEILING_BYTES,
+)
+
+if VISION_URL:
+    if not VISION_MODEL:
+        raise ValueError(
+            "AGENT_VISION_MODEL must be set when AGENT_VISION_URL is set: "
+            "the endpoint has to be told which model to use"
+        )
+    _vision_scheme = urlsplit(VISION_URL).scheme.lower()
+    if _vision_scheme not in ("http", "https"):
+        raise ValueError(
+            f"AGENT_VISION_URL={VISION_URL!r} is not an http(s) URL; "
+            "the vision door speaks http and https, and nothing else"
+        )
+
 
 #: The hosts the MCP endpoint answers for.
 #:

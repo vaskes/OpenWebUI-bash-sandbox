@@ -19,6 +19,13 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_MCP_MAX_READ_BYTES` | `1m`                                  | How many bytes one MCP `read_file` may put into a model's context. `0` = no budget of its own. 0..64m. A file over the budget is refused, and the refusal names the file's size and the limit. The HTTP `/files` door keeps `AGENT_BINARY_LIMIT` — there the bytes land in a file, not in a prompt. |
 | `AGENT_MCP_MAX_WRITE_BYTES` | `1m`                                 | How many bytes one MCP `write_file` (or one `patch`) may put on disk. 64k..2m. The ceiling is the transport's own: the bytes travel in the request, and the request body is capped at 2 MiB — a budget above that would be a budget the transport silently clamps. A write over the budget is refused, and nothing is written. The file policy (`AGENT_BINARY_LIMIT`) applies here too: a file the model writes is a file the door may serve. |
 | `AGENT_MCP_MAX_SEARCH_RESULTS` | `100`                              | How many matches one MCP `search_files` call returns. 1..1000. A search may return **fewer** — the walk also stops after 30 seconds — and the answer says so when it stops early. |
+| `AGENT_VISION_URL`     | (empty → the door is closed)              | The **operator's** vision endpoint — the OpenAI-compatible chat-completions URL the `vision_analyze` tool hands a picture to. **Empty = the door is closed**: the tool refuses and says so. The endpoint is the operator's choice and the model has no way to name another one — the tool takes a path inside the workspace, not a URL. A URL that is not http(s) is a startup failure, and a URL without `AGENT_VISION_MODEL` is a startup failure too. |
+| `AGENT_VISION_MODEL`   | (empty → required with the URL)          | The model name the vision endpoint expects. Required when `AGENT_VISION_URL` is set: a misconfiguration is loud at startup, not a surprise at the first picture. |
+| `AGENT_VISION_API_KEY` | (empty → no `Authorization` header)       | The bearer for that endpoint, when it wants one. Empty means the header is not sent. |
+| `AGENT_VISION_MAX_BYTES` | `8m`                                    | How large a picture one `vision_analyze` call may hand to the endpoint. 64k..32m. A picture over the budget is refused, and the refusal names the size and the limit. |
+| `AGENT_VISION_MAX_PROMPT_BYTES` | `8k`                                | How large a question one `vision_analyze` call may forward. 16 bytes..64m. Over the budget is refused. |
+| `AGENT_VISION_MAX_ANSWER_BYTES` | `64k`                              | How large an answer one `vision_analyze` call may hand back. 1k..64m. The answer travels into the model's context, so it is truncated over the budget — and a truncated answer says that it is truncated. |
+| `AGENT_VISION_TIMEOUT` | `60`                                       | How long one call to the vision endpoint may take, in seconds (1 to 600). |
 | `AGENT_ALLOW_SUDO`     | `0`                                       | Build the image with `sudo`, so a command can become root. **Private, secured deployments only.** |
 | `AGENT_NO_NEW_PRIVILEGES` | `true`                                  | The container's `no-new-privileges` flag. `false` is required by the privilege mode. |
 | `AGENT_CAP_DROP`       | `ALL`                                     | Capabilities dropped from the container. `SYS_ADMIN` in the privilege mode. |
@@ -524,6 +531,8 @@ having.
 | `sandbox_agent_file_patches_total`     | agent   | patches applied through the file tools |
 | `sandbox_agent_file_searches_total`    | agent   | searches run through the file tools  |
 | `sandbox_agent_file_ops_refused_total` | agent   | file operations refused before they touched the filesystem |
+| `sandbox_agent_vision_requests_total`  | agent   | pictures handed to the operator's vision endpoint |
+| `sandbox_agent_vision_refused_total`   | agent   | vision requests refused before the picture left the workspace |
 
 The counters live in the process, so they reset when the container
 restarts — that is what a counter is for. The rates Prometheus computes

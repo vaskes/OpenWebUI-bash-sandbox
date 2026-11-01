@@ -361,6 +361,7 @@ class TestTheToolsAreAdvertised(_Base):
                 "patch",
                 "read_file",
                 "search_files",
+                "vision_analyze",
                 "write_file",
             ],
         )
@@ -382,6 +383,7 @@ class TestTheToolsAreAdvertised(_Base):
                 "patch",
                 "read_file",
                 "search_files",
+                "vision_analyze",
                 "write_file",
             ],
         )
@@ -539,6 +541,7 @@ class TestARealClientTalksToIt(unittest.TestCase):
                             "patch",
                             "read_file",
                             "search_files",
+                            "vision_analyze",
                             "write_file",
                         ],
                     )

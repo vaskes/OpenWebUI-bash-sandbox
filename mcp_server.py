@@ -18,7 +18,9 @@ What the tools are:
 * ``delete_file`` — remove a file from the workspace;
 * ``write_file`` — write a text file into the workspace, atomically;
 * ``patch`` — apply a unified diff to a file, in this process;
-* ``search_files`` — find files by name, or lines by content.
+* ``search_files`` — find files by name, or lines by content;
+* ``vision_analyze`` — look at a picture in the workspace through the
+  operator's own vision endpoint.
 
 What the tools are **not**: a wider sandbox. The MCP door grants
 nothing the HTTP door does not: every one of these tools does something
@@ -146,6 +148,17 @@ class SearchMatch(TypedDict):
     text: str
 
 
+class VisionResult(TypedDict):
+    """What the vision door answered."""
+
+    name: str
+    path: str
+    size: int
+    text: str
+    truncated: bool
+    model: str
+
+
 class SearchResult(TypedDict):
     """What a search found."""
 
@@ -175,6 +188,10 @@ mcp = MCPServer(
         "literal text, not a regular expression — use `bash` with rg for that). "
         "The shell can do all of it too, but these three are the paths that are "
         "checked, counted and bounded.\n\n"
+        "To look at a picture, use `vision_analyze`: it hands a file from the "
+        "workspace to the operator's vision model and returns the answer as "
+        "text. The endpoint is the operator's — there is no way to name another "
+        "one, and the tool takes no URL.\n\n"
         "The shell can install python packages; the `bash` tool says which "
         "packages are already there and how to add another one.\n\n"
         "The shell is persistent, and a session is shared: give every task that "
@@ -568,6 +585,37 @@ async def search_files(
     )
 
 
+@mcp.tool(
+    description=(
+        "Look at a picture that is already in the sandbox workspace and ask the "
+        "operator's vision model about it. The path is a file inside the "
+        "workspace — a path that points outside is refused — and the endpoint "
+        "is the operator's: there is no way to name another one, and no way to "
+        "hand the door a URL. The answer comes back as text and is bounded; it "
+        "says so when it was cut. The door is closed when the operator has not "
+        "configured an endpoint, and it says that too."
+    )
+)
+async def vision_analyze(path: str, prompt: str = "Describe this image.") -> VisionResult:
+    """Look at a picture in the workspace."""
+    from agent_api import analyze_image  # noqa: PLC0415
+
+    try:
+        result = await analyze_image(path, prompt)
+    except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.vision_analyze refused %s", path)
+        _note_vision_refusal()
+        raise ToolError(f"cannot look at the picture: {_reason(exc)}") from exc
+    return VisionResult(
+        name=str(result["name"]),
+        path=str(result["path"]),
+        size=int(result["size"]),
+        text=str(result["text"]),
+        truncated=bool(result["truncated"]),
+        model=str(result["model"]),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -600,6 +648,21 @@ def _note_refusal() -> None:
         METRICS.inc("file_ops_refused_total")
     except Exception:  # noqa: BLE001 - a counter must never break a refusal
         logger.exception("mcp cannot count a refused file operation")
+
+
+def _note_vision_refusal() -> None:
+    """Count a vision request that was refused before the picture left.
+
+    The same rule as the file operations: the counter is where the
+    refusal becomes visible to the caller, and not in the operation
+    itself.
+    """
+    try:
+        from agent_api import METRICS  # noqa: PLC0415
+
+        METRICS.inc("vision_refused_total")
+    except Exception:  # noqa: BLE001 - a counter must never break a refusal
+        logger.exception("mcp cannot count a refused vision request")
 
 
 def _read_limit() -> int:
@@ -775,6 +838,7 @@ def tool_names() -> list[str]:
         "patch",
         "read_file",
         "search_files",
+        "vision_analyze",
         "write_file",
     ]
 
@@ -786,6 +850,7 @@ __all__ = [
     "PatchResult",
     "SearchMatch",
     "SearchResult",
+    "VisionResult",
     "WriteResult",
     "allowed_hosts",
     "bash",
@@ -800,5 +865,6 @@ __all__ = [
     "set_version",
     "tool_names",
     "transport_security",
+    "vision_analyze",
     "write_file",
 ]

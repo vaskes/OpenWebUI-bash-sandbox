@@ -65,6 +65,7 @@ DELETE /mcp
 from __future__ import annotations
 
 import asyncio
+import base64
 import errno
 import fnmatch
 import json
@@ -81,6 +82,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -101,6 +103,13 @@ from agent_config import (
     PREINSTALLED_PYTHON_PATH,
     STDOUT_LIMIT_BYTES,
     UPLOAD_MAX_BYTES,
+    VISION_API_KEY,
+    VISION_MAX_ANSWER_BYTES,
+    VISION_MAX_BYTES,
+    VISION_MAX_PROMPT_BYTES,
+    VISION_MODEL,
+    VISION_TIMEOUT_SECONDS,
+    VISION_URL,
     model_read_limit,
     model_write_limit,
 )
@@ -281,6 +290,14 @@ METRICS.counter("file_searches_total", "Searches run through the file tools.")
 METRICS.counter(
     "file_ops_refused_total",
     "File operations refused before they touched the filesystem.",
+)
+METRICS.counter(
+    "vision_requests_total",
+    "Pictures handed to the operator's vision endpoint.",
+)
+METRICS.counter(
+    "vision_refused_total",
+    "Vision requests refused before the picture left the workspace.",
 )
 
 
@@ -2870,6 +2887,191 @@ def search_workspace(
         "truncated": truncated,
         "reason": reason,
         "limit": cap,
+    }
+
+
+# ---------------------------------------------------------------------------
+# The vision door
+# ---------------------------------------------------------------------------
+#: The picture types the door will hand to the endpoint.
+#:
+#: The type comes from the name. The door is not a media library, and a
+#: file that lies about its type is the endpoint's problem — not a way
+#: out of the fence.
+VISION_MIME_TYPES = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "image/bmp",
+    }
+)
+
+
+class VisionRefusedError(Exception):
+    """The vision door refused to look at something.
+
+    The reason travels to the model, so it is a sentence and not a
+    status code — the same rule the MCP door's refusals follow.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.detail = reason
+
+
+def _vision_answer_text(data: Any) -> str:
+    """Pull the answer out of an OpenAI-shaped answer.
+
+    The shape is the one every OpenAI-compatible server answers with:
+    ``choices[0].message.content``. Some of them answer with the
+    content as a list of parts instead of one string, so both are read —
+    and an answer that is neither is an empty answer, not an exception:
+    the endpoint answered, it just said nothing.
+    """
+    if not isinstance(data, dict):
+        return ""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    message = first.get("message")
+    content = message.get("content") if isinstance(message, dict) else first.get("text")
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                parts.append(str(part.get("text", "")))
+            else:
+                parts.append(str(part))
+        content = "".join(parts)
+    return str(content or "").strip()
+
+
+async def analyze_image(
+    path: str,
+    prompt: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, Any]:
+    """Look at a picture in the workspace, through the operator's endpoint.
+
+    Two things are fixed, and neither of them is the model's to choose:
+
+    * the **picture** is a file inside the workspace, and it is read
+      through the same fence every other file operation uses — a path
+      that points out is refused, and a symlink that points out is not
+      followed;
+    * the **endpoint** is the operator's, named by ``AGENT_VISION_URL``.
+
+    There is no URL argument here on purpose. A door that fetches a URL
+    the model names is a retrieval door wearing a different hat, and
+    retrieval is not this project's (v2.13.0): the research capability
+    belongs to another MCP, on another host. What this door does is
+    look at a picture that is already here.
+
+    The answer travels back into the model's context, so it is bounded
+    the way a read is bounded — and a truncated answer says that it is
+    truncated.
+    """
+    if not VISION_URL:
+        raise VisionRefusedError(
+            "the vision door is closed: AGENT_VISION_URL is not set, so there is "
+            "no endpoint to look at pictures with"
+        )
+
+    target = _safe_file(path)
+
+    question = str(prompt or "").strip()
+    if not question:
+        question = "Describe this image."
+    if len(question.encode("utf-8")) > VISION_MAX_PROMPT_BYTES:
+        raise VisionRefusedError(
+            f"the question is over the limit of {VISION_MAX_PROMPT_BYTES} bytes — ask less"
+        )
+
+    mime = mimetypes.guess_type(target)[0] or ""
+    if mime not in VISION_MIME_TYPES:
+        raise VisionRefusedError(
+            f"{os.path.basename(target)} is not a picture (its type is "
+            f"{mime or 'unknown'}) — the vision door looks at png, jpeg, webp, "
+            "gif and bmp files"
+        )
+
+    try:
+        size = os.path.getsize(target)
+    except OSError as exc:
+        raise VisionRefusedError(f"cannot stat the file: {exc}") from exc
+    if size > VISION_MAX_BYTES:
+        raise VisionRefusedError(
+            f"the picture is {size} bytes, over the limit of {VISION_MAX_BYTES} "
+            "bytes — shrink it first"
+        )
+
+    try:
+        with _open_for_download(target) as handle:
+            payload = handle.read(VISION_MAX_BYTES + 1)
+    except Exception as exc:
+        raise VisionRefusedError(f"cannot read the file: {exc}") from exc
+    if len(payload) > VISION_MAX_BYTES:
+        raise VisionRefusedError(
+            f"the picture grew past the limit of {VISION_MAX_BYTES} bytes while it was being read"
+        )
+
+    data_uri = f"data:{mime};base64,{base64.b64encode(payload).decode('ascii')}"
+    body = {
+        "model": VISION_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": question},
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                ],
+            }
+        ],
+    }
+    headers = {"Authorization": f"Bearer {VISION_API_KEY}"} if VISION_API_KEY else {}
+
+    try:
+        async with httpx.AsyncClient(timeout=VISION_TIMEOUT_SECONDS, transport=transport) as client:
+            response = await client.post(VISION_URL, json=body, headers=headers)
+    except httpx.HTTPError as exc:
+        raise VisionRefusedError(f"the vision endpoint did not answer: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise VisionRefusedError(
+            f"the vision endpoint answered {response.status_code}: {response.text[:400]}"
+        )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise VisionRefusedError(
+            "the vision endpoint answered with something that is not JSON"
+        ) from exc
+
+    answer = _vision_answer_text(data)
+    if not answer:
+        raise VisionRefusedError("the vision endpoint answered with no text")
+
+    encoded = answer.encode("utf-8")
+    truncated = False
+    if len(encoded) > VISION_MAX_ANSWER_BYTES:
+        answer = encoded[:VISION_MAX_ANSWER_BYTES].decode("utf-8", errors="ignore")
+        truncated = True
+
+    METRICS.inc("vision_requests_total")
+    logger.info("vision: %s (%d bytes) -> %d bytes of answer", target, size, len(answer.encode()))
+    return {
+        "name": os.path.basename(target),
+        "path": target,
+        "size": size,
+        "text": answer,
+        "truncated": truncated,
+        "model": VISION_MODEL,
     }
 
 

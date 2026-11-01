@@ -17,6 +17,12 @@ refused with a reason. A model that writes through `bash` leaves the
 file door's own accounting empty, and the fence it walks past is the
 fence these tools enforce.
 
+There is **one** exception, and it is named: `vision_analyze` hands a
+picture to the operator's own vision endpoint. That is a capability the
+shell does not have, so it is the operator's to grant — the endpoint is
+named by `AGENT_VISION_URL`, the door is closed while that is empty, and
+the tool takes a path inside the workspace and **not a URL**.
+
 ---
 
 ## Connecting
@@ -271,6 +277,43 @@ says so — `truncated` is true and `reason` says why. A file bigger than
 the read budget is skipped rather than read, and counted in
 `files_skipped`.
 
+### `vision_analyze`
+
+Looks at a picture that is already in the workspace, through the
+operator's own vision endpoint, and returns the answer as text.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `path` | string, **required** | the picture, inside the workspace |
+| `prompt` | string | the question to ask about it; `Describe this image.` by default |
+
+Returns `name`, `path`, `size`, `text`, `truncated` and `model`.
+
+**The endpoint is the operator's, and only the operator's.** It is named
+by `AGENT_VISION_URL`, and the model has no way to name another one:
+the tool takes no URL, and there is no knob on the request that reaches
+it. While `AGENT_VISION_URL` is empty the door is **closed**, and the
+refusal says so.
+
+**The picture is a file inside the workspace.** The path goes through the
+same fence as every other file operation: a path that resolves outside
+is refused, and a symlink that points out is not followed. A file that
+is not a picture is refused by its type — the door looks at png, jpeg,
+webp, gif and bmp files.
+
+**There is no retrieval here.** A door that fetched a URL the model
+named would be a retrieval door wearing a different hat, and retrieval is
+not this project's (v2.13.0 — the research capability belongs to another
+MCP, on another host). A URL-shaped path is a path: it is resolved
+against the workspace, it is not there, and it is refused.
+
+Three budgets and a timeout: `AGENT_VISION_MAX_BYTES` (8 MiB),
+`AGENT_VISION_MAX_PROMPT_BYTES` (8 KiB) and `AGENT_VISION_MAX_ANSWER_BYTES`
+(64 KiB), plus `AGENT_VISION_TIMEOUT` (60 s). The answer is truncated
+when it is over its budget, and a truncated answer says that it is
+truncated. The request and the refusal are counted
+(`sandbox_agent_vision_requests_total`, `sandbox_agent_vision_refused_total`).
+
 ---
 
 ## What a refusal looks like
@@ -306,6 +349,13 @@ The refusals that can come back:
 | `path outside the workspace: …` | a search or a write that named a path outside the perimeter |
 | `unknown kind: …` | a search that asked for something other than `content` or `name` |
 | `the pattern is empty` | a search with no pattern |
+| `the vision door is closed: AGENT_VISION_URL is not set` | the operator has not opened the vision door |
+| `… is not a picture (its type is …)` | the file is not an image the door will hand to the endpoint |
+| `the picture is N bytes, over the limit of M bytes` | the picture budget |
+| `the question is over the limit of M bytes` | the question budget |
+| `the vision endpoint answered N: …` | the endpoint refused or failed |
+| `the vision endpoint answered with something that is not JSON` | the endpoint is not the thing we think it is |
+| `the vision endpoint answered with no text` | the endpoint said nothing |
 
 ---
 
@@ -358,6 +408,7 @@ The refusals that can come back:
 | `write_file` | no twin — the shell is the equivalent, and narrower |
 | `patch` | no twin — the shell is the equivalent, and narrower |
 | `search_files` | no twin — the shell is the equivalent, and narrower |
+| `vision_analyze` | no twin — the endpoint is the operator's, and the shell has no eyes |
 
 Both doors call the same functions in the same process, so the code
 cannot drift apart — and the tests check that it does not. The budgets
@@ -369,3 +420,9 @@ MCP surface, not the HTTP one: a model that writes through `bash` leaves
 the file door's accounting empty. They are **narrower** than the shell
 they stand in for — inside the workspace, bounded, counted — so the
 MCP door is not a wider door than the HTTP one.
+
+`vision_analyze` is the fourth tool without a twin, and it is the
+exception that proves the rule: it hands a picture to an endpoint the
+operator chose, so it is **not** narrower than the shell — it is a
+capability the operator opened on purpose, closed again by emptying
+`AGENT_VISION_URL`.
