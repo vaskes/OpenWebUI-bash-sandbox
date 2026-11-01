@@ -4,6 +4,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.22.0] - 2026-11-01
+
+The agent writes and searches through the fence.
+
+### Added
+
+- **Three tools on the MCP door: `write_file`, `patch` and
+  `search_files`.** The model holds the MCP surface, and until now that
+  surface had no way to put a file in, to change one or to look for one
+  — so the model wrote through `bash` (`cat > …`), which is the path
+  that leaves the file door's own accounting empty while the model is
+  busy writing. These three are the checked paths, and each one is a
+  **narrower** path than the shell it stands in for:
+  - `write_file` writes text into the workspace, atomically (the bytes
+    land in a temporary file in the target's own directory and are moved
+    onto the target with `os.replace`, so a reader never sees a
+    half-written file). It replaces the file that is there — this is the
+    model's scratchpad, and the *delivery* door (`POST /files`) keeps its
+    no-overwrite rule. It makes the directories it needs: otherwise the
+    first write of every task needs a shell command first, and the
+    workaround is the unfenced path.
+  - `patch` applies a unified diff **in this process**, not by handing
+    it to a shell: the new text is built in memory and written once, at
+    the end, and only if every hunk matched. A patch that does not
+    apply cleanly is refused and **changes nothing at all**. A diff that
+    carries a second file, a diff without hunks and a hunk whose header
+    does not match its body are all refused with the reason.
+  - `search_files` finds files by name (a glob) or lines by content
+    (literal text — a regular expression can cost time proportional to
+    the square of its input, and the workspace is attacker-controlled).
+    The search never leaves the workspace: a path outside it is refused
+    with a reason, and a symlink is not followed at all.
+- **Two new budgets.** `AGENT_MCP_MAX_WRITE_BYTES` (1 MiB by default)
+  is how many bytes one write may put on disk; its ceiling is the
+  transport's own 2 MiB body limit, because the bytes travel in the
+  request. `AGENT_MCP_MAX_SEARCH_RESULTS` (100) is how many matches one
+  search returns; the walk also stops after 30 seconds, and the answer
+  says so when it stops early.
+- **The file operations are counted.** `sandbox_agent_file_writes_total`,
+  `sandbox_agent_file_patches_total`, `sandbox_agent_file_searches_total`
+  and `sandbox_agent_file_ops_refused_total` are the audit trail the
+  wave exists to restore.
+
+### Changed
+
+- **The read budget's rule moved to where every other knob lives.**
+  The composition of the model-facing read budget, the file policy and
+  the hard ceiling now lives in `agent_config.model_read_limit()`, and
+  the search's own file cap is derived from the same rule — a search
+  that reads a file the read door would refuse is a hole in the read
+  door. The limit itself did not change.
+- **`docs/ROADMAP.md` records what wave A actually cost.** The plan
+  claimed that "the HTTP side of all three already exists and is
+  already tested"; measuring the routes showed that the HTTP door has
+  `POST /files` — a write with a *different* policy — and neither a
+  patch nor a search. The fence was code we own; the three operations
+  on top of it were written for the wave.
+
+### Security
+
+- **A write cannot land outside the workspace.** The target is resolved
+  before it is used, so a symlink that points out of the workspace is
+  refused — as the name itself and as a directory on the way — and the
+  write is made relative to a descriptor of the target's directory,
+  every component opened with `O_NOFOLLOW`. A directory that is swapped
+  for a symlink between the check and the write is refused too.
+- **The file tools are not a wider door.** Everything they do, the
+  HTTP door's own `bash` door already allowed. The MCP door is not a
+  second, looser way into the sandbox: the same token, the same
+  containment, and a narrower path than the shell.
+
 ## [2.21.0] - 2026-10-30
 
 The mount belongs to the stack, and a model is not a contributor.
