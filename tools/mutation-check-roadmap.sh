@@ -16,7 +16,15 @@
 #     story about that reach;
 #   * the claim that the jail is sealed off does not come back;
 #   * the browser wave is decided, names the engine it runs, and is
-#     wrapped by tools of our own rather than the other sandbox's.
+#     wrapped by tools of our own rather than the other sandbox's;
+#   * the operator's decision of 2026-11-02 -- one container -- is on the
+#     record, wave B still reads as NOT built, and the browser wave still
+#     says the browser lives in the same container. A decision that is
+#     not pinned becomes a suggestion, and the topology is exactly the
+#     kind of thing that drifts while nobody is looking;
+#   * the browser wave does not claim a localhost debugging port: our own
+#     implementation drives Chromium over a pipe, measured 2026-11-02, so
+#     a boundary built against that port would be built against nothing.
 #
 # The mutations below also break the DETECTOR, and the control catches
 # them. A verdict about "the property still holds" is a statement about
@@ -70,15 +78,15 @@ mutate docker-compose.yml \
 
 echo "== the browser wave becomes optional again =="
 mutate docs/ROADMAP.md \
-  '### Wave F — the browser, in the sandbox' \
+  '### Wave F — the browser, in the same container' \
   '### Wave F — the browser, if it is wanted at all' \
   "$TESTS::TestTheBrowserWaveIsDecided::test_the_browser_wave_is_not_conditional" \
   "the browser wave is conditional again"
 
 echo "== the browser wave stops naming its engine =="
 mutate docs/ROADMAP.md \
-  'Playwright driving Chromium, in our own image,' \
-  'A browser, in our own image,' \
+  'So: Playwright driving Chromium, in our own image,' \
+  'So: A browser, in our own image,' \
   "$TESTS::TestTheBrowserWaveIsDecided::test_the_browser_wave_names_the_engine" \
   "the browser wave does not say what it runs"
 
@@ -91,7 +99,7 @@ mutate docs/ROADMAP.md \
 
 echo "== the browser wave is gone =="
 mutate docs/ROADMAP.md \
-  '### Wave F — the browser, in the sandbox' \
+  '### Wave F — the browser, in the same container' \
   '### Wave F — something else' \
   "$TESTS::TestTheBrowserWaveIsDecided::test_the_browser_wave_exists" \
   "the browser wave does not exist"
@@ -110,6 +118,73 @@ mutate tests/test_roadmap_drift.py \
   '        "a phrase the detector can no longer see",' \
   "$TESTS::TestTheBrowserWaveIsDecided::test_the_check_would_notice_a_conditional_heading" \
   "the detector cannot see a conditional heading"
+
+# --- the topology decision of 2026-11-02 ---------------------------------
+#
+# The operator settled the shape: one container. These mutations break each
+# part of that decision on purpose. If one of them stays green, the decision
+# is a suggestion, and the next reader is free to design a second container
+# against it.
+
+echo "== the one-container decision is no longer on the record =="
+mutate docs/ROADMAP.md \
+  '* **The sandbox is one container.** 2026-11-02, operator.' \
+  '* **The sandbox is one container.** (date forgotten), operator.' \
+  "$TESTS::TestTheOneContainerDecision::test_the_decision_is_on_the_record" \
+  "the one-container decision lost its date"
+
+echo "== the one-container decision becomes conditional again =="
+mutate docs/ROADMAP.md \
+  '* **The sandbox is one container.** 2026-11-02, operator.' \
+  '* **The sandbox may be one container.** 2026-11-02, operator, to be decided.' \
+  "$TESTS::TestTheOneContainerDecision::test_the_decision_is_not_conditional" \
+  "the one-container decision is conditional again"
+
+echo "== wave B comes back as something to build =="
+mutate docs/ROADMAP.md \
+  '**This wave was dropped on 2026-11-02.**' \
+  '**This wave was planned on 2026-11-02.**' \
+  "$TESTS::TestTheOneContainerDecision::test_wave_b_is_not_built" \
+  "wave B reads as a wave to build again"
+
+echo "== the browser is back in a container of its own =="
+mutate docs/ROADMAP.md \
+  '**It goes into the sandbox'"'"'s own container — the same one the model lives in.**' \
+  '**It goes into a container of its own, separate from the model.**' \
+  "$TESTS::TestTheOneContainerDecision::test_the_browser_wave_says_same_container" \
+  "the browser wave no longer says the browser shares the container"
+echo "== the browser wave claims a debugging port we do not open =="
+mutate docs/ROADMAP.md \
+  'carries `--remote-debugging-pipe` in its argv, the port flag is absent, and' \
+  'opens a devtools port on localhost, and' \
+  "$TESTS::TestTheOneContainerDecision::test_the_browser_wave_does_not_claim_a_debugging_port" \
+  "the browser wave no longer states the measured pipe-and-no-port fact"
+
+echo "== the browser wave drops the measurements it stands on =="
+mutate docs/ROADMAP.md \
+  '(`pidfd_getfd` hands over the socket);' \
+  '(the descriptor is not reachable);' \
+  "$TESTS::TestTheOneContainerDecision::test_the_browser_wave_carries_its_measurements" \
+  "the browser wave no longer carries its measurements"
+
+echo "== the detector cannot see a conditional decision any more =="
+mutate tests/test_roadmap_drift.py \
+  '        "to be decided",
+        "undecided",
+        "should we",
+    )
+
+    def setUp(self) -> None:
+        self.roadmap = ROADMAP.read_text(encoding="utf-8")' \
+  '        "a phrase the detector can no longer see",
+        "undecided",
+        "should we",
+    )
+
+    def setUp(self) -> None:
+        self.roadmap = ROADMAP.read_text(encoding="utf-8")' \
+  "$TESTS::TestTheOneContainerDecision::test_the_check_would_notice_a_conditional_decision" \
+  "the detector cannot see a conditional decision"
 
 echo
 echo "mutations caught: $PASS, escaped: $FAIL"
