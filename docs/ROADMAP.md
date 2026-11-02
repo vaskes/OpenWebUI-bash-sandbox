@@ -14,11 +14,19 @@ router were all reachable (`docs/SECURITY.md`, §1 and *"The egress the jail has
 measured from inside the sandbox"*). The gap is not the network. The gap is the
 absence of a **bound** on what the network may be used for.
 
+**Revised again on 2026-11-02, after the operator settled the topology.** The
+sandbox is one atomic service of one Docker, and the browser goes in *that*
+container — not in a container of its own. The previous revision of this
+document argued for the opposite, on the grounds that the browser's debugging
+channel is reachable by the model. That argument was partly wrong and partly
+right, and both halves were measured on 2026-11-02; the corrections are in
+*Wave F* below, and the operator's decision is in *Decisions on the record*.
+
 **What this document is.** The other sandbox gives its agent a wide surface: a
 terminal in a separate container, a browser, file writes, planning, memory, code
-execution, sub-agents, cron, a desktop. We give ours four MCP tools and a jail.
-The question this document answers is *what to build ourselves* to close the
-gaps that matter, and *what to refuse to build*.
+execution, sub-agents, cron, a desktop. We give ours twelve MCP tools and a
+jail. The question this document answers is *what to build ourselves* to close
+the gaps that matter, and *what to refuse to build*.
 
 **What this document is not.** No code was copied. The other sandbox is MIT
 licensed, and a fork would have been the cheap way to get the surface — that is
@@ -31,6 +39,15 @@ Everything below is to be written here, under our rules.
 
 Decisions that are not ours to make again.
 
+* **The sandbox is one container.** 2026-11-02, operator. The sandbox is an
+  atomic service of one Docker: the agent, the model, and the browser live in
+  one container, and the executor is that container's own shell. A separate
+  executor service and a separate browser container are both off the table.
+  The operator's words: it looks like overdesign; the sandbox is an atomic
+  service of one Docker, and it can and should be simpler and live in one
+  container. The cost of that call is real and is measured below — it is not
+  free, and this document says what it costs rather than hiding it behind the
+  word "simpler".
 * **The browser goes in.** 2026-11-01, operator. A universal sandbox needs its
   own browser and its own wrappers; the split that exists today is an artefact
   of the parent bot's setup, not a design. Playwright driving Chromium, in our
@@ -82,10 +99,12 @@ mounts  docker_mount_cwd_to_workspace: false  ->  the executor does NOT see
 The agent's file tools write into the agent's workspace; the executor's
 commands run somewhere else entirely. Two worlds, one agent.
 
-### Ours: 4 tools, and the jail around them
+### Ours: 12 tools, and the jail around them
 
 ```
-MCP      bash, read_file, file_info, delete_file
+MCP      bash, read_file, file_info, delete_file, write_file, patch,
+         search_files, vision_analyze, todo_list, memory, session_search,
+         clarify
 HTTP     /healthz /metrics /sessions /sessions/{id}/exec /sessions/{id}/capture
          /sessions/{id}/output /files /files/meta
 jail     user 1000:1000, cap_drop ALL, no-new-privileges, read-only rootfs,
@@ -111,12 +130,35 @@ file fence: the audit trail of the file tools was empty while the model was
 busy writing. This was the cheapest gap to close and the most embarrassing one
 to have.
 
-**2. The executor and the agent are the same container.** Our `exec` runs in
-tmux inside the agent's own container. Whatever the model wrote into the
-workspace is sitting right there for the executor, and whatever the executor
-wrote is sitting right there for the model. Their design separates the two;
-ours does not, and the separation is what makes "the workspace is evidence, not
-instructions" a structural property instead of a convention.
+**2. The executor and the agent are the same container.** — **closed by decision
+on 2026-11-02, not by build.** Our `exec` runs in tmux inside the agent's own
+container, so whatever the model wrote into the workspace is sitting right
+there for the executor, and whatever the executor wrote is sitting right there
+for the model. Their design separates the two; ours does not, and the
+separation is what makes "the workspace is evidence, not instructions" a
+structural property instead of a convention.
+
+The operator closed this gap by choosing the simpler topology: one container,
+one uid, one filesystem. The price is paid in the one place it can be paid —
+the model and its executor share a world — and the two things that shared
+world could take from each other were measured on 2026-11-02, not assumed:
+
+* the model's shell and the agent run as **the same uid (1000)**, so the model
+  can read the agent's own environment out of `/proc/<pid>/environ` — measured:
+  a same-uid sibling reads another process's `AGENT_TOKEN` without privilege
+  (the agent's inbound token is therefore not a secret from the model, and the
+  HTTP door's token is a door the model can already open);
+* the model's shell can attach to a process of the same uid and take its file
+  descriptors — measured: `PTRACE_ATTACH` succeeds and `pidfd_getfd` hands over
+  the descriptor (see wave F, where this is the measured consequence that
+  decides the browser's shape).
+
+What the decision does **not** change: the file fence. The workspace is still
+attacker-controlled, the agent's tools still refuse to hand it to an
+interpreter, and the audit trail of our own tools is still ours. The rule
+"the workspace is evidence, not instructions" becomes a **convention enforced
+by our code**, not a property of the topology. That is the trade, and it is the
+operator's to make.
 
 **3. The jail has the internet, and nothing bounds what the internet is used
 for.** This gap was written down wrong the first time. The jail's outbound
@@ -265,27 +307,35 @@ incomplete.
 **Shipped in v2.22.0** — see *Shipped* above. The claim this section used to
 make about the HTTP side was false; the correction is recorded there.
 
-### Wave B — the executor gets its own container
+### Wave B — not built, by decision
 
-Our agent container stops executing commands itself. Commands go to a separate
-executor service, reached over HTTP with its own token, with:
+**This wave was dropped on 2026-11-02.** The operator decided that the sandbox
+is one atomic service of one Docker, and that the executor is that container's
+own shell rather than a separate service reached over HTTP with its own token.
+The separate-executor shape is therefore not on the roadmap, and nothing below
+describes a container of its own.
 
-* its own image (read-only rootfs, `cap_drop ALL`, `no-new-privileges`, the
-  same pids/CPU/memory caps we already set);
-* the workspace mounted read-write **only** if a task needs it, and the
-  agent's own state directory never mounted;
-* no `/var/run/docker.sock` anywhere near it — the agent does not get the
-  daemon, so it cannot spawn a container of its own;
-* no network by default, and an explicit policy for the network it does get.
+The reasoning is worth keeping, because the shape it proposed was not
+arbitrary: a separate executor would have given the model a filesystem it could
+not see, and the agent's secrets a process the model could not read. Both of
+those properties are gone by decision, and the cost was measured rather than
+assumed — see gap 2, where the same-uid facts that replace them are recorded.
 
-*Red:* the executor cannot see the agent's secrets; the executor cannot see the
-host's docker socket; a command that tries to reach either is refused by the
-image, not by a check.
+What remains of the idea, and it is not nothing:
 
-This wave is the expensive one and it changes the deployment topology, so it
-goes last of the "must have" waves and only after the operator has picked the
-option below. Wave F depends on the same shape — a service of its own, in a
-container of its own — so B should land before F rather than beside it.
+* the agent's **own state** (`.agent-sessions.json`, `.agent-memory.json`)
+  still lives in the workspace, which the model owns. Moving it out of the
+  model's directory is a cheap change with the same effect on the state file,
+  and it is worth doing on its own account — not because the executor splits.
+* the model can read the agent's own token out of `/proc/<pid>/environ`,
+  because both run as uid 1000. A separate executor would have fixed that for
+  the executor's world only; the agent's token is the agent's own door, and the
+  model's shell is already inside the agent's container.
+
+*Red:* none — this wave does not land, so there is no fence to make red. The
+property it proposed is instead recorded as a measured fact, and the tripwire
+that guards the *shape* of the decision is `tests/test_roadmap_drift.py`
+(§`TestTheOneContainerDecision`).
 
 ### Wave C — eyes
 
@@ -320,66 +370,110 @@ remembered (in memory, bounded, and gone with the session).
 
 ### Wave E — fewer round trips, and scale
 
-* `execute_code` — Python inside the executor that may call *our* tools and
+* `execute_code` — Python inside the jail that may call *our* tools and
   nothing else, with a wall-clock and memory budget. The tool surface it can
   reach is exactly the fence the tools already have.
-* `delegate_task` — sub-agents with their own context, each in the executor,
-  each with the same jail.
+* `delegate_task` — sub-agents with their own context, each in the same jail,
+  each with the same bounds.
 
-### Wave F — the browser, in the sandbox
+The executor here is the sandbox's own container, like everything else: there
+is no second service to run code in, by the operator's decision of 2026-11-02.
+
+### Wave F — the browser, in the same container
 
 **Decided: it goes in.** The split that exists today is an artefact of the
 parent bot carrying a browser and a search tool of its own; a universal
 sandbox has to stand alone. So: Playwright driving Chromium, in our own image,
 behind our own MCP wrappers, written here. No code from the other sandbox.
 
-**It needs a container of its own, and that is forced by two measured facts
-about our own stack — not by taste.**
+**It goes into the sandbox's own container — the same one the model lives in.**
+This reverses the argument the previous revision of this document made. That
+revision claimed two measured facts forced a container of its own:
 
-* The model's shell runs in the same container, in the same uid, as everything
-  else in it. A browser whose debugging port is reachable on localhost is
-  reachable by the model: `curl http://127.0.0.1:9222/json` is all it takes to
-  drive the browser without our wrapper and without our policy.
-* The agent's own token is readable out of `/proc/<pid>/environ` of the agent's
-  process (measured 2026-10-29). A door authenticated by a token the agent
-  holds is therefore not a door the model is stopped by.
+> *A browser whose debugging port is reachable on localhost is reachable by the
+> model: a single `curl` of the devtools endpoint is all it takes.*
 
-A separate container with its own network is the only arrangement in which the
-browser is reachable by our wrapper and by nothing else. This is the same
-shape as wave B, and it is why B should land first.
+**That claim was false for our own implementation, and the measurement is
+what replaced it.** Playwright launches Chromium with `--remote-debugging-pipe`
+— a socketpair, not a TCP port. Measured on 2026-11-02: the browser process
+carries `--remote-debugging-pipe` in its argv, the port flag is absent, and
+the process opens **zero** listening TCP sockets. There is no devtools
+endpoint on localhost to curl. A reader who took the old paragraph at face
+value would have built a container boundary against a port that does not
+exist.
 
-**The policy has to live in the browser, not in the wrapper.** If the
-allowlist, the size caps and the credential rules are enforced only by our MCP
-tool, the model bypasses all of them by talking to the browser directly. So
-the browser service enforces them itself: our wrapper is a convenience, the
-fence is the service. *Red:* a URL outside the operator's allowlist is refused
-by the browser service itself, not by the tool that called it.
+The second old claim survives: the agent's own token is readable out of
+`/proc/<pid>/environ` (measured 2026-10-29, and re-measured on 2026-11-02 as a
+same-uid read with no privilege needed). But in one container that is not a
+reason for a separate browser container: the model's shell is *already* inside
+the agent's container and *already* reads that token. Splitting the browser out
+would not have hidden it.
 
-**No credentials of ours, ever.** The profile is a credential store the moment
-a session logs in anywhere. It lives in tmpfs, per session, and it never lives
-in the workspace. The v2.20.0 rule applies to it as much as to anything else:
-the workspace is attacker-controlled, and a browser profile is a set of files the
-browser *trusts*, so a planted profile is code the browser will run. The
-profile is ephemeral, and it is outside the workspace.
+**And the honest reason to know all this: the browser is not a fence against
+the model, and one container makes that plainer rather than worse.** Measured
+on 2026-11-02, as uid 1000 — the model's own uid in the jail:
 
-**Chromium's own sandbox is the thing to measure, not to assume.** A renderer
-compromise is the browser's worst case, and Chromium's answer to it is its own
-sandbox — which under `cap_drop ALL`, `no-new-privileges` and a read-only rootfs
-may not be available at all, in which case the browser runs with
-`--no-sandbox` and a renderer bug becomes code execution in the browser's
-container. That is the reason the browser is a container of its own with
-nothing in it worth stealing, and the reason these have to be measured before
-the wave lands rather than guessed at:
+* a same-uid sibling **can attach** to the browser's driver process
+  (`PTRACE_ATTACH` succeeds) and **can duplicate its file descriptors**
+  (`pidfd_getfd` hands over the socket);
+* having done that, it **can inject a CDP command and read the answer** — the
+  hijack returned a live `Target.getTargets` result.
 
-* does Chromium start under our posture, and does it need `--no-sandbox`?
-* what does it cost in image size, in resident memory, and in processes — the
-  jail's budget is `pids_limit` 256 and 2 GB (4 GB in production)?
-* how long is a cold start, and does an MCP call have to wait for it?
+So a model that wants to drive the browser without our wrapper can. It does not
+need to attack anything: it runs in the same container, under the same uid,
+with the same reach the browser has. The old document's conclusion — "the
+policy has to live in the browser, not in the wrapper" — was aiming at a
+boundary that does not exist in either topology. What the browser's own policy
+*does* bound is the **damage a compromised page can do**, not the model. That
+is a real and worth-while property, and it is the one wave F actually buys.
 
-*Red:* the browser's own policy refuses an address outside the allowlist; a
-page cannot write outside the workspace; the profile directory is not inside
-the workspace; no cookie from any session outlives the session; the browser
-container holds none of our credentials.
+**Therefore the fences are ours to keep, in our code, and they are:**
+
+* **the URL allowlist lives in the wrapper**, and the wrapper is what the
+  operator talks to. It bounds what our tool will fetch on request. It is not a
+  boundary against the model — the model can reach the open web with `curl`
+  today, and the measured hijack above means it can reach the browser too.
+* **no credentials of ours, ever.** The profile is a credential store the
+  moment a session logs in anywhere. It lives in tmpfs, per session, and it
+  never lives in the workspace. The v2.20.0 rule applies to it as much as to
+  anything else: the workspace is attacker-controlled, and a browser profile is
+  a set of files the browser *trusts*, so a planted profile is code the browser
+  will run. The profile is ephemeral, and it is outside the workspace.
+* **the size and time caps** on the answer, so a page cannot flood the model's
+  context or the session record.
+
+**Chromium's own sandbox is the thing to measure, and it was measured.**
+Chromium has two sandbox backends and our posture allows neither in the real
+jail:
+
+* the **setuid** backend needs the `chrome_sandbox` helper to be setuid-root —
+  it is shipped mode `0755`, and `no-new-privileges` makes the setuid bit
+  inert anyway;
+* the **namespace** backend needs unprivileged user namespaces. On the
+  development host `unshare -Ur` succeeds as uid 1000
+  (`unprivileged_userns_clone=1`), and under it Chromium's renderer lands in
+  its own user namespace with a seccomp filter — measured, the renderer
+  processes carry `seccomp=2` in a namespace separate from the browser's. On
+  the **production** host the same command is `EPERM` — the seccomp filter is
+  active (`docs/SECURITY.md`, §"The container boundary, as measured on the
+  production host").
+
+So on production Chromium will run with `--no-sandbox`, because with neither
+backend available it refuses to start otherwise — measured: forcing the
+namespace backend off yields *"Chromium sandboxing failed!"*. The consequence
+has to be stated plainly: **a renderer compromise on production is code
+execution as uid 1000 inside the jail.** That is the same uid the model's own
+shell runs as, so it grants the attacker nothing the model does not already
+have — and it grants it to whoever can get a malicious page rendered. That is
+the real cost of wave F, and it is why the profile rules are not negotiable.
+
+**What it costs in resources** (measured 2026-11-02, one page, uid 1000):
+Chromium adds **9–10 processes** (against the jail's `pids_limit` 256),
+**~320 MB PSS** (~880 MB RSS summed over processes, which double-counts shared
+pages) against `mem_limit` of 2 GB (dev) / 4 GB (production), a **~1.0–1.2 s
+cold start**, and **~390 MB** of browser in the image. The pids and memory fit;
+the cold start is what an MCP call has to wait for, and a warm browser is
+therefore worth keeping between calls.
 
 **The tools, in our style** (`browser_` prefix, ours, not theirs):
 
@@ -390,11 +484,10 @@ container holds none of our credentials.
 
 **What the browser does not change.** It does not give the model reach it did
 not have: the jail's egress was already unrestricted, and that is measured, not
-assumed. What it adds is a **renderer** for content the model did not write,
-and — if we ever let it be one — a **logged-in client**. The second is why the
-credential rules are not negotiable, and why the browser gets its own egress
-allowlist even though the model keeps its unrestricted `curl`: the allowlist
-bounds the *blast radius of a compromised renderer*, not the model's reach.
+assumed. What it adds is a **renderer for content the model did not write** —
+and with the sandbox unavailable on production, a renderer that can be made to
+execute code in the jail. That second half is why the credential rules are not
+negotiable, and why the profile is per-session and outside the workspace.
 
 **And what it does not bring back.** The research capability that v2.13.0
 removed stays removed. We ship no search tool, no index and no engine to query.
@@ -405,8 +498,12 @@ the subject of question 2 — not a research capability in disguise.
 
 * **No fork, no copied code.** MIT would allow it. The concepts differ, and
   the concept is the product.
-* **No `docker.sock` for the agent.** The agent may not drive the daemon. The
-  executor is a service we run, not a container the agent spawns.
+* **No `docker.sock` for the agent.** The agent may not drive the daemon, and
+  it does not spawn containers of its own — not for the executor, not for the
+  browser.
+* **No second container.** One atomic service of one Docker, by the operator's
+  decision of 2026-11-02. The executor is the sandbox's own shell and the
+  browser is a process inside the sandbox's own container.
 * **No `CAP_SYS_ADMIN`, no privileged init container, no `allow_private_urls`.**
   Their stand runs on a LAN with trusted agents; ours does not.
 * **No unattended `allow_force_pushes`-style escapes.** Every new tool is
@@ -418,27 +515,22 @@ the subject of question 2 — not a research capability in disguise.
 
 ## Open questions for the operator
 
-1. **Wave B — the separation.** Two options: (a) a separate executor service,
-   which is a topology change and costs a release of its own; or (b) keep one
-   container and accept that the agent's files and the executor share a
-   filesystem. Option (a) is the structural version of "the workspace is
-   evidence, not instructions"; option (b) leaves it a convention. We
-   recommend (a), and we want the decision on the record before the work
-   starts. Wave F needs the same shape, so this answer also decides where the
-   browser lives.
-2. **The bound on reach.** The jail's reach is unrestricted today, and that is
-   measured. The browser makes the question sharper, not new: does the browser
-   service get its own egress allowlist — narrowing the blast radius of a
-   compromised renderer — while the model keeps its unrestricted `curl`? And
-   does the jail's own unrestricted egress stay, or does it become the thing
-   we narrow? If it stays, then wave F's allowlist is a policy about one tool
-   and not a boundary, and this document has to say so rather than imply
-   otherwise.
-3. **Order.** We propose A, then C (eyes and ears are what an agent actually
-   feels missing), then D, then B, then F, then E. B comes before F because
-   the browser needs a container of its own and building that shape twice would
-   be waste; F comes before E because the browser is the wave the operator has
-   already asked for. The operator may reorder.
+1. **The bound on reach.** The jail's reach is unrestricted today, and that is
+   measured. The browser makes the question sharper, not new: does the whole
+   jail's egress stay as it is, or does the stack narrow it? In one container
+   the browser and the model share the network, so an allowlist that covers
+   only the browser would narrow the *tool* and not the *jail* — and the model
+   can reach the browser without the wrapper anyway (measured). If it stays,
+   then wave F's allowlist is a policy about one tool and not a boundary, and
+   this document has to say so rather than imply otherwise. It says so above.
+2. **Order.** We propose F, then E. F comes first because the browser is the
+   wave the operator has already asked for, and because the measurements above
+   need to land as code before the next wave is designed on top of them. The
+   operator may reorder.
+3. **The agent's own state file.** Moving `.agent-sessions.json` and
+   `.agent-memory.json` out of the model's directory is cheap and does not
+   need a second container. Whether it is worth a release of its own is the
+   operator's call — it was left in place here because it was not asked for.
 
 ## How this document stays honest
 
@@ -452,3 +544,16 @@ tripwire, because the first version of this file was wrong about the network:
 the egress line above is compared against the compose files and the image, and
 the browser wave is compared against the decision it records. A mutation
 script breaks each of them on purpose and expects the named test to go red.
+
+The topology is pinned too, because a decision that is not pinned becomes a
+suggestion: `tests/test_roadmap_drift.py` checks that the document still
+records the one-container decision, that wave B still reads as *not built*,
+and that the browser wave still says the browser lives in the same container.
+The same script mutates each of those on purpose.
+
+And the second revision of this file was wrong in the other direction — it
+claimed a debugging port that our own implementation does not open. That is
+why the browser wave now carries its measurements inline: the port claim, the
+same-uid hijack, the sandbox backends, the resource cost. A plan built on a
+guessed fact is a plan built on a wrong fact, and the operator has to be able
+to check the number rather than trust the paragraph.

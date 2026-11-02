@@ -347,6 +347,16 @@ class TestTheBrowserWaveIsDecided(unittest.TestCase):
                     f"the browser wave does not say it runs {engine} — the wave "
                     "has to be buildable from the document alone",
                 )
+        # The sentence that names the engine, not just the words somewhere
+        # in the body: the wave has to say what runs in the place where it
+        # says what runs, and that is the sentence a reader acts on.
+        self.assertIn(
+            "Playwright driving Chromium",
+            body,
+            "the browser wave no longer names the engine in the sentence that "
+            "declares it — the words may still appear elsewhere, but the wave "
+            "has to say what it runs where it says what it runs",
+        )
 
     def test_the_browser_wave_uses_wrappers_of_our_own(self) -> None:
         """Our wrappers, not theirs."""
@@ -376,6 +386,185 @@ class TestTheBrowserWaveIsDecided(unittest.TestCase):
         self.assertTrue(
             any(phrase in heading.lower() for phrase in self.CONDITIONAL),
             "the check cannot see a conditional heading",
+        )
+
+
+class TestTheOneContainerDecision(unittest.TestCase):
+    """The operator decided the topology on 2026-11-02: one container.
+
+    A decision that is not pinned becomes a suggestion. The previous
+    revision of ``docs/ROADMAP.md`` argued for a separate executor
+    service and a separate browser container; the operator closed both
+    questions in favour of the simpler shape -- the sandbox is one
+    atomic service of one Docker, and the browser goes into the
+    container the model already lives in.
+
+    The cost of that call is real and the document says so: the model
+    and the agent share a uid, so the model can read the agent's own
+    environment and attach to its processes. Those are measured facts,
+    recorded in the document, and they are the reason the browser's
+    fences live in our code rather than in a topology.
+
+    These checks pin three things: the decision is on the record and is
+    not conditional, wave B still reads as *not built*, and the browser
+    wave still says the browser lives in the same container. Each of
+    them can be made red by ``tools/mutation-check-roadmap.sh``.
+    """
+
+    #: Phrases that turn a decided wave back into a question. They are
+    #: phrases, not single words: "maybe" and "perhaps" are ordinary
+    #: English, and a tripwire that fires on ordinary English is a
+    #: tripwire that gets switched off.
+    CONDITIONAL = (
+        "if it is wanted",
+        "to be tested by the operator",
+        "in, or not?",
+        "to be decided",
+        "undecided",
+        "should we",
+    )
+
+    def setUp(self) -> None:
+        self.roadmap = ROADMAP.read_text(encoding="utf-8")
+
+    def _section(self, heading: str) -> str:
+        """The body of one ``##`` section, up to the next one.
+
+        A decision is recorded in a section, not scattered through the
+        file: what the check reads is the section, so what it checks is
+        the section.
+        """
+        pattern = rf"^{re.escape(heading)}\s*$(.*?)(?=^##\s|\Z)"
+        match = re.search(pattern, self.roadmap, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match, f"docs/ROADMAP.md has no {heading!r} section")
+        return match.group(1)
+
+    def _wave(self, marker: str) -> str:
+        """The body of the wave whose heading contains ``marker``."""
+        headings = [
+            match.group(0) for match in re.finditer(r"^###\s+Wave\b.*$", self.roadmap, re.MULTILINE)
+        ]
+        for heading in headings:
+            if marker.lower() not in heading.lower():
+                continue
+            rest = self.roadmap[self.roadmap.index(heading) :]
+            following = re.search(r"^#{2,3}\s+\S", rest[len(heading) :], re.MULTILINE)
+            end = len(heading) + following.start() if following else len(rest)
+            return rest[:end]
+        self.fail(f"docs/ROADMAP.md has no wave matching {marker!r}")
+
+    def test_the_decision_is_on_the_record(self) -> None:
+        """The one-container decision is recorded, and it is dated."""
+        section = self._section("## Decisions on the record")
+        self.assertIn(
+            "one container",
+            section.lower(),
+            "the decision to keep the sandbox in one container is not on the "
+            "record — the operator settled it on 2026-11-02 and the document "
+            "has to say so",
+        )
+        self.assertIn(
+            "2026-11-02",
+            section,
+            "the one-container decision carries no date — a decision with no date is a rumour",
+        )
+
+    def test_the_decision_is_not_conditional(self) -> None:
+        """A settled decision must not read like an open question."""
+        section = self._section("## Decisions on the record")
+        for phrase in self.CONDITIONAL:
+            with self.subTest(phrase=phrase):
+                self.assertNotIn(
+                    phrase,
+                    section.lower(),
+                    f"the decisions section is conditional again: {phrase!r}. The "
+                    "operator settled the topology on 2026-11-02.",
+                )
+
+    def test_wave_b_is_not_built(self) -> None:
+        """Wave B was dropped; it must not come back as a promise."""
+        wave = self._wave("Wave B")
+        self.assertIn(
+            "not built",
+            wave.lower(),
+            "wave B reads as something to build again. The operator dropped it "
+            "on 2026-11-02: the executor is the sandbox's own shell.",
+        )
+        self.assertIn(
+            "was dropped",
+            wave.lower(),
+            "wave B no longer says it was dropped — the heading alone is not "
+            "enough, because the body is what a reader acts on",
+        )
+        self.assertIn(
+            "2026-11-02",
+            wave,
+            "wave B does not say when it was dropped",
+        )
+
+    def test_the_browser_wave_says_same_container(self) -> None:
+        """The browser lives where the model lives."""
+        wave = self._wave("Wave F")
+        self.assertIn(
+            "It goes into the sandbox's own container",
+            wave,
+            "the browser wave does not say the browser goes into the sandbox's "
+            "own container. The operator decided that on 2026-11-02, and the "
+            "wave has to be buildable from the document alone.",
+        )
+
+    def test_the_browser_wave_does_not_claim_a_debugging_port(self) -> None:
+        """The old paragraph argued against a port we do not open.
+
+        Playwright launches Chromium with ``--remote-debugging-pipe``, a
+        socketpair, not a TCP port: measured on 2026-11-02, the browser
+        opens zero listening sockets and carries no port flag. A reader
+        who took the old text at face value would have built a boundary
+        against a port that does not exist, so the measurement has to be
+        here and the port must not creep back.
+        """
+        wave = self._wave("Wave F")
+        self.assertIn(
+            "the port flag is absent",
+            wave,
+            "the browser wave no longer states the measured fact that the port "
+            "flag is absent. Playwright drives Chromium over a pipe "
+            "(--remote-debugging-pipe), and the process opens no listening "
+            "TCP socket at all — measured 2026-11-02.",
+        )
+        self.assertIn(
+            "zero",
+            wave,
+            "the browser wave no longer states that the browser opens zero "
+            "listening TCP sockets — that is the measurement the old, wrong "
+            "paragraph was refuted with.",
+        )
+        self.assertNotIn(
+            "9222",
+            wave,
+            "the browser wave names a debugging port. Playwright drives "
+            "Chromium over a pipe (--remote-debugging-pipe), and the process "
+            "opens no listening TCP socket at all — measured 2026-11-02.",
+        )
+
+    def test_the_browser_wave_carries_its_measurements(self) -> None:
+        """The cost of the decision is written down, not implied."""
+        wave = self._wave("Wave F")
+        for fact in ("pidfd_getfd", "seccomp", "PSS"):
+            with self.subTest(fact=fact):
+                self.assertIn(
+                    fact,
+                    wave,
+                    f"the browser wave does not mention {fact!r} — the "
+                    "measurements are what make the wave's shape honest",
+                )
+
+    def test_the_check_would_notice_a_conditional_decision(self) -> None:
+        """A check that cannot see anything is a check that proves nothing."""
+        planted = "the sandbox may be one container, to be decided"
+        self.assertTrue(
+            any(phrase in planted.lower() for phrase in self.CONDITIONAL),
+            "the check cannot see the sentence it was written for",
         )
 
 
