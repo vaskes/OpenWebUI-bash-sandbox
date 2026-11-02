@@ -4,6 +4,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.24.0] - 2026-11-01
+
+The agent gets a plan, notes, a recall and a way to ask.
+
+### Added
+
+- **Four more tools on the MCP door: `todo_list`, `memory`,
+  `session_search` and `clarify`.** The model's own state — the four
+  things an agent actually feels missing.
+  - `todo_list` is the session's plan. It is **replaced**, not merged:
+    the model holds the whole plan, and a plan it cannot rewrite is a
+    plan it cannot finish. It is bounded, and the session record
+    (`GET /sessions`) carries it.
+  - `memory` is the model's own notes, in a file — `.agent-memory.json`,
+    beside the session registry — that the operator can read, edit and
+    delete. Not a hidden profile: the file is a file, and it survives
+    the agent's restart.
+  - `session_search` finds a command a session ran earlier. The
+    pattern is literal text, the answer is bounded, and the history is
+    in memory: a session that dies takes it with it.
+  - `clarify` puts a question to the operator.
+- **Seven new budgets**, one for each thing that can grow: the task
+  list and its items, the memory and its notes, the remembered commands
+  and their length, and the number of matches one recall returns.
+- **The session tools are counted**: `sandbox_agent_todo_ops_total`,
+  `sandbox_agent_memory_ops_total`,
+  `sandbox_agent_session_searches_total`,
+  `sandbox_agent_clarify_total` and
+  `sandbox_agent_session_ops_refused_total`.
+
+### Changed
+
+- **The session record carries the plan and the question.**
+  `GET /sessions` answers with `todo` and `question` beside the fields
+  it already had. The HTTP door's own contract did not change: the
+  same routes, the same status codes.
+- **The commands a session runs are remembered** (in memory, bounded),
+  because a query over the sessions is only interesting if the
+  sessions remember what they ran.
+
+### Security
+
+- **A note is context, never permission.** The memory holds what the
+  model wrote down; it does not authorize anything. Only the operator's
+  words do — and the tool's description says so, so the model reads it
+  before it uses it.
+- **The question needs no new door.** The MCP elicitation — the
+  protocol's own way for a server to ask the client something — needs
+  a back-channel for a request the *server* starts, and the stateless
+  Streamable HTTP transport has none. It was measured: the SDK answers
+  "this transport context has no back-channel for server-initiated
+  requests". So the channel is the caller: the question goes back in
+  the tool's answer, and the operator's answer comes with the next
+  message. The stateless door stays what it is — a deliberate property
+  of this deployment.
+
 ## [2.23.0] - 2026-11-01
 
 The agent gets eyes — through the operator's own endpoint.
