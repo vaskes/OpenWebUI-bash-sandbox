@@ -4,6 +4,89 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.25.0] - 2026-11-02
+
+The sandbox gets a browser — in its own container, under our own tools.
+
+### Added
+
+- **Three more tools on the MCP door: `browser_open`, `browser_screenshot`
+  and `browser_close`.** The browser is **inside the sandbox's own
+  container**: the operator's decision of 2026-11-02 is that the sandbox
+  is one atomic service of one Docker, so there is no browser sidecar,
+  no second container, and no code from any other sandbox. Playwright
+  drives Chromium; both are in the image.
+  - `browser_open` navigates and returns the rendered text, bounded.
+  - `browser_screenshot` takes a PNG of the open page and puts it in the
+    workspace, through the same fence every other write uses.
+  - `browser_close` drops the browser context of a session: the page,
+    its cookies and its profile go, and the next page opens clean.
+- **The browser's own knobs**: `AGENT_BROWSER_ALLOWED_HOSTS`,
+  `AGENT_BROWSER_TIMEOUT`, `AGENT_BROWSER_MAX_TEXT_BYTES`,
+  `AGENT_BROWSER_MAX_SCREENSHOT_BYTES` and `AGENT_BROWSER_SETTLE_MS`.
+  The list of hosts is **empty by default**, and an empty list is a
+  **closed door**: the tool refuses and says so.
+- **The browser is counted**: `sandbox_agent_browser_requests_total`,
+  `sandbox_agent_browser_screenshots_total` and
+  `sandbox_agent_browser_refused_total`.
+- **The image carries the browser.** Playwright is a runtime dependency
+  of the agent, and the Chromium build is downloaded in the image build
+  with the very same version of the driver — so the two are always the
+  pair that was tested. The image carries **one** Chromium: the build
+  passes `--no-shell`, which leaves out the *headless shell* (a second
+  browser, 273 MB), and the driver launches with `channel="chromium"` so
+  that its headless mode uses the full build it does have — 403 MB of
+  browser instead of 681 MB.
+
+### Security
+
+- **The list of hosts is a policy about one tool, not a boundary.** The
+  jail's egress is unrestricted and measured (`docs/SECURITY.md`), and
+  the model's own shell reaches the open web with `curl`; a same-uid
+  sibling can also attach to the browser's driver and speak CDP to it
+  (measured 2026-11-02). What the list buys is narrower and real:
+  **our tool** does not become a second, unaudited door to the web. The
+  document says so rather than implying otherwise.
+- **A redirect cannot walk the browser off the list.** Measured:
+  Chromium follows an HTTP redirect inside its own network stack and
+  never hands that follow-up to the route handler, so a route handler
+  alone is not a fence. The door therefore checks the host **again**
+  after the navigation, and a page that ended up elsewhere is refused
+  and its content is discarded.
+- **The browser keeps no credentials.** Every session gets a fresh
+  context — no cookie, no token, no saved password — and nothing is
+  written into the workspace but the PNG the caller asked for. The
+  browser's own temporary files live on the tmpfs at `/tmp`, never in
+  the workspace, and the v2.20.0 rule applies to them: the workspace is
+  attacker-controlled, and a browser profile is a set of files the
+  browser *trusts*.
+- **Chromium's own sandbox is measured, not assumed.** In the jail
+  neither backend is available — the setuid helper is inert under
+  `no-new-privileges`, and the namespace backend needs user namespaces
+  the jail's seccomp filter refuses (`unshare -Ur` is `EPERM`). So the
+  browser starts with `--no-sandbox` there, and the consequence is
+  stated plainly: a renderer compromise in the jail is code execution
+  as uid 1000 — the same uid the model's own shell runs as. Where the
+  namespace backend *is* available, the browser keeps its own sandbox,
+  and the tool says which posture it got.
+- **No debugging port.** Playwright launches Chromium with
+  `--remote-debugging-pipe`, a socketpair — measured: the browser opens
+  **zero** listening TCP sockets. There is no devtools endpoint on
+  localhost to curl.
+- **The browser does not inherit the agent's environment.** Playwright's
+  `env` replaces the environment rather than adding to it, and the door
+  uses that on purpose: the agent's token is in the agent's environment,
+  and a same-uid sibling can read `/proc/<pid>/environ` — so a browser
+  that inherited it would carry the agent's credential in a file the
+  model can read. The browser gets six values, all pointing at the
+  tmpfs.
+- **Chromium gets a writable home it did not ask for.** It takes its home
+  from the passwd entry and ignores `HOME`; `/home/agent` is on a
+  read-only rootfs, so the crashpad handler cannot create its database
+  and the browser dies at launch with `SIGTRAP` and *"chrome_crashpad
+  handler: --database is required"*. The door gives it writable,
+  pre-created `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` on the tmpfs.
+
 ## [2.24.0] - 2026-11-01
 
 The agent gets a plan, notes, a recall and a way to ask.
