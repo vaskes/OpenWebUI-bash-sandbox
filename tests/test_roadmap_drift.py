@@ -790,5 +790,73 @@ class TestTheUnneededGapsAreClosed(unittest.TestCase):
                 )
 
 
+class TestTheGapStatusesMatchTheShippedWaves(unittest.TestCase):
+    """The gap list must say what actually shipped.
+
+    Gaps 1, 4, 5 and 9 were closed by waves A, C, D and F. The gap list
+    kept describing three of them as open — "No eyes", "are all absent",
+    "the browser is decided" — after the waves had landed. A reader of
+    that document would have planned work that was already done, and the
+    drift was invisible because nothing compared the two lists.
+
+    These checks compare the gap list with the shipped summary: a gap
+    that names a wave's version must name the version that wave carries,
+    and the shipped summary must still carry it. Each can be made red by
+    ``tools/mutation-check-roadmap.sh``.
+    """
+
+    # The document is read the same way in every decision test, so the reader
+    # is reused instead of growing a fifth copy of it.
+    _section = TestTheOneContainerDecision._section
+    _gap = TestTheOneContainerDecision._gap
+
+    #: gap number -> (wave letter, version that wave shipped)
+    SHIPPED = {
+        1: ("A", "v2.22.0"),
+        4: ("C", "v2.23.0"),
+        5: ("D", "v2.24.0"),
+        9: ("F", "v2.25.0"),
+    }
+
+    def setUp(self) -> None:
+        self.roadmap = ROADMAP.read_text(encoding="utf-8")
+
+    def test_every_shipped_gap_says_so(self) -> None:
+        """A gap that was closed by a wave says which version closed it."""
+        for number, (_wave, version) in self.SHIPPED.items():
+            with self.subTest(gap=number):
+                gap = self._gap(number)
+                self.assertIn(
+                    f"shipped in {version}",
+                    gap.lower(),
+                    f"gap {number} does not say it was shipped in {version} — the "
+                    "gap list still reads as open work",
+                )
+
+    def test_the_shipped_section_carries_the_same_versions(self) -> None:
+        """The shipped summary and the gap list name the same versions."""
+        shipped = self._section("## Shipped")
+        for number, (wave, version) in self.SHIPPED.items():
+            with self.subTest(wave=wave):
+                headings = re.findall(rf"^###\s+Wave\s+{wave}\b.*$", shipped, re.MULTILINE)
+                self.assertTrue(headings, f"the shipped summary has no wave {wave}")
+                self.assertIn(
+                    version,
+                    headings[0],
+                    f"wave {wave} does not carry {version} in the shipped "
+                    f"summary, but gap {number} claims it — one of the two "
+                    "lists is wrong",
+                )
+
+    def test_the_check_would_notice_a_wrong_version(self) -> None:
+        """A check that cannot see anything is a check that proves nothing."""
+        planted = "### Wave C — eyes — v2.99.0"
+        self.assertNotIn(
+            "v2.23.0",
+            planted,
+            "the check cannot see the heading it was written for",
+        )
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

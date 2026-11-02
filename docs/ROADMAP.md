@@ -190,13 +190,15 @@ whether the agent may fetch a URL it was given — it already can — but whethe
 the stack should keep that reach unbounded, and where the bound belongs. That
 is question 2 below.
 
-**4. No eyes.** No `vision_analyze`. The model cannot read a screenshot, a
+**4. No eyes.** — **shipped in v2.23.0**; see *Shipped* below. The gap was:
+there was no `vision_analyze`, so the model could not read a screenshot, a
 figure or a photo — even though our own stack runs a vision model (Strata) and
 the image has `pillow`.
 
-**5. No planning, memory, recall or clarification.** `todo_list`, `memory`,
-`session_search`, `clarify` are all absent. We already store sessions, so
-recall is mostly a query we have not written; the rest is missing outright.
+**5. No planning, memory, recall or clarification.** — **shipped in v2.24.0**;
+see *Shipped* below. The gap was: `todo_list`, `memory`, `session_search` and
+`clarify` were all absent. We already stored sessions, so recall was mostly a
+query we had not written; the rest was missing outright.
 
 **6. No skills.** — **not built, and not needed yet.** `skills_list`,
 `skill_view`, `skill_manage` are absent, and they stay absent for now: the
@@ -220,10 +222,12 @@ it to schedule — one operator, one agent, one conversation at a time. YAGNI,
 2026-11-03, operator. The trigger for revisiting this gap is a job that has to
 run unattended, not a date.
 
-**9. No browser, no desktop control.** `browser_exec` (Python over CDP),
-`browser_cdp`, `browser_dialog`, `browser_vault`, `computer_use`. The browser
-is decided: it goes in, in wave F. `computer_use` (control of a desktop) is out
-of scope: it needs a desktop to control, and we do not have one.
+**9. No browser, no desktop control.** — **shipped in v2.25.0**; see *Shipped*
+below. The gap was: no browser at all — `browser_exec` (Python over CDP),
+`browser_cdp`, `browser_dialog`, `browser_vault`, `computer_use` were all
+absent. The browser went in as wave F, wrapped by tools of our own. What is
+still out of scope is `computer_use` (control of a desktop): it needs a
+desktop to control, and we do not have one.
 
 **10. No background process management as a tool.** tmux sessions exist and
 the agent drives them through `bash`; `process_manage` would make that

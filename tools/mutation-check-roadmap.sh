@@ -291,6 +291,27 @@ mutate docs/ROADMAP.md \
   "$TESTS::TestTheUnneededGapsAreClosed::test_no_wave_claims_them" \
   "a wave now claims skills, which the operator closed by decision"
 
+echo "== a gap that shipped says the wrong version =="
+mutate docs/ROADMAP.md \
+  '**4. No eyes.** — **shipped in v2.23.0**' \
+  '**4. No eyes.** — **shipped in v2.99.0**' \
+  "$TESTS::TestTheGapStatusesMatchTheShippedWaves::test_every_shipped_gap_says_so" \
+  "gap 4 names a version that wave C did not ship"
+
+echo "== another shipped gap loses its status =="
+mutate docs/ROADMAP.md \
+  '**5. No planning, memory, recall or clarification.** — **shipped in v2.24.0**' \
+  '**5. No planning, memory, recall or clarification.**' \
+  "$TESTS::TestTheGapStatusesMatchTheShippedWaves::test_every_shipped_gap_says_so" \
+  "gap 5 reads as open work again"
+
+echo "== the shipped summary loses a version =="
+mutate docs/ROADMAP.md \
+  '### Wave C — eyes — v2.23.0' \
+  '### Wave C — eyes' \
+  "$TESTS::TestTheGapStatusesMatchTheShippedWaves::test_the_shipped_section_carries_the_same_versions" \
+  "the shipped summary no longer carries the version the gap list claims"
+
 echo
 echo "mutations caught: $PASS, escaped: $FAIL"
 [ "$FAIL" -eq 0 ]
