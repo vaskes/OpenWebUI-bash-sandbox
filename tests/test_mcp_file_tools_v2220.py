@@ -406,11 +406,15 @@ class TestTheToolsAreTheDocumentedTools(_Base):
             tool_names(),
             [
                 "bash",
+                "clarify",
                 "delete_file",
                 "file_info",
+                "memory",
                 "patch",
                 "read_file",
                 "search_files",
+                "session_search",
+                "todo_list",
                 "vision_analyze",
                 "write_file",
             ],
@@ -429,11 +433,15 @@ class TestTheToolsAreTheDocumentedTools(_Base):
             sorted(
                 [
                     "bash",
+                    "clarify",
                     "delete_file",
                     "file_info",
+                    "memory",
                     "patch",
                     "read_file",
                     "search_files",
+                    "session_search",
+                    "todo_list",
                     "vision_analyze",
                     "write_file",
                 ]

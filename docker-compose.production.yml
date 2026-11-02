@@ -162,6 +162,16 @@ services:
       - AGENT_VISION_MAX_PROMPT_BYTES=${AGENT_VISION_MAX_PROMPT_BYTES:-8k}
       - AGENT_VISION_MAX_ANSWER_BYTES=${AGENT_VISION_MAX_ANSWER_BYTES:-64k}
       - AGENT_VISION_TIMEOUT=${AGENT_VISION_TIMEOUT:-60}
+      # The bounds of the session tools: the task list, the memory and
+      # the recall. The model keeps its own state; none of it is an
+      # instruction channel.
+      - AGENT_TODO_MAX_ITEMS=${AGENT_TODO_MAX_ITEMS:-50}
+      - AGENT_TODO_MAX_ITEM_BYTES=${AGENT_TODO_MAX_ITEM_BYTES:-512}
+      - AGENT_MEMORY_MAX_NOTES=${AGENT_MEMORY_MAX_NOTES:-100}
+      - AGENT_MEMORY_MAX_NOTE_BYTES=${AGENT_MEMORY_MAX_NOTE_BYTES:-4k}
+      - AGENT_SESSION_HISTORY_MAX_COMMANDS=${AGENT_SESSION_HISTORY_MAX_COMMANDS:-100}
+      - AGENT_SESSION_HISTORY_MAX_COMMAND_BYTES=${AGENT_SESSION_HISTORY_MAX_COMMAND_BYTES:-1k}
+      - AGENT_SESSION_SEARCH_MAX_RESULTS=${AGENT_SESSION_SEARCH_MAX_RESULTS:-50}
       # The token the agent accepts on its own doors. It defaults to the
       # operator's stack token — one credential for the whole stack — which
       # is the simple single-operator shape. Set AGENT_INBOUND_TOKEN to a

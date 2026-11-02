@@ -98,10 +98,17 @@ from agent_config import (
     MCP_SEARCH_CEILING_RESULTS,
     MCP_SEARCH_MAX_RESULTS,
     MCP_SEARCH_TIME_BUDGET_SECONDS,
+    MEMORY_MAX_NOTE_BYTES,
+    MEMORY_MAX_NOTES,
     PANE_HEIGHT,
     PANE_WIDTH,
     PREINSTALLED_PYTHON_PATH,
+    SESSION_HISTORY_MAX_COMMAND_BYTES,
+    SESSION_HISTORY_MAX_COMMANDS,
+    SESSION_SEARCH_MAX_RESULTS,
     STDOUT_LIMIT_BYTES,
+    TODO_MAX_ITEM_BYTES,
+    TODO_MAX_ITEMS,
     UPLOAD_MAX_BYTES,
     VISION_API_KEY,
     VISION_MAX_ANSWER_BYTES,
@@ -298,6 +305,14 @@ METRICS.counter(
 METRICS.counter(
     "vision_refused_total",
     "Vision requests refused before the picture left the workspace.",
+)
+METRICS.counter("todo_ops_total", "Task list changes through the session tools.")
+METRICS.counter("memory_ops_total", "Memory changes through the session tools.")
+METRICS.counter("session_searches_total", "Recalls run through the session tools.")
+METRICS.counter("clarify_total", "Questions put to the operator through the session tools.")
+METRICS.counter(
+    "session_ops_refused_total",
+    "Session operations refused before they changed anything.",
 )
 
 
@@ -733,6 +748,12 @@ async def _reap_dead_sessions() -> list[str]:
     for sid, info in list(SESSIONS.items()):
         if info.get("tmux_name") not in alive:
             SESSIONS.pop(sid, None)
+            # The session's own state goes with it: a task list and a
+            # pending question belong to a session, and a session that
+            # is gone must not leave them behind for the next one.
+            TODO_LISTS.pop(sid, None)
+            PENDING_QUESTIONS.pop(sid, None)
+            SESSION_HISTORY.pop(sid, None)
             dead.append(sid)
     if dead:
         await _save_sessions()
@@ -920,6 +941,8 @@ async def list_sessions() -> dict[str, Any]:
                 "tmux_name": info["tmux_name"],
                 "cwd": info.get("cwd"),
                 "created": info["created"],
+                "todo": todo_list_state(sid),
+                "question": PENDING_QUESTIONS.get(sid),
             }
             for sid, info in SESSIONS.items()
         ]
@@ -1180,6 +1203,10 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
 
     await _tmux("send-keys", "-t", name, "-l", full_cmd)
     await _tmux("send-keys", "-t", name, "Enter")
+    # The command that ran is remembered, so the recall can find it
+    # later. It is remembered after it was typed: a command that was
+    # refused never ran and is not in the history.
+    remember_command(sid, body.command)
 
     start = time.time()
     output = ""
@@ -2888,6 +2915,274 @@ def search_workspace(
         "reason": reason,
         "limit": cap,
     }
+
+
+# ---------------------------------------------------------------------------
+# The session tools: a task list, a memory, a recall, a question
+# ---------------------------------------------------------------------------
+#: The commands each session ran, most recent last.
+#:
+#: In memory only, and that is deliberate: the registry on disk is a
+#: session's *identity* (its name, its directory, when it was made),
+#: and a transcript is not identity. A session that dies takes its
+#: history with it, and a restart of the agent starts the recall empty
+#: rather than resurrecting commands nobody asked it to run again.
+SESSION_HISTORY: dict[str, list[str]] = {}
+
+#: The task list of each session: the model's own plan.
+#:
+#: Keyed by the session id, like the history, and it dies with the
+#: session (the reaper drops both). The list is the model's plan and
+#: nothing else: it is not an instruction channel, and nothing in it
+#: authorizes anything.
+TODO_LISTS: dict[str, list[str]] = {}
+
+#: The question each session is waiting on. The door has no channel of
+#: its own — see :func:`ask_the_operator` — so the question is put to
+#: the caller, and the answer comes back in the next turn.
+PENDING_QUESTIONS: dict[str, str] = {}
+
+#: Where the memory lives: a file beside the session registry, so the
+#: operator can read it, edit it or delete it with the tools they
+#: already have. The memory is a file, not a hidden profile.
+MEMORY_FILE = os.path.join(os.path.dirname(SESSIONS_FILE) or ".", ".agent-memory.json")
+
+#: The marker that says an item of the task list is done.
+TODO_DONE_MARKER = "[x] "
+
+
+def _memory_read() -> list[str]:
+    """The notes, as they are on disk.
+
+    A file that cannot be read is an empty memory, not a crash: the
+    model may ask for one, and a broken file must not take the door
+    down with it.
+    """
+    try:
+        with open(MEMORY_FILE, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        return []
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.error("memory file unreadable (%s) — possible data loss", exc)
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(note) for note in data]
+
+
+def _memory_write(notes: list[str]) -> None:
+    """Put the notes on disk, atomically."""
+    tmp = f"{MEMORY_FILE}.tmp.{uuid.uuid4().hex[:8]}"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(notes, handle, ensure_ascii=False, indent=1)
+    os.replace(tmp, MEMORY_FILE)
+
+
+def remember_command(session_id: str, command: str) -> None:
+    """Remember that this session ran this command.
+
+    The recall searches these. The command is truncated to its budget,
+    because a command is a line and a line that is a megabyte long is
+    a script somebody pasted, not something to remember.
+    """
+    text = str(command or "").strip()
+    if not text:
+        return
+    limit = SESSION_HISTORY_MAX_COMMAND_BYTES
+    if len(text.encode("utf-8")) > limit:
+        text = text.encode("utf-8")[:limit].decode("utf-8", errors="ignore")
+    history = SESSION_HISTORY.setdefault(session_id, [])
+    history.append(text)
+    if len(history) > SESSION_HISTORY_MAX_COMMANDS:
+        del history[: len(history) - SESSION_HISTORY_MAX_COMMANDS]
+
+
+def todo_list_state(session_id: str) -> list[str]:
+    """The task list of a session, as it is."""
+    return list(TODO_LISTS.get(session_id, []))
+
+
+def set_todo_list(session_id: str, items: list[str]) -> list[str]:
+    """Replace the task list of a session.
+
+    The list is replaced, not merged: the model holds the whole plan,
+    and a plan it cannot rewrite is a plan it cannot finish. The
+    bounds are checked before anything is stored.
+    """
+    cleaned: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        limit = TODO_MAX_ITEM_BYTES
+        if len(text.encode("utf-8")) > limit:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"the item is {len(text.encode('utf-8'))} bytes, over the limit of "
+                    f"{limit} bytes — write it shorter"
+                ),
+            )
+        cleaned.append(text)
+    if len(cleaned) > TODO_MAX_ITEMS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"the list has {len(cleaned)} items, over the limit of {TODO_MAX_ITEMS} — "
+                "keep the plan short"
+            ),
+        )
+    TODO_LISTS[session_id] = cleaned
+    METRICS.inc("todo_ops_total")
+    # What is returned is what is stored, not what was asked for: an
+    # answer that disagrees with the state is a lie the model will act
+    # on.
+    return list(TODO_LISTS[session_id])
+
+
+def todo_list_done(items: list[str]) -> int:
+    """How many items of a list are marked done."""
+    return sum(1 for item in items if item.startswith(TODO_DONE_MARKER))
+
+
+def memory_add(text: str) -> list[str]:
+    """Add a note to the memory."""
+    note = str(text or "").strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="the note is empty")
+    limit = MEMORY_MAX_NOTE_BYTES
+    if len(note.encode("utf-8")) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"the note is {len(note.encode('utf-8'))} bytes, over the limit of "
+                f"{limit} bytes — write it shorter"
+            ),
+        )
+    notes = _memory_read()
+    if len(notes) >= MEMORY_MAX_NOTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"the memory already holds {len(notes)} notes, which is the limit of "
+                f"{MEMORY_MAX_NOTES} — delete one first"
+            ),
+        )
+    notes.append(note)
+    _memory_write(notes)
+    METRICS.inc("memory_ops_total")
+    return notes
+
+
+def memory_delete(index: int) -> list[str]:
+    """Delete one note of the memory, by its number."""
+    notes = _memory_read()
+    if not notes:
+        raise HTTPException(status_code=404, detail="the memory is empty")
+    if index < 0 or index >= len(notes):
+        raise HTTPException(
+            status_code=404,
+            detail=f"there is no note {index} — the memory holds {len(notes)}",
+        )
+    notes.pop(index)
+    _memory_write(notes)
+    METRICS.inc("memory_ops_total")
+    return notes
+
+
+def memory_clear() -> list[str]:
+    """Empty the memory."""
+    _memory_write([])
+    METRICS.inc("memory_ops_total")
+    return []
+
+
+def memory_notes() -> list[str]:
+    """The memory, as it is."""
+    return _memory_read()
+
+
+def search_sessions(
+    query: str,
+    session_id: str | None = None,
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    """Search the commands the sessions ran.
+
+    The pattern is literal text, like the file search: the workspace
+    is attacker-controlled and a regular expression can cost time
+    proportional to the square of its input.
+
+    The answer is bounded, and it says so when it stops early.
+    """
+    needle = str(query or "").strip()
+    if not needle:
+        raise HTTPException(status_code=400, detail="the pattern is empty")
+    cap = max_results or SESSION_SEARCH_MAX_RESULTS
+    if cap > SESSION_SEARCH_MAX_RESULTS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"{cap} matches is over the limit of {SESSION_SEARCH_MAX_RESULTS} — ask for fewer"
+            ),
+        )
+    matches: list[dict[str, Any]] = []
+    truncated = False
+    reason = ""
+    for sid, history in SESSION_HISTORY.items():
+        if session_id and sid != session_id:
+            continue
+        for number, command in enumerate(history, start=1):
+            if needle not in command:
+                continue
+            if len(matches) >= cap:
+                truncated = True
+                reason = "the answer was cut at the limit"
+                break
+            matches.append({"session_id": sid, "number": number, "command": command})
+        if truncated:
+            break
+    METRICS.inc("session_searches_total")
+    return {
+        "matches": matches,
+        "sessions": len(SESSION_HISTORY),
+        "truncated": truncated,
+        "reason": reason,
+        "limit": cap,
+    }
+
+
+def ask_the_operator(session_id: str, question: str) -> dict[str, Any]:
+    """Put a question to the operator, through the caller.
+
+    The door has no channel of its own. The MCP elicitation — the
+    protocol's own way for a server to ask the client something — needs
+    a back-channel for a request the *server* starts, and the
+    stateless Streamable HTTP transport has none: it was measured, and
+    the SDK says so ("this transport context has no back-channel for
+    server-initiated requests").
+
+    So the channel is the caller: the question goes back in the tool's
+    answer, and the operator's answer comes in the next turn. The
+    question is also remembered with the session, so the session
+    record says what is being waited for.
+    """
+    text = str(question or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="the question is empty")
+    limit = TODO_MAX_ITEM_BYTES * 8
+    if len(text.encode("utf-8")) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"the question is {len(text.encode('utf-8'))} bytes, over the limit of "
+                f"{limit} bytes — ask less"
+            ),
+        )
+    PENDING_QUESTIONS[session_id] = text
+    METRICS.inc("clarify_total")
+    return {"session_id": session_id, "question": text, "asked": True}
 
 
 # ---------------------------------------------------------------------------

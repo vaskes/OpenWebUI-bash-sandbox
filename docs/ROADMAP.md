@@ -208,6 +208,37 @@ capability the operator opens on purpose and closes again by emptying
 the knob — so the sentence "the MCP door grants nothing the HTTP door
 does not" now has exactly one exception, and the exception is named.
 
+### Wave D — planning, memory, recall, clarification — v2.24.0
+
+Four more tools on the MCP door: `todo_list`, `memory`, `session_search`
+and `clarify`. The model's own state — a plan it can rewrite, notes it
+can keep, a recall of what it ran, and a question it can put to the
+operator — with the boundaries the rest of the project keeps.
+
+* The **task list** is replaced, not merged, and bounded.
+* The **memory** is a file (`.agent-memory.json`) the operator can read
+  and delete — not a hidden profile of the operator.
+* The **recall** searches the commands a session ran, with literal text
+  and a bounded answer.
+* The **question** goes back to the caller.
+
+**The question needed a measurement.** The protocol's own way for a
+server to ask the client something — the MCP elicitation — needs a
+back-channel for a request the *server* starts, and the stateless
+Streamable HTTP transport has none: the SDK answers "this transport
+context has no back-channel for server-initiated requests". So the
+channel is the caller: the question goes back in the tool's answer, and
+the operator's answer comes with the next message. The stateless door
+is a deliberate property of this deployment (see `docs/HANDOFF-mcp.md`),
+and the question is shaped by it rather than by wishful thinking.
+
+**A note is context, never permission.** The memory is the model's own
+file, and the tool's description says what that means: only the
+operator's words authorize an action. The test pins the sentence.
+
+*Red:* `tools/mutation-check-v2240.sh` breaks every fence above on
+purpose and expects the named test to go red.
+
 ## The waves
 
 ### Wave A — the agent writes and searches through the fence
@@ -281,6 +312,11 @@ the door is closed while `AGENT_VISION_URL` is empty.
 * `session_search` — a query over our own sessions, which we already keep.
 * `clarify` — the agent can ask the operator a question through the channel it
   is talking on.
+
+**Shipped in v2.24.0** — see *Shipped* above. The recall needed one
+thing the plan did not mention: a query over the sessions is only
+interesting if the sessions remember what they ran, so the commands are
+remembered (in memory, bounded, and gone with the session).
 
 ### Wave E — fewer round trips, and scale
 
