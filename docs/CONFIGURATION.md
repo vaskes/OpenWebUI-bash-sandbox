@@ -26,6 +26,13 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_VISION_MAX_PROMPT_BYTES` | `8k`                                | How large a question one `vision_analyze` call may forward. 16 bytes..64m. Over the budget is refused. |
 | `AGENT_VISION_MAX_ANSWER_BYTES` | `64k`                              | How large an answer one `vision_analyze` call may hand back. 1k..64m. The answer travels into the model's context, so it is truncated over the budget — and a truncated answer says that it is truncated. |
 | `AGENT_VISION_TIMEOUT` | `60`                                       | How long one call to the vision endpoint may take, in seconds (1 to 600). |
+| `AGENT_TODO_MAX_ITEMS` | `50`                                      | How many items one session's task list may hold. 1..500. The list is the model's own plan; a plan that grows without limit is a log, and a log is not a plan. Over the budget is refused, and the list that was there survives the refusal. |
+| `AGENT_TODO_MAX_ITEM_BYTES` | `512`                                 | How long one item of the task list may be. 16 bytes..64k. |
+| `AGENT_MEMORY_MAX_NOTES` | `100`                                    | How many notes the memory holds. 1..1000. The memory is the model's own file — small, readable and deletable — and not a profile of the operator. |
+| `AGENT_MEMORY_MAX_NOTE_BYTES` | `4k`                                | How long one note of the memory may be. 16 bytes..256k. |
+| `AGENT_SESSION_HISTORY_MAX_COMMANDS` | `100`                          | How many commands one session remembers for the recall. 1..1000. The history is in memory: a session that dies takes it with it. |
+| `AGENT_SESSION_HISTORY_MAX_COMMAND_BYTES` | `1k`                     | How long one remembered command may be. 16 bytes..64k. |
+| `AGENT_SESSION_SEARCH_MAX_RESULTS` | `50`                                 | How many matches one recall returns. 1..500. Asking for more is refused. |
 | `AGENT_ALLOW_SUDO`     | `0`                                       | Build the image with `sudo`, so a command can become root. **Private, secured deployments only.** |
 | `AGENT_NO_NEW_PRIVILEGES` | `true`                                  | The container's `no-new-privileges` flag. `false` is required by the privilege mode. |
 | `AGENT_CAP_DROP`       | `ALL`                                     | Capabilities dropped from the container. `SYS_ADMIN` in the privilege mode. |
@@ -533,6 +540,11 @@ having.
 | `sandbox_agent_file_ops_refused_total` | agent   | file operations refused before they touched the filesystem |
 | `sandbox_agent_vision_requests_total`  | agent   | pictures handed to the operator's vision endpoint |
 | `sandbox_agent_vision_refused_total`   | agent   | vision requests refused before the picture left the workspace |
+| `sandbox_agent_todo_ops_total`         | agent   | task list changes through the session tools |
+| `sandbox_agent_memory_ops_total`       | agent   | memory changes through the session tools |
+| `sandbox_agent_session_searches_total` | agent   | recalls run through the session tools |
+| `sandbox_agent_clarify_total`          | agent   | questions put to the operator through the session tools |
+| `sandbox_agent_session_ops_refused_total` | agent | session operations refused before they changed anything |
 
 The counters live in the process, so they reset when the container
 restarts — that is what a counter is for. The rates Prometheus computes

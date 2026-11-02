@@ -73,10 +73,17 @@ __all__ = [
     "MCP_WRITE_CEILING_BYTES",
     "MCP_WRITE_LIMIT_BYTES",
     "MCP_WRITE_LIMIT_DEFAULT_BYTES",
+    "MEMORY_MAX_NOTE_BYTES",
+    "MEMORY_MAX_NOTES",
     "PANE_HEIGHT",
     "PANE_WIDTH",
     "PREINSTALLED_PYTHON_PATH",
+    "SESSION_HISTORY_MAX_COMMAND_BYTES",
+    "SESSION_HISTORY_MAX_COMMANDS",
+    "SESSION_SEARCH_MAX_RESULTS",
     "STDOUT_LIMIT_BYTES",
+    "TODO_MAX_ITEM_BYTES",
+    "TODO_MAX_ITEMS",
     "model_read_limit",
     "model_write_limit",
     "VISION_API_KEY",
@@ -343,6 +350,15 @@ VISION_MAX_PROMPT_DEFAULT_BYTES = 8 * _KIB
 #: The default timeout for one call to the vision endpoint: a minute.
 VISION_TIMEOUT_DEFAULT_SECONDS = 60
 
+#: The default bounds of the session tools.
+TODO_MAX_ITEMS_DEFAULT = 50
+TODO_MAX_ITEM_BYTES_DEFAULT = 512
+MEMORY_MAX_NOTES_DEFAULT = 100
+MEMORY_MAX_NOTE_BYTES_DEFAULT = 4000
+SESSION_HISTORY_MAX_COMMANDS_DEFAULT = 100
+SESSION_HISTORY_MAX_COMMAND_BYTES_DEFAULT = 1000
+SESSION_SEARCH_MAX_RESULTS_DEFAULT = 50
+
 #: How long one search may walk the workspace, in seconds.
 #:
 #: A constant and not a knob: the walk is bounded by the machine, not
@@ -414,6 +430,73 @@ VISION_MAX_PROMPT_BYTES = parse_size(
     name="AGENT_VISION_MAX_PROMPT_BYTES",
     minimum=16,
     maximum=MCP_READ_CEILING_BYTES,
+)
+
+# ---------------------------------------------------------------------------
+# The session tools: a task list, a memory, a recall, a question
+# ---------------------------------------------------------------------------
+#: How many items one session's task list may hold. The list is the
+#: model's own plan; it is bounded because a plan that grows without
+#: limit is a log, and a log is not a plan.
+TODO_MAX_ITEMS = parse_count(
+    os.environ.get("AGENT_TODO_MAX_ITEMS", str(TODO_MAX_ITEMS_DEFAULT)),
+    name="AGENT_TODO_MAX_ITEMS",
+    minimum=1,
+    maximum=500,
+)
+
+#: How long one item of the task list may be.
+TODO_MAX_ITEM_BYTES = parse_size(
+    os.environ.get("AGENT_TODO_MAX_ITEM_BYTES", str(TODO_MAX_ITEM_BYTES_DEFAULT)),
+    name="AGENT_TODO_MAX_ITEM_BYTES",
+    minimum=16,
+    maximum=64 * _KIB,
+)
+
+#: How many notes the memory may hold. The memory is the model's own
+#: file: small, readable and deletable, and not a profile of the
+#: operator.
+MEMORY_MAX_NOTES = parse_count(
+    os.environ.get("AGENT_MEMORY_MAX_NOTES", str(MEMORY_MAX_NOTES_DEFAULT)),
+    name="AGENT_MEMORY_MAX_NOTES",
+    minimum=1,
+    maximum=1000,
+)
+
+#: How long one note of the memory may be.
+MEMORY_MAX_NOTE_BYTES = parse_size(
+    os.environ.get("AGENT_MEMORY_MAX_NOTE_BYTES", str(MEMORY_MAX_NOTE_BYTES_DEFAULT)),
+    name="AGENT_MEMORY_MAX_NOTE_BYTES",
+    minimum=16,
+    maximum=256 * _KIB,
+)
+
+#: How many commands one session remembers. The recall searches these:
+#: a session that forgets what it ran is a session the model has to
+#: guess about.
+SESSION_HISTORY_MAX_COMMANDS = parse_count(
+    os.environ.get("AGENT_SESSION_HISTORY_MAX_COMMANDS", str(SESSION_HISTORY_MAX_COMMANDS_DEFAULT)),
+    name="AGENT_SESSION_HISTORY_MAX_COMMANDS",
+    minimum=1,
+    maximum=1000,
+)
+
+#: How long one remembered command may be.
+SESSION_HISTORY_MAX_COMMAND_BYTES = parse_size(
+    os.environ.get(
+        "AGENT_SESSION_HISTORY_MAX_COMMAND_BYTES", str(SESSION_HISTORY_MAX_COMMAND_BYTES_DEFAULT)
+    ),
+    name="AGENT_SESSION_HISTORY_MAX_COMMAND_BYTES",
+    minimum=16,
+    maximum=64 * _KIB,
+)
+
+#: How many matches one recall returns.
+SESSION_SEARCH_MAX_RESULTS = parse_count(
+    os.environ.get("AGENT_SESSION_SEARCH_MAX_RESULTS", str(SESSION_SEARCH_MAX_RESULTS_DEFAULT)),
+    name="AGENT_SESSION_SEARCH_MAX_RESULTS",
+    minimum=1,
+    maximum=500,
 )
 
 if VISION_URL:

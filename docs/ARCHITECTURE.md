@@ -48,7 +48,7 @@ They are two serialisations of the same capabilities:
 | auth | the same bearer token | the same bearer token |
 | comparison | constant-time, shared helper | the same shared helper |
 | refusals | HTTP status + a named reason | JSON-RPC result with `isError = true` and the reason in the tool text |
-| tools | — | the eight tools named in the next paragraph |
+| tools | — | the twelve tools named in the next paragraph |
 
 Rules that keep the two doors honest:
 
@@ -93,6 +93,13 @@ Rules that keep the two doors honest:
   refused with a reason. The write path is the one that matters: a model
   that writes through `bash` leaves the file door's own accounting empty,
   and the fence it walks past is the fence these tools enforce.
+* **Two doors are not narrower than the shell.** `todo_list`,
+  `memory`, `session_search` and `clarify` keep state that the shell
+  has no place for — a plan, notes, a recall of what ran, and a
+  question waiting for the operator. They are the model's own state,
+  they are bounded, they die with the session (except the memory,
+  which is a file), and none of them is an instruction channel: a note
+  is context, never permission.
 * **The one door that is not narrower is the one the operator opened.**
   `vision_analyze` hands a picture to the operator's own vision endpoint,
   and that *is* a capability the shell does not have. It is the
@@ -102,7 +109,7 @@ Rules that keep the two doors honest:
   names is a retrieval door wearing a different hat (retrieval is not this
   project's, v2.13.0).
 
-The MCP door exposes eight tools: `bash`, `read_file`, `file_info`, `delete_file`, `write_file`, `patch`, `search_files`, `vision_analyze`.
+The MCP door exposes twelve tools: `bash`, `read_file`, `file_info`, `delete_file`, `write_file`, `patch`, `search_files`, `vision_analyze`, `todo_list`, `memory`, `session_search`, `clarify`.
 
 ## Component responsibilities
 
@@ -255,7 +262,7 @@ agent_config.py       # Environment parsing: stdout, binary, history limits
 agent_core.py         # Pure functions: safe_id, tmux_name, path checks
 body_limit.py         # Pure-ASGI body-size limiter, shared by both services
 json_logging.py       # JSON log formatting for the app and uvicorn
-mcp_server.py         # MCP server: the eight tools, refusals, protocol
+mcp_server.py         # MCP server: the twelve tools, refusals, protocol
 metrics.py            # Prometheus metrics
 openapi_proxy.py      # FastAPI app — OpenAPI surface, relay, WS, /mcp relay
 proxy_core.py         # Pure constants: command prefixes, timeouts, WS tunables
@@ -302,6 +309,10 @@ under a path (`/home/agent/.cache/pip`), never over the code.
 | question the MCP `vision_analyze` tool forwards | `AGENT_VISION_MAX_PROMPT_BYTES` (8 KiB) | agent |
 | answer the MCP `vision_analyze` tool hands back | `AGENT_VISION_MAX_ANSWER_BYTES` (64 KiB) | agent |
 | one call to the vision endpoint | `AGENT_VISION_TIMEOUT` (60 s) | agent |
+| items one session's task list holds | `AGENT_TODO_MAX_ITEMS` (50), each item up to `AGENT_TODO_MAX_ITEM_BYTES` (512 B) | agent |
+| notes the memory holds | `AGENT_MEMORY_MAX_NOTES` (100), each note up to `AGENT_MEMORY_MAX_NOTE_BYTES` (4 KiB) | agent |
+| commands one session remembers | `AGENT_SESSION_HISTORY_MAX_COMMANDS` (100), each up to `AGENT_SESSION_HISTORY_MAX_COMMAND_BYTES` (1 KiB) | agent |
+| matches one recall returns | `AGENT_SESSION_SEARCH_MAX_RESULTS` (50) | agent |
 | one command's runtime | `AGENT_EXEC_TIMEOUT`, 60 s default (5..3600); the agent's own request default is 30 s and its hard cap 3600 s | the proxy asks, the agent runs |
 | the MCP relay's patience | 3660 s — longer than the agent's own 3600 s cap | proxy |
 

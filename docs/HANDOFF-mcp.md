@@ -314,6 +314,89 @@ when it is over its budget, and a truncated answer says that it is
 truncated. The request and the refusal are counted
 (`sandbox_agent_vision_requests_total`, `sandbox_agent_vision_refused_total`).
 
+### `todo_list`
+
+The task list of a session: what the model is working through.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `items` | list of strings | the new list; without it the list is returned |
+| `session_id` | string | whose list; the caller's own session by default |
+
+Returns `items`, `done`, `count` and `limit`.
+
+**The list is replaced, not merged.** The model holds the whole plan,
+so it rewrites the plan as the plan changes — a plan it cannot rewrite
+is a plan it cannot finish. An item that starts with `[x] ` is done.
+
+The list is bounded (`AGENT_TODO_MAX_ITEMS`, `AGENT_TODO_MAX_ITEM_BYTES`)
+and it dies with the session. The session record (`GET /sessions`)
+carries it.
+
+**It is a plan, not an instruction.** Nothing in the list authorizes
+anything: only the operator's words do.
+
+### `memory`
+
+The model's own notes, in a file the operator can read and delete.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `action` | string | `list` (the default), `add`, `delete`, `clear` |
+| `text` | string | the note to add |
+| `index` | integer | which note to delete |
+
+Returns `notes`, `count` and `limit`.
+
+The memory is **a file** — `.agent-memory.json`, beside the session
+registry — and it survives the agent's restart. It is bounded
+(`AGENT_MEMORY_MAX_NOTES`, `AGENT_MEMORY_MAX_NOTE_BYTES`).
+
+**These notes are context, never permission.** A note is something the
+model wrote down; it does not authorize an action. Only the operator's
+words do. The tool says so in its description, and the test pins it.
+
+### `session_search`
+
+Finds a command a session ran earlier.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `query` | string, **required** | literal text |
+| `session_id` | string | one session only |
+| `max_results` | integer | fewer matches than the budget — never more |
+
+Returns `matches` (each with `session_id`, `number` and `command`),
+`sessions`, `truncated`, `reason` and `limit`. The text of the answer
+is one line per match: `session#number: command`.
+
+**The pattern is literal text, not a regular expression** — the same
+rule as the file search, for the same reason.
+
+The history is in memory and bounded
+(`AGENT_SESSION_HISTORY_MAX_COMMANDS`): a session that dies takes its
+history with it, and a restart of the agent starts the recall empty.
+
+### `clarify`
+
+Puts a question to the operator.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `question` | string, **required** | the question |
+| `session_id` | string | whose question; the caller's own session by default |
+
+Returns `session_id`, `question` and `asked`. The session record
+carries the question that is being waited for.
+
+**The door has no channel of its own.** The protocol's own way for a
+server to ask the client something — the MCP elicitation — needs a
+back-channel for a request the *server* starts, and the stateless
+Streamable HTTP transport has none. It was measured: the SDK answers
+"this transport context has no back-channel for server-initiated
+requests". So the channel is the caller: the question goes back in the
+tool's answer, and the operator's answer comes with the next message.
+
 ---
 
 ## What a refusal looks like
@@ -356,6 +439,16 @@ The refusals that can come back:
 | `the vision endpoint answered N: …` | the endpoint refused or failed |
 | `the vision endpoint answered with something that is not JSON` | the endpoint is not the thing we think it is |
 | `the vision endpoint answered with no text` | the endpoint said nothing |
+| `the list has N items, over the limit of M` | the task list's budget |
+| `the item is N bytes, over the limit of M bytes` | one item of the task list is too long |
+| `the note is empty` | a note with nothing in it |
+| `the note is N bytes, over the limit of M bytes` | one note of the memory is too long |
+| `the memory already holds N notes, which is the limit of M` | the memory's budget |
+| `there is no note N` | the memory has no note with that number |
+| `unknown action: …` | a memory action the tool does not know |
+| `the pattern is empty` | a recall with no pattern |
+| `N matches is over the limit of M` | the recall's budget |
+| `the question is empty` | a question with nothing in it |
 
 ---
 
@@ -409,6 +502,10 @@ The refusals that can come back:
 | `patch` | no twin — the shell is the equivalent, and narrower |
 | `search_files` | no twin — the shell is the equivalent, and narrower |
 | `vision_analyze` | no twin — the endpoint is the operator's, and the shell has no eyes |
+| `todo_list` | no twin — the plan lives with the session |
+| `memory` | no twin — the memory is a file of the model's own |
+| `session_search` | no twin — the recall is over the history the sessions keep |
+| `clarify` | no twin — the question goes back to the caller |
 
 Both doors call the same functions in the same process, so the code
 cannot drift apart — and the tests check that it does not. The budgets
@@ -421,8 +518,13 @@ the file door's accounting empty. They are **narrower** than the shell
 they stand in for — inside the workspace, bounded, counted — so the
 MCP door is not a wider door than the HTTP one.
 
-`vision_analyze` is the fourth tool without a twin, and it is the
-exception that proves the rule: it hands a picture to an endpoint the
-operator chose, so it is **not** narrower than the shell — it is a
-capability the operator opened on purpose, closed again by emptying
-`AGENT_VISION_URL`.
+`vision_analyze` is the exception that proves the rule: it hands a
+picture to an endpoint the operator chose, so it is **not** narrower
+than the shell — it is a capability the operator opened on purpose,
+closed again by emptying `AGENT_VISION_URL`.
+
+The session tools — `todo_list`, `memory`, `session_search` and
+`clarify` — are not narrower than the shell either, but for a
+different reason: they keep state that the shell has no place for (a
+plan, notes, a recall, a question). That state is the model's own,
+it is bounded, and none of it is an instruction channel.
