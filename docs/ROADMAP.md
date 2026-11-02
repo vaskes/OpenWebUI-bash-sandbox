@@ -57,6 +57,12 @@ Decisions that are not ours to make again.
   another host. The browser wave does not reopen it: we ship no search tool, no
   index and no engine to query. A browser can be pointed at a URL the operator
   names; that is retrieval, and retrieval is a different thing.
+* **One agent, no sub-agents, no code execution as a tool.** 2026-11-03,
+  operator. `execute_code` (Python calling our own tools programmatically) and
+  `delegate_task` (a sub-agent with its own context) are out of scope for this
+  project and are not built: this is a single-operator, single-agent sandbox. The
+  operator's words: this is out of scope for our project — single operator,
+  single agent. See wave E.
 
 ## The measured surfaces
 
@@ -188,9 +194,13 @@ recall is mostly a query we have not written; the rest is missing outright.
 `CONTRIBUTING.md` and a `docs/` tree, but no mechanism that loads a recipe into a
 session when the task calls for it.
 
-**7. No code execution as a tool, no sub-agents.** `execute_code` (Python
-calling our own tools programmatically, fewer model round trips) and
-`delegate_task` (sub-agent with its own context) are both missing.
+**7. No code execution as a tool, no sub-agents.** — **closed by decision on
+2026-11-03, not by build.** `execute_code` (Python calling our own tools
+programmatically, fewer model round trips) and `delegate_task` (sub-agent with
+its own context) are both missing, and both stay missing: this project is a
+single-operator, single-agent sandbox, and a second agent inside it is not
+something this project is for. The operator's words: this is out of scope for
+our project — single operator, single agent. See wave E.
 
 **8. No cron from inside the agent.** Scheduling exists on the platform side,
 but the agent cannot schedule its own work.
@@ -406,16 +416,35 @@ thing the plan did not mention: a query over the sessions is only
 interesting if the sessions remember what they ran, so the commands are
 remembered (in memory, bounded, and gone with the session).
 
-### Wave E — fewer round trips, and scale
+### Wave E — not built, by decision
 
-* `execute_code` — Python inside the jail that may call *our* tools and
-  nothing else, with a wall-clock and memory budget. The tool surface it can
-  reach is exactly the fence the tools already have.
-* `delegate_task` — sub-agents with their own context, each in the same jail,
-  each with the same bounds.
+**This wave was dropped on 2026-11-03.** The operator's words: this is out of
+scope for our project — single operator, single agent. `execute_code` and
+`delegate_task` are therefore not on the roadmap, and nothing below describes a
+second agent or a Python layer over our tools.
 
-The executor here is the sandbox's own container, like everything else: there
-is no second service to run code in, by the operator's decision of 2026-11-02.
+The reasoning is short and it is about the project, not about the capability.
+This is a **single-operator, single-agent** sandbox: one operator, one agent,
+one conversation at a time, one workspace. A sub-agent with its own context is a
+different product — a fleet of agents is what it is for, and this is not one.
+`execute_code` is the same thing seen from the other side: a second way for the
+model to reach the tools, where the model already has `bash`, the file tools and
+the browser, each of them fenced and counted. What it would add is a *second
+front door* to the same fenced surface, and a fence that has to be right twice
+is worth less than one fence that is right once.
+
+What remains of the idea, and it is not nothing:
+
+* **fewer round trips** are still worth having, and they are still reachable
+  without a second agent: the model's own shell can call our tools over HTTP,
+  the way the operator's own bot does — that path is the operator's, not the
+  model's, and the model's tools stay the model's;
+* **scale** is not a question for this project. The sandbox is one operator's
+  sandbox.
+
+*Red:* none — this wave does not land, so there is no fence to make red. The
+property it proposed is instead recorded as a decision, and the tripwire that
+guards it is `tests/test_roadmap_drift.py` (§`TestTheSingleAgentDecision`).
 
 ### Wave F — the browser, in the same container
 
@@ -600,10 +629,9 @@ the browser itself uses.
    can reach the browser without the wrapper anyway (measured). If it stays,
    then wave F's allowlist is a policy about one tool and not a boundary, and
    this document has to say so rather than imply otherwise. It says so above.
-2. **Order.** We propose F, then E. F comes first because the browser is the
-   wave the operator has already asked for, and because the measurements above
-   need to land as code before the next wave is designed on top of them. The
-   operator may reorder.
+2. **Order.** There is no wave left to order: A, C, D and F are shipped, and B
+   and E are not built, by decision. What the order question was about — F
+   before E — is settled by the fact that E does not come.
 3. **The agent's own state file.** Moving `.agent-sessions.json` and
    `.agent-memory.json` out of the model's directory is cheap and does not
    need a second container. Whether it is worth a release of its own is the
