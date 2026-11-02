@@ -29,6 +29,9 @@
 #     sub-agents and no code execution as a tool -- is on the record, wave E
 #     still reads as NOT built, and gap 7 still says it was closed by
 #     decision rather than left open.
+#   * the two gaps that no wave claimed -- skills and cron from inside the
+#     agent -- are closed by the same day's YAGNI decision, and no wave may
+#     quietly claim them.
 #
 # The mutations below also break the DETECTOR, and the control catches
 # them. A verdict about "the property still holds" is a statement about
@@ -244,6 +247,49 @@ mutate docs/ROADMAP.md \
   single operator, single agent. See wave E." \
   "$TESTS::TestTheOneContainerDecision::test_the_decision_is_not_conditional" \
   "the single-agent decision is conditional again"
+
+echo "== gap 6 is open again =="
+mutate docs/ROADMAP.md \
+  '**6. No skills.** — **not built, and not needed yet.**' \
+  '**6. No skills.** — **to be built, and wanted.**' \
+  "$TESTS::TestTheUnneededGapsAreClosed::test_gap_six_is_not_needed_yet" \
+  "gap 6 reads as an open gap again"
+
+echo "== gap 8 is open again =="
+mutate docs/ROADMAP.md \
+  '**8. No cron from inside the agent.** — **not built, and not needed yet.**' \
+  '**8. No cron from inside the agent.** — **to be built, and wanted.**' \
+  "$TESTS::TestTheUnneededGapsAreClosed::test_gap_eight_is_not_needed_yet" \
+  "gap 8 reads as an open gap again"
+
+echo "== the YAGNI decision lost its date =="
+mutate docs/ROADMAP.md \
+  '* **The gaps with no wave behind them are not needed yet.** 2026-11-03,' \
+  '* **The gaps with no wave behind them are not needed yet.** (date forgotten),' \
+  "$TESTS::TestTheUnneededGapsAreClosed::test_the_decision_is_on_the_record" \
+  "the YAGNI decision lost its date"
+
+echo "== the YAGNI decision loses its rule =="
+mutate docs/ROADMAP.md \
+  'Both stay unbuilt, by YAGNI: there are no skills to' \
+  'Both stay unbuilt: there are no skills to' \
+  "$TESTS::TestTheUnneededGapsAreClosed::test_the_decision_is_on_the_record" \
+  "the decision no longer says YAGNI"
+
+echo "== a wave claims a gap the operator closed =="
+mutate docs/ROADMAP.md \
+  '### Wave F — the browser, in the same container
+
+**Decided: it goes in.**' \
+  '### Wave G — skills
+
+* `skills_list` — load a recipe into the session when the task calls for it.
+
+### Wave F — the browser, in the same container
+
+**Decided: it goes in.**' \
+  "$TESTS::TestTheUnneededGapsAreClosed::test_no_wave_claims_them" \
+  "a wave now claims skills, which the operator closed by decision"
 
 echo
 echo "mutations caught: $PASS, escaped: $FAIL"
