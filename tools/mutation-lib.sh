@@ -178,12 +178,20 @@ FAIL="${FAIL:-0}"
 # A script that is killed between the mutation and the restore would
 # leave the mutation in the tree — and the next run would measure a tree
 # that nobody wrote. The trap puts it back.
+#
+# EXIT is in the list on purpose: a script that dies by any path — a
+# failed preflight, a `set -e` abort, an unhandled error — must not
+# leave a mutation behind either. And a leftover is worse than it
+# looks: the next script backs up the ALREADY MUTATED file and its
+# restore puts the mutation back, so one leak travels through the whole
+# sweep and every later verdict is measured against a tree nobody
+# wrote.
 MUT_BACKUP=""
 MUT_TARGET=""
 trap 'if [ -n "${MUT_BACKUP:-}" ] && [ -n "${MUT_TARGET:-}" ]; then
     cp "$MUT_BACKUP" "$MUT_TARGET" 2>/dev/null
     rm -f "$MUT_BACKUP" 2>/dev/null
-fi' INT TERM HUP
+fi' INT TERM HUP EXIT
 
 # The mutation itself: back the file up, break it, run the test, put the
 # file back. Every script uses this one shape.
