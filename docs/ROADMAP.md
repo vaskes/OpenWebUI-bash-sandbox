@@ -24,7 +24,7 @@ right, and both halves were measured on 2026-11-02; the corrections are in
 
 **What this document is.** The other sandbox gives its agent a wide surface: a
 terminal in a separate container, a browser, file writes, planning, memory, code
-execution, sub-agents, cron, a desktop. We give ours twelve MCP tools and a
+execution, sub-agents, cron, a desktop. We give ours fifteen MCP tools and a
 jail. The question this document answers is *what to build ourselves* to close
 the gaps that matter, and *what to refuse to build*.
 
@@ -105,12 +105,12 @@ mounts  docker_mount_cwd_to_workspace: false  ->  the executor does NOT see
 The agent's file tools write into the agent's workspace; the executor's
 commands run somewhere else entirely. Two worlds, one agent.
 
-### Ours: 12 tools, and the jail around them
+### Ours: 15 tools, and the jail around them
 
 ```
 MCP      bash, read_file, file_info, delete_file, write_file, patch,
-         search_files, vision_analyze, todo_list, memory, session_search,
-         clarify
+         search_files, vision_analyze, browser_open, browser_screenshot,
+         browser_close, todo_list, memory, session_search, clarify
 HTTP     /healthz /metrics /sessions /sessions/{id}/exec /sessions/{id}/capture
          /sessions/{id}/output /files /files/meta
 jail     user 1000:1000, cap_drop ALL, no-new-privileges, read-only rootfs,
