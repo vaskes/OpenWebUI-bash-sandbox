@@ -63,6 +63,14 @@ Decisions that are not ours to make again.
   project and are not built: this is a single-operator, single-agent sandbox. The
   operator's words: this is out of scope for our project — single operator,
   single agent. See wave E.
+* **The gaps with no wave behind them are not needed yet.** 2026-11-03,
+  operator. The roadmap listed skills and cron from inside the agent as gaps
+  that no wave claimed. Both stay unbuilt, by YAGNI: there are no skills to
+  load and no scheduled work to schedule, so a mechanism for either would have
+  nothing to carry. The operator's words: it is excess functionality for now —
+  we have no skills; when they appear, we will think about it. YAGNI is the rule
+  here, and the trigger for revisiting either gap is the need itself, not a
+  date. See gaps 6 and 8.
 
 ## The measured surfaces
 
@@ -190,9 +198,12 @@ the image has `pillow`.
 `session_search`, `clarify` are all absent. We already store sessions, so
 recall is mostly a query we have not written; the rest is missing outright.
 
-**6. No skills.** `skills_list`, `skill_view`, `skill_manage`. We have a
-`CONTRIBUTING.md` and a `docs/` tree, but no mechanism that loads a recipe into a
-session when the task calls for it.
+**6. No skills.** — **not built, and not needed yet.** `skills_list`,
+`skill_view`, `skill_manage` are absent, and they stay absent for now: the
+project has no skills, so a mechanism that loads one has nothing to load. The
+operator's words (2026-11-03): it is excess functionality for now — we have no
+skills; when they appear, we will think about it, that is, we do not need it
+now. YAGNI. The trigger for revisiting this gap is the first skill, not a date.
 
 **7. No code execution as a tool, no sub-agents.** — **closed by decision on
 2026-11-03, not by build.** `execute_code` (Python calling our own tools
@@ -202,8 +213,12 @@ single-operator, single-agent sandbox, and a second agent inside it is not
 something this project is for. The operator's words: this is out of scope for
 our project — single operator, single agent. See wave E.
 
-**8. No cron from inside the agent.** Scheduling exists on the platform side,
-but the agent cannot schedule its own work.
+**8. No cron from inside the agent.** — **not built, and not needed yet.**
+Scheduling exists on the platform side, and the agent cannot schedule its own
+work; it does not need to, because there is no scheduled work of our own for
+it to schedule — one operator, one agent, one conversation at a time. YAGNI,
+2026-11-03, operator. The trigger for revisiting this gap is a job that has to
+run unattended, not a date.
 
 **9. No browser, no desktop control.** `browser_exec` (Python over CDP),
 `browser_cdp`, `browser_dialog`, `browser_vault`, `computer_use`. The browser

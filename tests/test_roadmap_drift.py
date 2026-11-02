@@ -471,6 +471,35 @@ class TestTheOneContainerDecision(unittest.TestCase):
             return rest[:end]
         self.fail(f"docs/ROADMAP.md has no wave matching {marker!r}")
 
+    def _decision(self, marker: str) -> str:
+        """The bullet in the decisions section that carries ``marker``.
+
+        A section is the wrong scope once two decisions share it: the
+        section as a whole still contained the date and the rule that
+        one bullet had lost, so the check stayed green on a decision
+        that no longer carried them. A decision is read in its own
+        bullet.
+        """
+        section = self._section("## Decisions on the record")
+        pattern = rf"^\* \*\*{re.escape(marker)}.*?(?=^\* \*\*|\Z)"
+        match = re.search(pattern, section, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match, f"the decisions section has no {marker!r} bullet")
+        return match.group(0)
+
+    def _gap(self, number: int) -> str:
+        """The body of one numbered gap in the gap list.
+
+        The same scope rule as ``_decision``: the gap list holds
+        several gaps, and two of them can be closed by decision at
+        once. A check over the whole list cannot tell which one lost
+        its status.
+        """
+        gaps = self._section("## The gaps, ordered by how much they cost us")
+        pattern = rf"^\*\*{number}\.\s.*?(?=^\*\*\d+\.|\Z)"
+        match = re.search(pattern, gaps, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match, f"the gap list has no gap {number}")
+        return match.group(0)
+
     def test_the_decision_is_on_the_record(self) -> None:
         """The one-container decision is recorded, and it is dated."""
         section = self._section("## Decisions on the record")
@@ -606,23 +635,25 @@ class TestTheSingleAgentDecision(unittest.TestCase):
     # is reused instead of growing a third copy of it.
     _section = TestTheOneContainerDecision._section
     _wave = TestTheOneContainerDecision._wave
+    _decision = TestTheOneContainerDecision._decision
+    _gap = TestTheOneContainerDecision._gap
 
     def setUp(self) -> None:
         self.roadmap = ROADMAP.read_text(encoding="utf-8")
 
     def test_the_decision_is_on_the_record(self) -> None:
         """The single-agent decision is recorded, and it is dated."""
-        section = self._section("## Decisions on the record")
+        bullet = self._decision("One agent, no sub-agents, no code execution as a tool.")
         self.assertIn(
             "single agent",
-            section.lower(),
+            bullet.lower(),
             "the decision that this project is a single-agent sandbox is not on "
             "the record — the operator settled it on 2026-11-03 and the "
             "document has to say so",
         )
         self.assertIn(
             "2026-11-03",
-            section,
+            bullet,
             "the single-agent decision carries no date — a decision with no date is a rumour",
         )
 
@@ -657,19 +688,106 @@ class TestTheSingleAgentDecision(unittest.TestCase):
 
     def test_the_gap_is_closed_by_decision(self) -> None:
         """The gap list says the gap is closed, not merely missing."""
-        gaps = self._section("## The gaps, ordered by how much they cost us")
+        gap = self._gap(7)
         self.assertIn(
             "closed by decision",
-            gaps.lower(),
+            gap.lower(),
             "the gap list no longer says gap 7 was closed by decision — a gap "
             "that reads as merely missing is a gap the next reader will "
             "schedule",
         )
         self.assertIn(
             "2026-11-03",
-            gaps,
+            gap,
             "gap 7 does not carry the date of the decision that closed it",
         )
+
+
+class TestTheUnneededGapsAreClosed(unittest.TestCase):
+    """The gaps no wave claimed are not needed yet (YAGNI), 2026-11-03.
+
+    The gap list carried two entries that no wave behind them: skills
+    (gap 6) and cron from inside the agent (gap 8). The operator ruled
+    both unnecessary for now — there are no skills to load and no
+    scheduled work to schedule — so they are closed by decision, with the
+    need itself as the trigger for reopening them.
+
+    A gap that reads as merely missing is a gap the next reader will
+    schedule, and a decision that is not pinned becomes a suggestion.
+    These checks pin three things: the YAGNI decision is on the record
+    and dated, both gaps carry the status and the date, and no wave
+    quietly claims them. Each can be made red by
+    ``tools/mutation-check-roadmap.sh``.
+    """
+
+    # The document is read the same way in every decision test, so the reader
+    # is reused instead of growing a fourth copy of it.
+    _section = TestTheOneContainerDecision._section
+    _decision = TestTheOneContainerDecision._decision
+    _gap = TestTheOneContainerDecision._gap
+
+    def setUp(self) -> None:
+        self.roadmap = ROADMAP.read_text(encoding="utf-8")
+
+    def test_the_decision_is_on_the_record(self) -> None:
+        """The YAGNI decision is recorded, and it is dated."""
+        bullet = self._decision("The gaps with no wave behind them are not needed yet.")
+        self.assertIn(
+            "by yagni",
+            bullet.lower(),
+            "the decision that the dangling gaps are unnecessary is not on the "
+            "record — the operator settled it on 2026-11-03 and the document "
+            "has to say so",
+        )
+        self.assertIn(
+            "2026-11-03",
+            bullet,
+            "the YAGNI decision carries no date — a decision with no date is a rumour",
+        )
+
+    def test_gap_six_is_not_needed_yet(self) -> None:
+        """Skills: closed by decision, with the need as the trigger."""
+        gap = self._gap(6)
+        self.assertIn(
+            "not needed yet",
+            gap.lower(),
+            "gap 6 reads as an open gap again. The operator ruled on "
+            "2026-11-03: we have no skills, so a mechanism to load one has "
+            "nothing to load.",
+        )
+        self.assertIn(
+            "2026-11-03",
+            gap,
+            "gap 6 does not carry the date of the decision that closed it",
+        )
+
+    def test_gap_eight_is_not_needed_yet(self) -> None:
+        """Cron from inside the agent: closed by decision."""
+        gap = self._gap(8)
+        self.assertIn(
+            "not needed yet",
+            gap.lower(),
+            "gap 8 reads as an open gap again. The operator ruled on "
+            "2026-11-03: there is no scheduled work of our own to schedule.",
+        )
+        self.assertIn(
+            "2026-11-03",
+            gap,
+            "gap 8 does not carry the date of the decision that closed it",
+        )
+
+    def test_no_wave_claims_them(self) -> None:
+        """A wave may not appear for a gap the operator closed."""
+        waves = self._section("## The waves")
+        for tool in ("skills_list", "cronjob_manage"):
+            with self.subTest(tool=tool):
+                self.assertNotIn(
+                    tool,
+                    waves,
+                    f"a wave now claims {tool!r}, which the operator closed by "
+                    "decision on 2026-11-03 — reopening a closed gap is a "
+                    "decision, not an edit",
+                )
 
 
 if __name__ == "__main__":  # pragma: no cover
