@@ -25,6 +25,10 @@
 #   * the browser wave does not claim a localhost debugging port: our own
 #     implementation drives Chromium over a pipe, measured 2026-11-02, so
 #     a boundary built against that port would be built against nothing.
+#   * the operator's decision of 2026-11-03 -- one operator, one agent, no
+#     sub-agents and no code execution as a tool -- is on the record, wave E
+#     still reads as NOT built, and gap 7 still says it was closed by
+#     decision rather than left open.
 #
 # The mutations below also break the DETECTOR, and the control catches
 # them. A verdict about "the property still holds" is a statement about
@@ -199,6 +203,47 @@ mutate tests/test_roadmap_drift.py \
         self.roadmap = ROADMAP.read_text(encoding="utf-8")' \
   "$TESTS::TestTheOneContainerDecision::test_the_check_would_notice_a_conditional_decision" \
   "the detector cannot see a conditional decision"
+
+echo "== wave E comes back as something to build =="
+mutate docs/ROADMAP.md \
+  '**This wave was dropped on 2026-11-03.**' \
+  '**This wave was planned on 2026-11-03.**' \
+  "$TESTS::TestTheSingleAgentDecision::test_wave_e_is_not_built" \
+  "wave E reads as a wave to build again"
+
+echo "== the single-agent decision lost its date =="
+mutate docs/ROADMAP.md \
+  '* **One agent, no sub-agents, no code execution as a tool.** 2026-11-03,' \
+  '* **One agent, no sub-agents, no code execution as a tool.** (date forgotten),' \
+  "$TESTS::TestTheSingleAgentDecision::test_the_decision_is_on_the_record" \
+  "the single-agent decision lost its date"
+
+echo "== the single-agent decision loses its subject =="
+mutate docs/ROADMAP.md \
+  "  operator's words: this is out of scope for our project — single operator,
+  single agent. See wave E." \
+  "  operator's words: this is out of scope for our project — single operator,
+  many agents. See wave E." \
+  "$TESTS::TestTheSingleAgentDecision::test_the_decision_is_on_the_record" \
+  "the decision no longer says the project is a single-agent one"
+
+echo "== gap 7 is open again =="
+mutate docs/ROADMAP.md \
+  '**7. No code execution as a tool, no sub-agents.** — **closed by decision on
+2026-11-03, not by build.**' \
+  '**7. No code execution as a tool, no sub-agents.** — **still open, to be
+built some day.**' \
+  "$TESTS::TestTheSingleAgentDecision::test_the_gap_is_closed_by_decision" \
+  "gap 7 reads as an open gap again"
+
+echo "== the single-agent decision becomes conditional =="
+mutate docs/ROADMAP.md \
+  "  operator's words: this is out of scope for our project — single operator,
+  single agent. See wave E." \
+  "  operator's words: this may be in scope for our project, to be decided —
+  single operator, single agent. See wave E." \
+  "$TESTS::TestTheOneContainerDecision::test_the_decision_is_not_conditional" \
+  "the single-agent decision is conditional again"
 
 echo
 echo "mutations caught: $PASS, escaped: $FAIL"

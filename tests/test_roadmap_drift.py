@@ -586,5 +586,91 @@ class TestTheOneContainerDecision(unittest.TestCase):
         )
 
 
+class TestTheSingleAgentDecision(unittest.TestCase):
+    """The operator closed wave E on 2026-11-03: one agent, no sub-agents.
+
+    The roadmap had proposed two tools from the other sandbox: ``execute_code``
+    (Python calling our own tools programmatically) and ``delegate_task`` (a
+    sub-agent with its own context). The operator ruled both out of scope --
+    this project is a single-operator, single-agent sandbox.
+
+    A decision that is not pinned becomes a suggestion, and the next reader is
+    free to design a second agent against this document. These checks pin
+    three things: the decision is on the record and dated, wave E still reads
+    as *not built*, and the gap list says the gap is closed by decision rather
+    than open. Each of them can be made red by
+    ``tools/mutation-check-roadmap.sh``.
+    """
+
+    # The document is read the same way in every decision test, so the reader
+    # is reused instead of growing a third copy of it.
+    _section = TestTheOneContainerDecision._section
+    _wave = TestTheOneContainerDecision._wave
+
+    def setUp(self) -> None:
+        self.roadmap = ROADMAP.read_text(encoding="utf-8")
+
+    def test_the_decision_is_on_the_record(self) -> None:
+        """The single-agent decision is recorded, and it is dated."""
+        section = self._section("## Decisions on the record")
+        self.assertIn(
+            "single agent",
+            section.lower(),
+            "the decision that this project is a single-agent sandbox is not on "
+            "the record — the operator settled it on 2026-11-03 and the "
+            "document has to say so",
+        )
+        self.assertIn(
+            "2026-11-03",
+            section,
+            "the single-agent decision carries no date — a decision with no date is a rumour",
+        )
+
+    def test_wave_e_is_not_built(self) -> None:
+        """Wave E was dropped; it must not come back as a promise."""
+        wave = self._wave("Wave E")
+        self.assertIn(
+            "not built",
+            wave.lower(),
+            "wave E reads as something to build again. The operator dropped it "
+            "on 2026-11-03: this is a single-operator, single-agent project.",
+        )
+        self.assertIn(
+            "was dropped",
+            wave.lower(),
+            "wave E no longer says it was dropped — the heading alone is not "
+            "enough, because the body is what a reader acts on",
+        )
+        self.assertIn(
+            "2026-11-03",
+            wave,
+            "wave E does not say when it was dropped",
+        )
+        for tool in ("execute_code", "delegate_task"):
+            with self.subTest(tool=tool):
+                self.assertIn(
+                    tool,
+                    wave,
+                    f"wave E no longer names {tool!r} — the decision is about "
+                    "those two tools, and a reader must be able to see which",
+                )
+
+    def test_the_gap_is_closed_by_decision(self) -> None:
+        """The gap list says the gap is closed, not merely missing."""
+        gaps = self._section("## The gaps, ordered by how much they cost us")
+        self.assertIn(
+            "closed by decision",
+            gaps.lower(),
+            "the gap list no longer says gap 7 was closed by decision — a gap "
+            "that reads as merely missing is a gap the next reader will "
+            "schedule",
+        )
+        self.assertIn(
+            "2026-11-03",
+            gaps,
+            "gap 7 does not carry the date of the decision that closed it",
+        )
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
