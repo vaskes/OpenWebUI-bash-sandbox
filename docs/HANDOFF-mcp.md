@@ -23,6 +23,15 @@ shell does not have, so it is the operator's to grant — the endpoint is
 named by `AGENT_VISION_URL`, the door is closed while that is empty, and
 the tool takes a path inside the workspace and **not a URL**.
 
+The browser tools are the same kind of exception, and for the same
+reason. `browser_open`, `browser_screenshot` and `browser_close` drive a
+browser the shell does not have — Chromium, in this container — so what
+they may reach is the operator's to grant: the hosts are named by
+`AGENT_BROWSER_ALLOWED_HOSTS`, and the door is closed while that is
+empty. `browser_open` takes a URL, because a browser that cannot be
+told where to go is not a browser; what it may fetch is the operator's
+list, not the model's reach.
+
 ---
 
 ## Connecting
@@ -314,6 +323,79 @@ when it is over its budget, and a truncated answer says that it is
 truncated. The request and the refusal are counted
 (`sandbox_agent_vision_requests_total`, `sandbox_agent_vision_refused_total`).
 
+### `browser_open`
+
+Opens a page in the sandbox's **own** browser — Chromium, in this
+container, driven by Playwright — and returns the rendered text.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `url` | string, **required** | the page; absolute, and http or https |
+| `session_id` | string | the browser session; `mcp` by default |
+
+Returns `url`, `title`, `text`, `truncated`, `session_id` and `sandbox`.
+
+**The list of hosts is the operator's.** `AGENT_BROWSER_ALLOWED_HOSTS`
+lists the hosts the tool may fetch — `example.com` exactly,
+`*.example.com` for a domain and everything under it, and `*` for the
+operator's explicit "any host". While the list is empty the door is
+**closed**, and the refusal says so.
+
+**A page that redirects off the list is refused.** The URL is checked
+before the browser is reached, and the page is checked **again** after
+it has loaded: Chromium follows an HTTP redirect inside its own network
+stack and does not hand that follow-up to the route handler (measured
+2026-11-02), so a route handler alone is not a fence. A page that ended
+up somewhere else is refused and its content is discarded.
+
+**What the list is, and what it is not.** It is a policy about **one
+tool**, not a boundary: the jail's egress is unrestricted and measured,
+so the model's own shell reaches the open web with `curl` anyway. What
+it buys is that *our tool* does not become a second, unaudited door to
+the web.
+
+Budgets: `AGENT_BROWSER_MAX_TEXT_BYTES` (64 KiB) for the text,
+`AGENT_BROWSER_TIMEOUT` (30 s) for a navigation, and
+`AGENT_BROWSER_SETTLE_MS` (500 ms) for the page to settle. A truncated
+answer says that it was truncated. The requests and the refusals are
+counted (`sandbox_agent_browser_requests_total`,
+`sandbox_agent_browser_refused_total`).
+
+### `browser_screenshot`
+
+Takes a PNG of the page that is open, and puts it in the workspace.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `path` | string | the file, relative to the workspace; `browser.png` by default |
+| `session_id` | string | the browser session; `mcp` by default |
+| `full_page` | boolean | the whole page rather than the viewport; false by default |
+
+Returns `name`, `path`, `size` and `session_id`.
+
+**The picture goes through the same fence every other write uses.** A
+path that resolves outside the workspace is refused, and a symlink that
+points out is not followed. The picture is bounded by
+`AGENT_BROWSER_MAX_SCREENSHOT_BYTES` (4 MiB), and over the budget
+nothing is written.
+
+### `browser_close`
+
+Drops the browser context of a session: the page, its cookies and its
+profile go, and the next page opens clean.
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `session_id` | string | the browser session; `mcp` by default |
+
+Returns `closed` and `session_id`.
+
+**The browser keeps no credentials.** Every session gets a fresh
+context — no cookie, no token, no saved password — and nothing is
+written into the workspace but the PNG the caller asked for. The
+browser's own temporary files live on the tmpfs at `/tmp`, never in the
+workspace.
+
 ### `todo_list`
 
 The task list of a session: what the model is working through.
@@ -502,6 +584,9 @@ The refusals that can come back:
 | `patch` | no twin — the shell is the equivalent, and narrower |
 | `search_files` | no twin — the shell is the equivalent, and narrower |
 | `vision_analyze` | no twin — the endpoint is the operator's, and the shell has no eyes |
+| `browser_open` | no twin — the browser is a capability the operator opened by naming the hosts |
+| `browser_screenshot` | no twin — the picture lands in the workspace, and the shell can take one too |
+| `browser_close` | no twin — the context is the browser's own |
 | `todo_list` | no twin — the plan lives with the session |
 | `memory` | no twin — the memory is a file of the model's own |
 | `session_search` | no twin — the recall is over the history the sessions keep |

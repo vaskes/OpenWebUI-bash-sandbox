@@ -9,3 +9,11 @@
 # convenience: the endpoint it serves is the product.
 -r requirements.txt
 mcp>=2.3.0,<3.0
+# Playwright drives the browser that wave F put inside the sandbox's own
+# container. It is a runtime dependency of the agent, not a test-only
+# convenience: the browser is the product of this wave.
+#
+# The browser *binaries* are a separate step — they are downloaded in the
+# image build with the very same version of this package, so the driver
+# and the Chromium it expects are always the pair that was tested.
+playwright>=1.63,<2.0

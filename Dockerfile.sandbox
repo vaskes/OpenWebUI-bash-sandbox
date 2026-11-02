@@ -186,6 +186,43 @@ RUN if [ "$AGENT_ALLOW_SUDO" = "1" ]; then \
 # ``/install/`` copy is correct. The two differ on purpose.)
 COPY --from=builder /install/local/ /usr/local/
 
+# The browser, in this image.
+#
+# Wave F put the browser *inside* the sandbox's own container: the
+# operator's decision of 2026-11-02 is that the sandbox is one atomic
+# service of one Docker, so there is no browser sidecar and no second
+# container. Playwright drives Chromium, and both live here.
+#
+# Three things about this step are deliberate:
+#
+#   * ``--with-deps`` installs the shared libraries Chromium needs. The
+#     list is Playwright's own, and Playwright 1.64 knows ubuntu 26.04
+#     by name — including the t64 package names (libasound2t64 and
+#     friends) that 24.04 renamed and 26.04 kept. Guessing that list
+#     here would rot on the next Ubuntu release; asking Playwright means
+#     the build asks the same question the driver was tested against.
+#   * ``--no-shell`` skips the *headless shell*, which is a second
+#     Chromium (273 MB) that this image does not need: the browser runs
+#     headless through the full build. Without the flag the image carries
+#     681 MB of browser instead of 403 MB.
+#   * the browser lands in /ms-playwright, not in a cache under a home
+#     directory, so it does not depend on HOME and does not disappear
+#     when the model's shell changes its environment.
+#
+# PLAYWRIGHT_BROWSERS_PATH is what tells the driver where to look. It is
+# part of the image's environment, so the agent service and any process
+# it starts agree on the path.
+#
+# The last step makes one property explicit: Chromium's setuid sandbox
+# helper must never be setuid-root in an image that runs as uid 1000.
+# Playwright ships it as 0755; saying so here means a future Chromium
+# build cannot quietly turn it into a setuid binary.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN python3 -m playwright install --with-deps --no-shell chromium \
+    && rm -rf /var/lib/apt/lists/* \
+    && chmod -R a+rX /ms-playwright \
+    && find /ms-playwright -name 'chrome_sandbox' -exec chmod 0755 {} +
+
 # The preinstalled python tree, and the wheelhouse it was built from.
 #
 # Both are read-only for the agent's user (a+rX below): the tree is a
@@ -233,6 +270,14 @@ COPY --chown=1000:1000 agent_config.py /home/agent/agent_config.py
 COPY --chown=1000:1000 agent_api.py   /home/agent/agent_api.py
 COPY --chown=1000:1000 json_logging.py /home/agent/json_logging.py
 COPY --chown=1000:1000 metrics.py       /home/agent/metrics.py
+
+# ``agent_browser.py`` is the browser door of wave F: the policy (which
+# hosts the tool may fetch), the driver (Chromium, in this container) and
+# the door itself. It is a module of the same kind as the ones above and
+# for the same reason: a module that is left out of the image does not
+# fail the build — it fails the container, on the first call that reaches
+# the browser.
+COPY --chown=1000:1000 agent_browser.py /home/agent/agent_browser.py
 #
 # ``token_rules.py`` holds the rule about the bearer token that both
 # services share — in particular that the template's placeholder is a

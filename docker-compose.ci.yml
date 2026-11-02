@@ -91,6 +91,14 @@ services:
       # no check at all — the check is off by default. A deployment
       # behind a domain names it here, or the MCP endpoint answers 421.
       - AGENT_MCP_ALLOWED_HOSTS=${AGENT_MCP_ALLOWED_HOSTS:-}
+      # The browser door of wave F. The list is the operator's policy
+      # about what our tool may fetch; empty = the door is closed.
+      #
+      # In CI the list is 127.0.0.1, because the page the smoke test
+      # serves comes from inside the agent container: the check has to
+      # work without the open internet, and a host that is not on the
+      # list has to be refused without being fetched.
+      - AGENT_BROWSER_ALLOWED_HOSTS=${AGENT_BROWSER_ALLOWED_HOSTS:-127.0.0.1}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/healthz"]
       interval: 5s

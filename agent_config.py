@@ -60,6 +60,11 @@ from urllib.parse import urlsplit
 
 __all__ = [
     "BINARY_LIMIT_BYTES",
+    "BROWSER_ALLOWED_HOSTS",
+    "BROWSER_MAX_SCREENSHOT_BYTES",
+    "BROWSER_MAX_TEXT_BYTES",
+    "BROWSER_SETTLE_MS",
+    "BROWSER_TIMEOUT_SECONDS",
     "CAPTURE_DEPTH_LINES",
     "HISTORY_LIMIT_LINES",
     "MCP_ALLOWED_HOSTS",
@@ -359,6 +364,19 @@ SESSION_HISTORY_MAX_COMMANDS_DEFAULT = 100
 SESSION_HISTORY_MAX_COMMAND_BYTES_DEFAULT = 1000
 SESSION_SEARCH_MAX_RESULTS_DEFAULT = 50
 
+#: The default bounds of the browser door.
+BROWSER_TIMEOUT_DEFAULT_SECONDS = 30
+BROWSER_MAX_TEXT_DEFAULT_BYTES = 64 * _KIB
+BROWSER_MAX_SCREENSHOT_DEFAULT_BYTES = 4 * _MIB
+BROWSER_SETTLE_DEFAULT_MS = 500
+
+#: The hard ceilings of the browser door, independent of any configured
+#: limit. They are the largest one call may cost the machine.
+BROWSER_TIMEOUT_CEILING_SECONDS = 120
+BROWSER_MAX_TEXT_CEILING_BYTES = 1 * _MIB
+BROWSER_MAX_SCREENSHOT_CEILING_BYTES = 16 * _MIB
+BROWSER_SETTLE_CEILING_MS = 5000
+
 #: How long one search may walk the workspace, in seconds.
 #:
 #: A constant and not a knob: the walk is bounded by the machine, not
@@ -430,6 +448,70 @@ VISION_MAX_PROMPT_BYTES = parse_size(
     name="AGENT_VISION_MAX_PROMPT_BYTES",
     minimum=16,
     maximum=MCP_READ_CEILING_BYTES,
+)
+
+# ---------------------------------------------------------------------------
+# The browser door
+# ---------------------------------------------------------------------------
+#: The hosts the browser door may fetch.
+#:
+#: Empty means the door is **closed**: ``browser_open`` refuses and says
+#: so. This is the same rule the vision door follows — an unconfigured
+#: capability is absent, not open.
+#:
+#: An entry is a host name: ``example.com`` matches that host exactly,
+#: ``*.example.com`` matches it and everything under it, and ``*`` is the
+#: operator's explicit "any host" — a deliberate choice, not a default.
+#:
+#: The list is the operator's policy about **one tool**. It is not a
+#: boundary: the jail's egress is unrestricted (measured, see
+#: docs/SECURITY.md), so the model's own shell reaches any host it likes
+#: with ``curl``. What the list buys is that *our tool* does not become a
+#: second, unaudited door to the open web.
+BROWSER_ALLOWED_HOSTS: tuple[str, ...] = tuple(
+    item.strip().lower()
+    for item in os.environ.get("AGENT_BROWSER_ALLOWED_HOSTS", "").split(",")
+    if item.strip()
+)
+
+#: How long one navigation may take.
+BROWSER_TIMEOUT_SECONDS = parse_count(
+    os.environ.get("AGENT_BROWSER_TIMEOUT", str(BROWSER_TIMEOUT_DEFAULT_SECONDS)),
+    name="AGENT_BROWSER_TIMEOUT",
+    minimum=1,
+    maximum=BROWSER_TIMEOUT_CEILING_SECONDS,
+)
+
+#: The largest text one page may hand back. The text goes into a model's
+#: context, where a megabyte costs attention, so it is bounded the way a
+#: read is bounded — and a truncated text says that it was truncated.
+BROWSER_MAX_TEXT_BYTES = parse_size(
+    os.environ.get("AGENT_BROWSER_MAX_TEXT_BYTES", str(BROWSER_MAX_TEXT_DEFAULT_BYTES)),
+    name="AGENT_BROWSER_MAX_TEXT_BYTES",
+    minimum=1024,
+    maximum=BROWSER_MAX_TEXT_CEILING_BYTES,
+)
+
+#: The largest PNG one screenshot may produce. The picture lands in the
+#: workspace through the same fence every other write uses.
+BROWSER_MAX_SCREENSHOT_BYTES = parse_size(
+    os.environ.get(
+        "AGENT_BROWSER_MAX_SCREENSHOT_BYTES",
+        str(BROWSER_MAX_SCREENSHOT_DEFAULT_BYTES),
+    ),
+    name="AGENT_BROWSER_MAX_SCREENSHOT_BYTES",
+    minimum=1024,
+    maximum=BROWSER_MAX_SCREENSHOT_CEILING_BYTES,
+)
+
+#: How long the browser waits for a page to settle before the text is
+#: read, in milliseconds. A page that renders with JavaScript needs a
+#: moment; a page that does not, does not pay for it.
+BROWSER_SETTLE_MS = parse_count(
+    os.environ.get("AGENT_BROWSER_SETTLE_MS", str(BROWSER_SETTLE_DEFAULT_MS)),
+    name="AGENT_BROWSER_SETTLE_MS",
+    minimum=0,
+    maximum=BROWSER_SETTLE_CEILING_MS,
 )
 
 # ---------------------------------------------------------------------------

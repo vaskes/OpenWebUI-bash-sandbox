@@ -314,6 +314,18 @@ METRICS.counter(
     "session_ops_refused_total",
     "Session operations refused before they changed anything.",
 )
+METRICS.counter(
+    "browser_requests_total",
+    "Pages opened through the browser door.",
+)
+METRICS.counter(
+    "browser_screenshots_total",
+    "Screenshots taken through the browser door.",
+)
+METRICS.counter(
+    "browser_refused_total",
+    "Browser operations refused before anything was fetched.",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -705,6 +717,14 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
                     await _save_sessions()
                 except Exception as exc:  # noqa: BLE001
                     logger.error("final sessions flush failed: %s", exc)
+            # The browser is a child process of this one, and it is warm
+            # between calls. It goes with the agent.
+            try:
+                from agent_browser import shutdown as _browser_shutdown  # noqa: PLC0415
+
+                await _browser_shutdown()
+            except Exception:  # noqa: BLE001 - a shutdown must not raise
+                logger.exception("the browser did not close cleanly")
 
 
 def _log_reaped_sessions(reaped: list[str]) -> None:
@@ -2700,6 +2720,37 @@ def write_workspace_file(path: str, content: str) -> dict[str, Any]:
         )
     # The directories are made last: a write that is refused for its
     # size must not leave a directory behind.
+    _make_parent_dir(os.path.dirname(target))
+    _write_bytes_atomic(target, payload)
+    METRICS.inc("file_writes_total")
+    logger.info("file written: %s (%d bytes)", target, len(payload))
+    return {"name": os.path.basename(target), "path": target, "size": len(payload)}
+
+
+def write_workspace_bytes(path: str, payload: bytes) -> dict[str, Any]:
+    """Write *payload* to *path* inside the workspace.
+
+    The same fence as :func:`write_workspace_file` — the target is
+    resolved and confirmed inside the workspace, the directories are made
+    component by component with ``O_NOFOLLOW``, and the bytes land
+    atomically through :func:`_write_bytes_atomic`. The difference is the
+    payload: this one is bytes, because the browser hands over a PNG.
+
+    The size limit is the same one a text write gets
+    (:func:`agent_config.model_write_limit`): the file that lands is a
+    file the model may read back, and a file it cannot read back is a
+    file it should not have written.
+    """
+    target = _safe_write_target(path)
+    limit = model_write_limit()
+    if len(payload) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"the content is {len(payload)} bytes, over the write limit of "
+                f"{limit} bytes — write it in pieces"
+            ),
+        )
     _make_parent_dir(os.path.dirname(target))
     _write_bytes_atomic(target, payload)
     METRICS.inc("file_writes_total")

@@ -356,6 +356,9 @@ class TestTheToolsAreAdvertised(_Base):
             sorted(mcp_server.tool_names()),
             [
                 "bash",
+                "browser_close",
+                "browser_open",
+                "browser_screenshot",
                 "clarify",
                 "delete_file",
                 "file_info",
@@ -382,6 +385,9 @@ class TestTheToolsAreAdvertised(_Base):
             sorted(tool["name"] for tool in tools),
             [
                 "bash",
+                "browser_close",
+                "browser_open",
+                "browser_screenshot",
                 "clarify",
                 "delete_file",
                 "file_info",
@@ -544,6 +550,9 @@ class TestARealClientTalksToIt(unittest.TestCase):
                         names,
                         [
                             "bash",
+                            "browser_close",
+                            "browser_open",
+                            "browser_screenshot",
                             "clarify",
                             "delete_file",
                             "file_info",

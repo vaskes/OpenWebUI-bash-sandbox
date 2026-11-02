@@ -48,7 +48,7 @@ They are two serialisations of the same capabilities:
 | auth | the same bearer token | the same bearer token |
 | comparison | constant-time, shared helper | the same shared helper |
 | refusals | HTTP status + a named reason | JSON-RPC result with `isError = true` and the reason in the tool text |
-| tools | — | the twelve tools named in the next paragraph |
+| tools | — | the fifteen tools named in the next paragraph |
 
 Rules that keep the two doors honest:
 
@@ -109,7 +109,7 @@ Rules that keep the two doors honest:
   names is a retrieval door wearing a different hat (retrieval is not this
   project's, v2.13.0).
 
-The MCP door exposes twelve tools: `bash`, `read_file`, `file_info`, `delete_file`, `write_file`, `patch`, `search_files`, `vision_analyze`, `todo_list`, `memory`, `session_search`, `clarify`.
+The MCP door exposes fifteen tools: `bash`, `read_file`, `file_info`, `delete_file`, `write_file`, `patch`, `search_files`, `vision_analyze`, `browser_open`, `browser_screenshot`, `browser_close`, `todo_list`, `memory`, `session_search`, `clarify`.
 
 ## Component responsibilities
 
@@ -258,11 +258,12 @@ JSON-RPC response with isError = true and the reason in the tool text
 
 ```
 agent_api.py          # FastAPI app — HTTP endpoints and tmux plumbing
+agent_browser.py      # The browser door: the allowlist, the driver, Chromium
 agent_config.py       # Environment parsing: stdout, binary, history limits
 agent_core.py         # Pure functions: safe_id, tmux_name, path checks
 body_limit.py         # Pure-ASGI body-size limiter, shared by both services
 json_logging.py       # JSON log formatting for the app and uvicorn
-mcp_server.py         # MCP server: the twelve tools, refusals, protocol
+mcp_server.py         # MCP server: the fifteen tools, refusals, protocol
 metrics.py            # Prometheus metrics
 openapi_proxy.py      # FastAPI app — OpenAPI surface, relay, WS, /mcp relay
 proxy_core.py         # Pure constants: command prefixes, timeouts, WS tunables
@@ -313,6 +314,10 @@ under a path (`/home/agent/.cache/pip`), never over the code.
 | notes the memory holds | `AGENT_MEMORY_MAX_NOTES` (100), each note up to `AGENT_MEMORY_MAX_NOTE_BYTES` (4 KiB) | agent |
 | commands one session remembers | `AGENT_SESSION_HISTORY_MAX_COMMANDS` (100), each up to `AGENT_SESSION_HISTORY_MAX_COMMAND_BYTES` (1 KiB) | agent |
 | matches one recall returns | `AGENT_SESSION_SEARCH_MAX_RESULTS` (50) | agent |
+| hosts the MCP `browser_open` tool may fetch | `AGENT_BROWSER_ALLOWED_HOSTS` — empty means the door is **closed** | agent |
+| text one page hands back | `AGENT_BROWSER_MAX_TEXT_BYTES` (64 KiB) | agent |
+| one screenshot | `AGENT_BROWSER_MAX_SCREENSHOT_BYTES` (4 MiB) | agent |
+| one navigation | `AGENT_BROWSER_TIMEOUT` (30 s), and the page gets `AGENT_BROWSER_SETTLE_MS` (500 ms) to settle | agent |
 | one command's runtime | `AGENT_EXEC_TIMEOUT`, 60 s default (5..3600); the agent's own request default is 30 s and its hard cap 3600 s | the proxy asks, the agent runs |
 | the MCP relay's patience | 3660 s — longer than the agent's own 3600 s cap | proxy |
 
