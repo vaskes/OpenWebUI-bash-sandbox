@@ -21,6 +21,10 @@ What the tools are:
 * ``search_files`` — find files by name, or lines by content;
 * ``vision_analyze`` — look at a picture in the workspace through the
   operator's own vision endpoint;
+* ``browser_open`` — open a page in the sandbox's own browser and read
+  its text, from a host the operator allows;
+* ``browser_screenshot`` — a PNG of the open page, into the workspace;
+* ``browser_close`` — drop the browser context of a session;
 * ``todo_list`` — the task list of the session, bounded and replaceable;
 * ``memory`` — the model's own notes, in a file the operator can read;
 * ``session_search`` — find a command a session ran earlier;
@@ -186,6 +190,33 @@ class VisionResult(TypedDict):
     text: str
     truncated: bool
     model: str
+
+
+class BrowserResult(TypedDict):
+    """What the browser door read."""
+
+    url: str
+    title: str
+    text: str
+    truncated: bool
+    session_id: str
+    sandbox: str
+
+
+class BrowserScreenshotResult(TypedDict):
+    """What the browser door wrote."""
+
+    name: str
+    path: str
+    size: int
+    session_id: str
+
+
+class BrowserCloseResult(TypedDict):
+    """What the browser door dropped."""
+
+    closed: bool
+    session_id: str
 
 
 class SearchResult(TypedDict):
@@ -652,6 +683,88 @@ async def vision_analyze(path: str, prompt: str = "Describe this image.") -> Vis
 
 @mcp.tool(
     description=(
+        "Open a page in the sandbox's own browser and read it. The URL must be "
+        "absolute — it has to start with http:// or https:// — and its host "
+        "must be one the operator allows; a host that is not on that list is "
+        "refused, and so is a page that redirects to one. The answer is the "
+        "rendered text, bounded, and it says when it was cut. The browser is "
+        "the sandbox's own: it keeps no credentials, and the page it reads is "
+        "not a page you may write to."
+    )
+)
+async def browser_open(url: str, session_id: str = DEFAULT_SESSION_ID) -> BrowserResult:
+    """Open a page in the sandbox's browser and read its text."""
+    from agent_browser import browser_open as _open  # noqa: PLC0415
+
+    try:
+        result = await _open(session_id, url)
+    except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.browser_open refused %s", url)
+        _note_browser_refusal()
+        raise ToolError(f"cannot open the page: {_reason(exc)}") from exc
+    return BrowserResult(
+        url=str(result["url"]),
+        title=str(result["title"]),
+        text=str(result["text"]),
+        truncated=bool(result["truncated"]),
+        session_id=session_id,
+        sandbox=str(result["sandbox"]),
+    )
+
+
+@mcp.tool(
+    description=(
+        "Take a PNG of the page that is open in the sandbox's browser and put "
+        "it in the workspace, through the same fence every other write uses. "
+        "The path is relative to the workspace; a path that points out of it "
+        "is refused. The picture is bounded, and a refusal names the limit. "
+        "There has to be a page open: open one first."
+    )
+)
+async def browser_screenshot(
+    path: str = "browser.png",
+    session_id: str = DEFAULT_SESSION_ID,
+    full_page: bool = False,
+) -> BrowserScreenshotResult:
+    """Take a screenshot of the open page into the workspace."""
+    from agent_browser import browser_screenshot as _shot  # noqa: PLC0415
+
+    try:
+        result = await _shot(session_id, path, full_page=full_page)
+    except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.browser_screenshot refused %s", path)
+        _note_browser_refusal()
+        raise ToolError(f"cannot take the screenshot: {_reason(exc)}") from exc
+    return BrowserScreenshotResult(
+        name=str(result["name"]),
+        path=str(result["path"]),
+        size=int(result["size"]),
+        session_id=session_id,
+    )
+
+
+@mcp.tool(
+    description=(
+        "Drop the browser context of a session: the page, its cookies and its "
+        "profile go away, and the next page opens clean. The browser itself "
+        "stays warm for the next call."
+    )
+)
+async def browser_close(session_id: str = DEFAULT_SESSION_ID) -> BrowserCloseResult:
+    """Drop the browser context of a session."""
+    from agent_browser import browser_close as _close  # noqa: PLC0415
+
+    try:
+        closed = await _close(session_id)
+    except Exception as exc:  # noqa: BLE001 - the detail must reach the model
+        logger.exception("mcp.browser_close refused %s", session_id)
+        _note_browser_refusal()
+        raise ToolError(f"cannot close the browser: {_reason(exc)}") from exc
+    return BrowserCloseResult(closed=bool(closed), session_id=session_id)
+
+
+@mcp.tool(
+    description=(
         "The task list of this session: what you are working through. With no "
         "items it returns the list; with items it replaces the list — you hold "
         "the whole plan, so you can rewrite it as the plan changes. Mark an item "
@@ -872,6 +985,16 @@ def _note_session_refusal() -> None:
         logger.exception("mcp cannot count a refused session operation")
 
 
+def _note_browser_refusal() -> None:
+    """Count a browser operation that was refused before anything was fetched."""
+    try:
+        from agent_api import METRICS  # noqa: PLC0415
+
+        METRICS.inc("browser_refused_total")
+    except Exception:  # noqa: BLE001 - a counter must never break a refusal
+        logger.exception("mcp cannot count a refused browser operation")
+
+
 def _todo_limit() -> int:
     """How many items the task list may hold."""
     from agent_config import TODO_MAX_ITEMS  # noqa: PLC0415
@@ -1054,6 +1177,9 @@ def tool_names() -> list[str]:
     """The names of the tools this server offers (for the docs and tests)."""
     return [
         "bash",
+        "browser_close",
+        "browser_open",
+        "browser_screenshot",
         "clarify",
         "delete_file",
         "file_info",
@@ -1070,6 +1196,9 @@ def tool_names() -> list[str]:
 
 __all__ = [
     "BashResult",
+    "BrowserCloseResult",
+    "BrowserResult",
+    "BrowserScreenshotResult",
     "ClarifyResult",
     "DeleteResult",
     "FileInfo",
@@ -1082,6 +1211,9 @@ __all__ = [
     "WriteResult",
     "allowed_hosts",
     "bash",
+    "browser_close",
+    "browser_open",
+    "browser_screenshot",
     "build_app",
     "clarify",
     "delete_file",

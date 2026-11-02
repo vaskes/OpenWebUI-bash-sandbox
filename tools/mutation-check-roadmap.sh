@@ -77,9 +77,17 @@ mutate docker-compose.yml \
   "the network is internal and the roadmap still claims an open reach"
 
 echo "== the browser wave becomes optional again =="
+# The heading now appears twice — once in the shipped summary, once in
+# the planning wave — and a mutation that is not unique changes the
+# FIRST one. The context below pins the planning wave, which is the one
+# the detector reads.
 mutate docs/ROADMAP.md \
-  '### Wave F — the browser, in the same container' \
-  '### Wave F — the browser, if it is wanted at all' \
+  '### Wave F — the browser, in the same container
+
+**Decided: it goes in.**' \
+  '### Wave F — the browser, if it is wanted at all
+
+**Decided: it goes in.**' \
   "$TESTS::TestTheBrowserWaveIsDecided::test_the_browser_wave_is_not_conditional" \
   "the browser wave is conditional again"
 
@@ -98,9 +106,15 @@ mutate docs/ROADMAP.md \
   "the browser wave wraps the other sandbox's tool"
 
 echo "== the browser wave is gone =="
+# Same disambiguation as above: the shipped summary carries the same
+# heading, and this mutation has to take the planning wave away.
 mutate docs/ROADMAP.md \
-  '### Wave F — the browser, in the same container' \
-  '### Wave F — something else' \
+  '### Wave F — the browser, in the same container
+
+**Decided: it goes in.**' \
+  '### Wave F — something else
+
+**Decided: it goes in.**' \
   "$TESTS::TestTheBrowserWaveIsDecided::test_the_browser_wave_exists" \
   "the browser wave does not exist"
 

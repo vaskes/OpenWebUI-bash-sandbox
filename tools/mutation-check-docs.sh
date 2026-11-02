@@ -42,8 +42,8 @@ mutate docs/ARCHITECTURE.md \
 
 echo "== a tool is renamed in the docs =="
 mutate docs/ARCHITECTURE.md \
-  'The MCP door exposes twelve tools: `bash`, `read_file`, `file_info`, `delete_file`, `write_file`, `patch`, `search_files`, `vision_analyze`, `todo_list`, `memory`, `session_search`, `clarify`.' \
-  'The MCP door exposes twelve tools: `bash`, `read_file`, `fileinfo`, `delete_file`, `write_file`, `patch`, `search_files`, `vision_analyze`, `todo_list`, `memory`, `session_search`, `clarify`.' \
+  'The MCP door exposes fifteen tools: `bash`, `read_file`, `file_info`, `delete_file`, `write_file`, `patch`, `search_files`, `vision_analyze`, `browser_open`, `browser_screenshot`, `browser_close`, `todo_list`, `memory`, `session_search`, `clarify`.' \
+  'The MCP door exposes fifteen tools: `bash`, `read_file`, `fileinfo`, `delete_file`, `write_file`, `patch`, `search_files`, `vision_analyze`, `browser_open`, `browser_screenshot`, `browser_close`, `todo_list`, `memory`, `session_search`, `clarify`.' \
   "$TESTS::TestTheMcpToolsAreDocumented::test_the_documented_tools_are_the_code_tools" \
   "the documented tools are the code tools"
 

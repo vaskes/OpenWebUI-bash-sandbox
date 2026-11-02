@@ -33,6 +33,11 @@ are set in `docker-compose.yml` unless noted otherwise.
 | `AGENT_SESSION_HISTORY_MAX_COMMANDS` | `100`                          | How many commands one session remembers for the recall. 1..1000. The history is in memory: a session that dies takes it with it. |
 | `AGENT_SESSION_HISTORY_MAX_COMMAND_BYTES` | `1k`                     | How long one remembered command may be. 16 bytes..64k. |
 | `AGENT_SESSION_SEARCH_MAX_RESULTS` | `50`                                 | How many matches one recall returns. 1..500. Asking for more is refused. |
+| `AGENT_BROWSER_ALLOWED_HOSTS` | (empty → the door is closed)         | The hosts the browser door may fetch, comma-separated. **Empty = the door is closed**: `browser_open` refuses and says so. An entry is a host (`example.com`), a wildcard covers a domain and everything under it (`*.example.com`), and `*` is the operator's explicit "any host". This is a policy about **one tool**, not a boundary: the jail's egress is unrestricted and measured (`docs/SECURITY.md`), so the model's own shell reaches the open web with `curl` anyway. What the list buys is that *our tool* does not become a second, unaudited door to the web. A page that redirects off the list is refused and its content is discarded. |
+| `AGENT_BROWSER_TIMEOUT` | `30`                                       | How long one navigation may take, in seconds (1 to 120). |
+| `AGENT_BROWSER_MAX_TEXT_BYTES` | `64k`                               | How large the text one page may hand back. 1k..1m. The text travels into the model's context, so it is truncated over the budget — and a truncated answer says that it was truncated. |
+| `AGENT_BROWSER_MAX_SCREENSHOT_BYTES` | `4m`                          | How large one screenshot may be. 1k..16m. Over the budget is refused, and nothing is written. |
+| `AGENT_BROWSER_SETTLE_MS` | `500`                                      | How long the browser waits for a page to settle before the text is read, in milliseconds (0 to 5000). A page that renders with JavaScript needs a moment; a page that does not, does not pay for it. |
 | `AGENT_ALLOW_SUDO`     | `0`                                       | Build the image with `sudo`, so a command can become root. **Private, secured deployments only.** |
 | `AGENT_NO_NEW_PRIVILEGES` | `true`                                  | The container's `no-new-privileges` flag. `false` is required by the privilege mode. |
 | `AGENT_CAP_DROP`       | `ALL`                                     | Capabilities dropped from the container. `SYS_ADMIN` in the privilege mode. |
@@ -540,6 +545,9 @@ having.
 | `sandbox_agent_file_ops_refused_total` | agent   | file operations refused before they touched the filesystem |
 | `sandbox_agent_vision_requests_total`  | agent   | pictures handed to the operator's vision endpoint |
 | `sandbox_agent_vision_refused_total`   | agent   | vision requests refused before the picture left the workspace |
+| `sandbox_agent_browser_requests_total` | agent   | pages opened through the browser door |
+| `sandbox_agent_browser_screenshots_total` | agent | screenshots taken through the browser door |
+| `sandbox_agent_browser_refused_total`  | agent   | browser operations refused before anything was fetched |
 | `sandbox_agent_todo_ops_total`         | agent   | task list changes through the session tools |
 | `sandbox_agent_memory_ops_total`       | agent   | memory changes through the session tools |
 | `sandbox_agent_session_searches_total` | agent   | recalls run through the session tools |

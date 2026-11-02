@@ -299,8 +299,16 @@ class TestTheBrowserWaveIsDecided(unittest.TestCase):
 
         The body ends at the next section, not at the end of the file: a
         wave is what it says, and the sections after it say other things.
+
+        It is the **planning** wave, under "## The waves" — not the
+        shipped summary above it. The summary is a pointer to the wave
+        and a list of what changed; the wave is what carries the shape
+        and the measurements, and that is what this check reads.
         """
         text = ROADMAP.read_text(encoding="utf-8")
+        waves_at = text.find("\n## The waves")
+        if waves_at > 0:
+            text = text[waves_at:]
         headings = [
             match.group(0) for match in re.finditer(r"^###\s+Wave\b.*$", text, re.MULTILINE)
         ]
@@ -440,14 +448,24 @@ class TestTheOneContainerDecision(unittest.TestCase):
         return match.group(1)
 
     def _wave(self, marker: str) -> str:
-        """The body of the wave whose heading contains ``marker``."""
+        """The body of the wave whose heading contains ``marker``.
+
+        The **planning** wave, under "## The waves" — not the shipped
+        summary above it. The summary is a pointer and a list of what
+        changed; the wave is what carries the shape and the measurements,
+        and that is what this check reads.
+        """
+        roadmap = self.roadmap
+        waves_at = roadmap.find("\n## The waves")
+        if waves_at > 0:
+            roadmap = roadmap[waves_at:]
         headings = [
-            match.group(0) for match in re.finditer(r"^###\s+Wave\b.*$", self.roadmap, re.MULTILINE)
+            match.group(0) for match in re.finditer(r"^###\s+Wave\b.*$", roadmap, re.MULTILINE)
         ]
         for heading in headings:
             if marker.lower() not in heading.lower():
                 continue
-            rest = self.roadmap[self.roadmap.index(heading) :]
+            rest = roadmap[roadmap.index(heading) :]
             following = re.search(r"^#{2,3}\s+\S", rest[len(heading) :], re.MULTILINE)
             end = len(heading) + following.start() if following else len(rest)
             return rest[:end]

@@ -399,6 +399,9 @@ class TestTheSessionToolsAreTheDocumentedTools(_Base):
             tool_names(),
             [
                 "bash",
+                "browser_close",
+                "browser_open",
+                "browser_screenshot",
                 "clarify",
                 "delete_file",
                 "file_info",

@@ -96,7 +96,13 @@ class TestSandboxDockerfile(unittest.TestCase):
 #: not read is a module whose imports nobody can complain about — and an
 #: import that is missing from the image does not fail the build, it
 #: fails the container, on the first request.
-AGENT_MODULES = ("agent_api.py", "agent_core.py", "agent_config.py", "mcp_server.py")
+AGENT_MODULES = (
+    "agent_api.py",
+    "agent_browser.py",
+    "agent_core.py",
+    "agent_config.py",
+    "mcp_server.py",
+)
 
 #: The modules both services share. The agent's own modules import
 #: them, so their imports are covered by the scan of those.

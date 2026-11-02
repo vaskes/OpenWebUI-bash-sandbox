@@ -163,6 +163,24 @@ services:
       - AGENT_SESSION_HISTORY_MAX_COMMANDS=${AGENT_SESSION_HISTORY_MAX_COMMANDS:-100}
       - AGENT_SESSION_HISTORY_MAX_COMMAND_BYTES=${AGENT_SESSION_HISTORY_MAX_COMMAND_BYTES:-1k}
       - AGENT_SESSION_SEARCH_MAX_RESULTS=${AGENT_SESSION_SEARCH_MAX_RESULTS:-50}
+      # The browser door of wave F. The browser is inside this container
+      # (the operator's one-container decision), and the list is the
+      # operator's policy about what *our tool* may fetch. Empty = the
+      # door is closed: browser_open refuses and says so.
+      #
+      # A host is exact ("example.com"), a wildcard covers a domain and
+      # everything under it ("*.example.com"), and "*" is the operator's
+      # explicit "any host". This is a policy about one tool, not a
+      # boundary: the jail's egress is unrestricted, and the model's own
+      # shell reaches the open web with curl.
+      - AGENT_BROWSER_ALLOWED_HOSTS=${AGENT_BROWSER_ALLOWED_HOSTS:-}
+      # The budgets of the browser door: how long a navigation may take,
+      # how much text comes back, how large a screenshot may be, and how
+      # long the browser waits for a page to settle.
+      - AGENT_BROWSER_TIMEOUT=${AGENT_BROWSER_TIMEOUT:-30}
+      - AGENT_BROWSER_MAX_TEXT_BYTES=${AGENT_BROWSER_MAX_TEXT_BYTES:-64k}
+      - AGENT_BROWSER_MAX_SCREENSHOT_BYTES=${AGENT_BROWSER_MAX_SCREENSHOT_BYTES:-4m}
+      - AGENT_BROWSER_SETTLE_MS=${AGENT_BROWSER_SETTLE_MS:-500}
       # Same token as OPENAPI_PROXY_TOKEN — the proxy forwards it on
       # every call. The agent refuses to serve if this is empty.
       # The token the agent accepts on its own doors. It defaults to the

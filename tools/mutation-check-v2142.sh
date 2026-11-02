@@ -194,7 +194,13 @@ mutate openapi_proxy.py \
 
 echo "== the image scan stops looking at the MCP module =="
 mutate tests/test_deploy_artifacts.py \
-    'AGENT_MODULES = ("agent_api.py", "agent_core.py", "agent_config.py", "mcp_server.py")' \
+    'AGENT_MODULES = (
+    "agent_api.py",
+    "agent_browser.py",
+    "agent_core.py",
+    "agent_config.py",
+    "mcp_server.py",
+)' \
     'AGENT_MODULES = ("agent_api.py", "agent_core.py", "agent_config.py")' \
     "tests/test_deploy_artifacts.py::TestAgentModulesAreInTheImage::test_the_scan_looks_at_every_module_the_agent_ships" \
     "the scan sees the MCP module"

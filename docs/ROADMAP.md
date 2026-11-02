@@ -281,6 +281,44 @@ operator's words authorize an action. The test pins the sentence.
 *Red:* `tools/mutation-check-v2240.sh` breaks every fence above on
 purpose and expects the named test to go red.
 
+### Wave F — the browser, in the same container — v2.25.0
+
+The browser came **into this container**: Chromium and Playwright are in
+the image, and three tools on the MCP door drive them — `browser_open`,
+`browser_screenshot` and `browser_close`.
+
+* The **hosts** the tool may fetch are the operator's
+  (`AGENT_BROWSER_ALLOWED_HOSTS`), and the door is **closed** while that
+  list is empty.
+* A page that **redirects off the list** is refused, and its content is
+  discarded. That check exists because of the measurement below: a route
+  handler alone is not a fence.
+* The **screenshot** lands in the workspace through the same fence every
+  other write uses.
+* The browser keeps **no credentials**: a fresh context per session, and
+  nothing on disk but the tmpfs the browser itself uses.
+
+*Red:* `tools/mutation-check-v2250.sh` breaks every fence above on
+purpose and expects the named test to go red — 20 mutations, all caught.
+
+**The measurement that shaped the implementation.** Chromium follows an
+HTTP redirect inside its own network stack and never hands that
+follow-up to the route handler: measured, a page on an allowed host
+redirected to a host that was not on the list, and the browser walked
+there while the handler never saw it. A route handler is therefore not a
+fence on its own — so the door checks the host **again** after the
+navigation, and a page that ended up elsewhere is refused. The
+implementation follows the measurement, not the other way round.
+
+**The cost, stated rather than hidden.** In the jail Chromium's own
+sandbox is not available — the setuid helper is inert under
+`no-new-privileges`, and the namespace backend needs user namespaces the
+seccomp filter refuses — so the browser runs with `--no-sandbox` there,
+and a renderer compromise in the jail is code execution as uid 1000: the
+same uid the model's own shell runs as. Where the namespace backend *is*
+available, the browser keeps its own sandbox, and the tool says which
+posture it got.
+
 ## The waves
 
 ### Wave A — the agent writes and searches through the fence
@@ -467,13 +505,43 @@ shell runs as, so it grants the attacker nothing the model does not already
 have — and it grants it to whoever can get a malicious page rendered. That is
 the real cost of wave F, and it is why the profile rules are not negotiable.
 
-**What it costs in resources** (measured 2026-11-02, one page, uid 1000):
-Chromium adds **9–10 processes** (against the jail's `pids_limit` 256),
-**~320 MB PSS** (~880 MB RSS summed over processes, which double-counts shared
-pages) against `mem_limit` of 2 GB (dev) / 4 GB (production), a **~1.0–1.2 s
-cold start**, and **~390 MB** of browser in the image. The pids and memory fit;
-the cold start is what an MCP call has to wait for, and a warm browser is
-therefore worth keeping between calls.
+**What it costs in resources** (measured 2026-11-02, one page, uid 1000, as
+shipped): Chromium adds **5–6 processes** (against the jail's `pids_limit` 256),
+**~140–190 MB PSS** (~430 MB RSS summed over processes, which double-counts
+shared pages) against `mem_limit` of 2 GB (dev) / 4 GB (production), a
+**~1.2 s cold start** and a **~0.15–0.6 s warm navigation**, and **403 MB** of
+browser in the image. The pids and memory fit; the cold start is what an MCP
+call has to wait for, and a warm browser is therefore worth keeping between
+calls.
+
+**The image carries one Chromium, not two.** `playwright install chromium`
+also pulls the *headless shell* — a second Chromium, 273 MB — which this image
+does not use: the browser runs headless through the full build. The build
+passes `--no-shell`, so the browser in the image is 403 MB instead of 681 MB.
+
+**And the driver has to be told which Chromium it wants.** Measured in the
+driver's own source: the executable name is
+`options.headless ? "chromium-headless-shell" : "chromium"` when no channel
+is given — so Playwright's headless mode reaches for the *shell*, and the
+shell is exactly what `--no-shell` left out. The door therefore launches with
+`channel="chromium"`, which is the full build in headless mode. Without it
+the browser in the image does not exist, and the tool answers
+*"Executable doesn't exist at /ms-playwright/chromium_headless_shell-…"* —
+measured, in the CI job that builds the image and opens a page in it.
+
+**And Chromium needs a writable home it did not ask for.** It takes its home
+directory from the passwd entry (`getpwuid()`) and **ignores `HOME`**; in
+this container that home is `/home/agent` on a read-only rootfs, so the
+crashpad handler cannot create its database and the browser dies at launch
+with `SIGTRAP` and *"chrome_crashpad_handler: --database is required"*.
+The fix is Chromium's own: writable, pre-created `XDG_CONFIG_HOME` and
+`XDG_CACHE_HOME` on the tmpfs.
+
+**The browser does not inherit the agent's environment.** Playwright's `env`
+*replaces* the environment instead of adding to it, and the door uses that
+on purpose: the agent's token is in the agent's environment, and a same-uid
+sibling can read `/proc/<pid>/environ` — so a browser that inherited it
+would carry the agent's credential in a file the model can read.
 
 **The tools, in our style** (`browser_` prefix, ours, not theirs):
 
@@ -493,6 +561,15 @@ negotiable, and why the profile is per-session and outside the workspace.
 removed stays removed. We ship no search tool, no index and no engine to query.
 A browser pointed at a URL the operator names is retrieval, and retrieval is
 the subject of question 2 — not a research capability in disguise.
+
+**Shipped in v2.25.0** — see *Shipped* above. The implementation follows the
+measurements rather than the plan: the allowlist is checked before the browser
+is reached **and again after the navigation**, because Chromium follows a
+redirect inside its own network stack and the route handler never sees the
+follow-up. The door is closed while `AGENT_BROWSER_ALLOWED_HOSTS` is empty,
+the screenshot goes through wave A's fence, and the browser keeps no
+credentials — a fresh context per session, and nothing on disk but the tmpfs
+the browser itself uses.
 
 ## What we are not going to build, and why
 

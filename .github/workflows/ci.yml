@@ -339,7 +339,7 @@ jobs:
           printf '%s' "$tools" | python3 -c "
           import json,sys
           names = sorted(t['name'] for t in json.load(sys.stdin)['result']['tools'])
-          assert names == ['bash','clarify','delete_file','file_info','memory','patch','read_file','search_files','session_search','todo_list','vision_analyze','write_file'], names
+          assert names == ['bash','browser_close','browser_open','browser_screenshot','clarify','delete_file','file_info','memory','patch','read_file','search_files','session_search','todo_list','vision_analyze','write_file'], names
           " || { echo "::error::the tool catalogue is not the documented one"; exit 1; }
 
           out=$(call '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"bash","arguments":{"command":"echo ci-mcp-ok"}}}')
@@ -350,6 +350,55 @@ jobs:
           assert not r.get('isError'), r
           assert 'ci-mcp-ok' in r['content'][0]['text'], r
           " || { echo "::error::the MCP tool did not run the command"; exit 1; }
+
+      - name: The browser in the image must open a page
+        env:
+          TOKEN: ci-smoke-token-not-a-secret-0000
+        run: |
+          set -euo pipefail
+          # The browser is part of the image now, and a browser that is in
+          # the image but does not run is a broken product. The page comes
+          # from inside the agent container, so the check needs no open
+          # internet and proves the browser, the fence and the MCP door
+          # together.
+          docker exec ci-sandbox-agent sh -c \
+            'mkdir -p /tmp/ci-web && printf "<html><body><h1>OWBS-BROWSER-OK</h1></body></html>" > /tmp/ci-web/index.html'
+          docker exec -d ci-sandbox-agent \
+            python3 -m http.server 8099 --bind 127.0.0.1 --directory /tmp/ci-web
+          for _ in $(seq 1 20); do
+            if docker exec ci-sandbox-agent curl -fsS http://127.0.0.1:8099/index.html >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          call() {
+            curl -fsS --max-time 120 \
+              -H "Authorization: Bearer $TOKEN" \
+              -H 'Content-Type: application/json' \
+              -H 'Accept: application/json, text/event-stream' \
+              -d "$1" http://127.0.0.1:8099/mcp
+          }
+
+          out=$(call '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"browser_open","arguments":{"url":"http://127.0.0.1:8099/index.html"}}}')
+          echo "browser_open: ${out:0:300}"
+          printf '%s' "$out" | python3 -c "
+          import json,sys
+          r = json.load(sys.stdin)['result']
+          assert not r.get('isError'), r
+          assert 'OWBS-BROWSER-OK' in r['content'][0]['text'], r
+          " || { echo "::error::the browser did not open the page"; exit 1; }
+
+          # A host that is not on the operator's list must be refused —
+          # and refused without the page being fetched.
+          out=$(call '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"browser_open","arguments":{"url":"http://example.com/"}}}')
+          echo "browser_open (forbidden): ${out:0:300}"
+          printf '%s' "$out" | python3 -c "
+          import json,sys
+          r = json.load(sys.stdin)['result']
+          assert r.get('isError'), r
+          assert 'not on the list' in r['content'][0]['text'], r
+          " || { echo "::error::the browser fetched a host that is not on the list"; exit 1; }
 
       - name: Agent healthz must not leak the workspace path
         run: |

@@ -406,6 +406,9 @@ class TestTheToolsAreTheDocumentedTools(_Base):
             tool_names(),
             [
                 "bash",
+                "browser_close",
+                "browser_open",
+                "browser_screenshot",
                 "clarify",
                 "delete_file",
                 "file_info",
@@ -433,6 +436,9 @@ class TestTheToolsAreTheDocumentedTools(_Base):
             sorted(
                 [
                     "bash",
+                    "browser_close",
+                    "browser_open",
+                    "browser_screenshot",
                     "clarify",
                     "delete_file",
                     "file_info",

@@ -892,6 +892,78 @@ as compromised by the model, keep the operator's *other* credentials
 out of it, and separate the tokens when the stack has more than one
 role to play.
 
+## The browser in the jail (wave F, v2.25.0)
+
+Wave F put a browser **inside this container** — Chromium, driven by
+Playwright, in the image. That is the operator's decision of 2026-11-02:
+the sandbox is one atomic service of one Docker, so there is no browser
+sidecar and no second container. This section says what that costs.
+
+**It adds a renderer for content the model did not write.** Everything
+else in the jail parses what the model wrote. A browser parses what a
+**server** wrote, which is a different and much larger attack surface.
+
+**Chromium's own sandbox is not available here.** It has two backends
+and this jail allows neither:
+
+* the **setuid** backend needs the `chrome_sandbox` helper to be
+  setuid-root — it ships as `0755`, and `no-new-privileges` makes a
+  setuid bit inert anyway;
+* the **namespace** backend needs unprivileged user namespaces, and
+  `unshare -Ur` is `EPERM` in this jail (the seccomp filter is active —
+  measured, see the container-boundary table above).
+
+So the browser starts with `--no-sandbox` here, and the consequence is
+stated plainly: **a renderer compromise in this jail is code execution
+as uid 1000** — the same uid the model's own shell runs as. It grants
+the attacker nothing the model does not already have, and it grants it
+to whoever can get a malicious page rendered. Where the namespace
+backend *is* available, the browser keeps its own sandbox, and the tool
+reports which posture it got.
+
+**There is no debugging port.** Playwright launches Chromium with
+`--remote-debugging-pipe`, a socketpair — measured: the browser process
+opens **zero** listening TCP sockets. There is no devtools endpoint on
+localhost to curl, and no port for the model to attach to.
+
+**A same-uid sibling can hijack the browser.** Measured 2026-11-02: a
+process running as the model's own uid can `PTRACE_ATTACH` to the
+browser's driver, duplicate its file descriptors (`pidfd_getfd`) and
+inject a CDP command — the hijack returned a live `Target.getTargets`.
+So the browser is **not** a fence against the model, and the allowlist
+is not either: the model can reach the browser without the wrapper, and
+it can reach the open web with `curl` today.
+
+**What the allowlist actually is.** `AGENT_BROWSER_ALLOWED_HOSTS` is a
+policy about **one tool**: it bounds what *our* tool fetches, so our
+tool does not become a second, unaudited door to the web. The jail's
+egress stays unrestricted — that is measured, not assumed. While the
+list is empty the door is closed.
+
+**No credentials of ours, ever.** Every browser session gets a fresh
+context: no cookie, no token, no saved password. The browser's own
+temporary files live on the tmpfs at `/tmp`, never in the workspace —
+the workspace is attacker-controlled, and a browser profile is a set of
+files the browser *trusts*, so a planted profile is code the browser
+will run (the v2.20.0 rule).
+
+**And the browser does not inherit the agent's environment.** Playwright's
+`env` replaces the environment rather than adding to it, and the door
+uses that on purpose: the agent's token is in the agent's environment,
+and a same-uid sibling can read `/proc/<pid>/environ` — so a browser
+that inherited the agent's environment would carry the agent's
+credential in a file the model can read. The browser gets six values:
+`PATH`, `HOME`, `TMPDIR`, `LANG` and the two `XDG_*` dirs, all on the
+tmpfs.
+
+**Chromium takes its home from the passwd entry and ignores `HOME`.**
+`/home/agent` is on a read-only rootfs, so the crashpad handler cannot
+create its database there and Chromium dies at launch with `SIGTRAP` and
+*"chrome_crashpad_handler: --database is required"* (measured, in the CI
+job that builds the image and opens a page in it). The fix is the one
+Chromium documents: writable, pre-created `XDG_CONFIG_HOME` and
+`XDG_CACHE_HOME` on the tmpfs.
+
 ## What's intentionally not implemented
 
 * **Streaming a file that is not finished.** The door serves files that
