@@ -64,13 +64,16 @@ Decisions that are not ours to make again.
   operator's words: this is out of scope for our project — single operator,
   single agent. See wave E.
 * **The gaps with no wave behind them are not needed yet.** 2026-11-03,
-  operator. The roadmap listed skills and cron from inside the agent as gaps
-  that no wave claimed. Both stay unbuilt, by YAGNI: there are no skills to
-  load and no scheduled work to schedule, so a mechanism for either would have
-  nothing to carry. The operator's words: it is excess functionality for now —
-  we have no skills; when they appear, we will think about it. YAGNI is the rule
-  here, and the trigger for revisiting either gap is the need itself, not a
-  date. See gaps 6 and 8.
+  operator. The roadmap listed three gaps that no wave claimed: skills, cron
+  from inside the agent, and background process management as a tool. All three
+  stay unbuilt, by YAGNI: there are no skills to load, no scheduled work to
+  schedule, and the model can kill a process itself when it needs to and has
+  the rights to — the shell it already has is fenced and recorded. The
+  operator's words: it is excess functionality for now — we have no skills;
+  when they appear, we will think about it; and I see no reason to do this —
+  the model can kill if it needs to and it has the rights for it. YAGNI is the
+  rule here, and the trigger for reopening any of the three is the need
+  itself, not a date. See gaps 6, 8 and 10.
 
 ## The measured surfaces
 
@@ -229,9 +232,14 @@ absent. The browser went in as wave F, wrapped by tools of our own. What is
 still out of scope is `computer_use` (control of a desktop): it needs a
 desktop to control, and we do not have one.
 
-**10. No background process management as a tool.** tmux sessions exist and
-the agent drives them through `bash`; `process_manage` would make that
-first-class and auditable.
+**10. No background process management as a tool.** — **not built, and not
+needed yet.** tmux sessions exist and the agent drives them through `bash`;
+`process_manage` would make that first-class and auditable. It is not built:
+the model can kill a process itself when it needs to and has the rights to,
+and the shell it already has is fenced and recorded. The operator's words
+(2026-11-03): I see no reason to do this — the model can kill if it needs to
+and it has the rights for it. YAGNI. The trigger for revisiting this gap is a
+job the model cannot manage through `bash`, not a date.
 
 ## Shipped
 

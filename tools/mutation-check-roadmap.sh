@@ -271,10 +271,32 @@ mutate docs/ROADMAP.md \
 
 echo "== the YAGNI decision loses its rule =="
 mutate docs/ROADMAP.md \
-  'Both stay unbuilt, by YAGNI: there are no skills to' \
-  'Both stay unbuilt: there are no skills to' \
+  'stay unbuilt, by YAGNI: there are no skills to load' \
+  'stay unbuilt: there are no skills to load' \
   "$TESTS::TestTheUnneededGapsAreClosed::test_the_decision_is_on_the_record" \
   "the decision no longer says YAGNI"
+
+echo "== gap 10 is open again =="
+mutate docs/ROADMAP.md \
+  '**10. No background process management as a tool.** — **not built, and not
+needed yet.**' \
+  '**10. No background process management as a tool.** — **to be built, and
+wanted.**' \
+  "$TESTS::TestTheUnneededGapsAreClosed::test_gap_ten_is_not_needed_yet" \
+  "gap 10 reads as an open gap again"
+
+echo "== the YAGNI decision forgets the third gap =="
+mutate docs/ROADMAP.md \
+  'skills, cron
+  from inside the agent, and background process management as a tool. All three
+  stay unbuilt, by YAGNI: there are no skills to load, no scheduled work to
+  schedule, and the model can kill a process itself when it needs to and has
+  the rights to — the shell it already has is fenced and recorded. The' \
+  'skills and cron
+  from inside the agent. Both stay unbuilt, by YAGNI: there are no skills to load
+  and no scheduled work to schedule. The' \
+  "$TESTS::TestTheUnneededGapsAreClosed::test_the_decision_is_on_the_record" \
+  "the YAGNI decision no longer covers background process management"
 
 echo "== a wave claims a gap the operator closed =="
 mutate docs/ROADMAP.md \

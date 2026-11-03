@@ -60,6 +60,16 @@ UNRESTRICTED = "unrestricted"
 RESTRICTED = "restricted"
 
 
+def _flat(text: str) -> str:
+    """The text with its line breaks turned into spaces.
+
+    A document's line wrapping is not a property of what it says: the
+    phrase "not needed yet" is the same phrase whether the wrap falls
+    inside it or not. Checking the wrapped text would pin the wrapping.
+    """
+    return " ".join(text.split())
+
+
 # ---------------------------------------------------------------------------
 # Reading the compose files as text.
 #
@@ -688,7 +698,7 @@ class TestTheSingleAgentDecision(unittest.TestCase):
 
     def test_the_gap_is_closed_by_decision(self) -> None:
         """The gap list says the gap is closed, not merely missing."""
-        gap = self._gap(7)
+        gap = _flat(self._gap(7))
         self.assertIn(
             "closed by decision",
             gap.lower(),
@@ -732,6 +742,14 @@ class TestTheUnneededGapsAreClosed(unittest.TestCase):
     def test_the_decision_is_on_the_record(self) -> None:
         """The YAGNI decision is recorded, and it is dated."""
         bullet = self._decision("The gaps with no wave behind them are not needed yet.")
+        for gap in ("skills", "cron", "process"):
+            with self.subTest(gap=gap):
+                self.assertIn(
+                    gap,
+                    bullet.lower(),
+                    f"the YAGNI decision does not mention {gap!r} — it is the "
+                    "reason that gap is closed, and a reader has to see it",
+                )
         self.assertIn(
             "by yagni",
             bullet.lower(),
@@ -747,7 +765,7 @@ class TestTheUnneededGapsAreClosed(unittest.TestCase):
 
     def test_gap_six_is_not_needed_yet(self) -> None:
         """Skills: closed by decision, with the need as the trigger."""
-        gap = self._gap(6)
+        gap = _flat(self._gap(6))
         self.assertIn(
             "not needed yet",
             gap.lower(),
@@ -763,7 +781,7 @@ class TestTheUnneededGapsAreClosed(unittest.TestCase):
 
     def test_gap_eight_is_not_needed_yet(self) -> None:
         """Cron from inside the agent: closed by decision."""
-        gap = self._gap(8)
+        gap = _flat(self._gap(8))
         self.assertIn(
             "not needed yet",
             gap.lower(),
@@ -776,10 +794,26 @@ class TestTheUnneededGapsAreClosed(unittest.TestCase):
             "gap 8 does not carry the date of the decision that closed it",
         )
 
+    def test_gap_ten_is_not_needed_yet(self) -> None:
+        """Background process management: closed by decision."""
+        gap = _flat(self._gap(10))
+        self.assertIn(
+            "not needed yet",
+            gap.lower(),
+            "gap 10 reads as an open gap again. The operator ruled on "
+            "2026-11-03: the model can kill a process itself when it needs to "
+            "and has the rights to.",
+        )
+        self.assertIn(
+            "2026-11-03",
+            gap,
+            "gap 10 does not carry the date of the decision that closed it",
+        )
+
     def test_no_wave_claims_them(self) -> None:
         """A wave may not appear for a gap the operator closed."""
         waves = self._section("## The waves")
-        for tool in ("skills_list", "cronjob_manage"):
+        for tool in ("skills_list", "cronjob_manage", "process_manage"):
             with self.subTest(tool=tool):
                 self.assertNotIn(
                     tool,
@@ -825,7 +859,7 @@ class TestTheGapStatusesMatchTheShippedWaves(unittest.TestCase):
         """A gap that was closed by a wave says which version closed it."""
         for number, (_wave, version) in self.SHIPPED.items():
             with self.subTest(gap=number):
-                gap = self._gap(number)
+                gap = _flat(self._gap(number))
                 self.assertIn(
                     f"shipped in {version}",
                     gap.lower(),
