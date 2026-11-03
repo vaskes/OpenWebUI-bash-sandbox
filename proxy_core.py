@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from token_rules import token_problem as _token_problem
 
-__version__ = "2.27.0"
+__version__ = "2.28.0"
 
 SSH_PREFIX = "ssh "
 DEFAULT_SESSION_ID = "openwebui"
