@@ -104,7 +104,7 @@ Runs a command in the sandbox workspace.
 | `timeout` | integer | seconds to wait; the same 1..3600 range the HTTP API allows |
 
 Returns `stdout`, `stderr`, `exit_code`, `timed_out`, `duration_ms`,
-`session_id` and `cwd`.
+`command_started`, `session_id` and `cwd`.
 
 **The session is the shell.** `cd` and `export` survive from one call
 to the next, so a caller that wants two conversations apart passes a
@@ -138,6 +138,15 @@ command's output as its own, and the notice about a lost beginning made
 it look like a truncated result of the new command. The output of a
 command that *did* run is cut at the command's own begin marker, so a
 foreign session's output never reaches it.
+
+**The answer says whether the command started.** Every exec answer
+carries `command_started`: `true` when the command ran — its stdout and
+its exit code are real — and `false` when it never started, because the
+session was busy or the shell was stuck. Before v2.26.0 the two were
+told apart only by the prose in `stderr`, and a caller that read the
+fields could not: a queued command and a killed one both had an empty
+stdout, no exit code and `timed_out: true`. A queued command is not a
+failed command, and the field is what says so.
 
 **The shell is still the shell.** `write_file`, `patch` and
 `search_files` are the *checked* paths; `bash` can do all of it too, and

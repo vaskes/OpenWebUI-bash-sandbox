@@ -357,12 +357,20 @@ async def _save_sessions() -> None:
     Synchronous disk I/O would block every concurrent request — wrap in
     ``asyncio.to_thread`` so a slow host filesystem doesn't stall the API.
     Best-effort: a failed write is logged, not raised.
+
+    The dict is copied **under the registry lock** and the copy is what
+    gets dumped. Dumping the live dict would iterate it in a worker
+    thread while the event loop adds or removes a key — and that is the
+    "dictionary changed size during iteration" crash, in a thread where
+    nobody would catch it.
     """
+    async with SESSIONS_LOCK:
+        snapshot = dict(SESSIONS)
 
     def _do() -> None:
         tmp = f"{SESSIONS_FILE}.tmp.{uuid.uuid4().hex[:8]}"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(SESSIONS, f)
+            json.dump(snapshot, f)
         os.replace(tmp, SESSIONS_FILE)
 
     try:
@@ -382,6 +390,57 @@ async def _save_sessions() -> None:
 #: alive. Adding a worker means adding a lock *and* a decision about
 #: who owns the tmux server; it is not a flag to flip.
 SESSIONS: dict[str, dict[str, Any]] = _load_sessions()
+
+#: Guards the session registry.
+#:
+#: The registry is a plain dict that several requests touch at once: one
+#: creates a session and adds a key, one lists the sessions and iterates
+#: the dict, one deletes a key, and the persist path dumps the whole dict
+#: to disk **in a worker thread**. A dict that is mutated while it is
+#: iterated raises ``RuntimeError: dictionary changed size during
+#: iteration`` — so this lock is not a formality: it is the thing that
+#: keeps the listing and the persistence from crashing when two requests
+#: arrive together.
+#:
+#: One lock for the whole registry, on purpose: the registry holds a
+#: handful of chat sessions and every critical section is short.
+SESSIONS_LOCK = asyncio.Lock()
+
+#: One lock per session id, so that two requests for the same id do not
+#: create two tmux sessions. The tmux server refuses a duplicate name,
+#: but the loser of that race used to walk on as if it had created the
+#: session: it replaced the winner's window and wrote its own directory
+#: into the registry, while the pane was really running somewhere else.
+#: The per-id lock makes the second request wait, see the session that is
+#: already alive, and adopt it.
+_SESSION_CREATE_LOCKS: dict[str, asyncio.Lock] = {}
+_SESSION_CREATE_LOCKS_GUARD = asyncio.Lock()
+
+
+async def _session_create_lock(sid: str) -> asyncio.Lock:
+    """The lock that owns the creation of one session id."""
+    async with _SESSION_CREATE_LOCKS_GUARD:
+        lock = _SESSION_CREATE_LOCKS.get(sid)
+        if lock is None:
+            lock = asyncio.Lock()
+            _SESSION_CREATE_LOCKS[sid] = lock
+        return lock
+
+
+def _forget_session_create_lock(sid: str) -> None:
+    """Drop the creation lock of a session that is gone.
+
+    The locks live as long as the sessions do; without this the dict would
+    grow with every session id the service was ever asked for.
+
+    A lock that is **held** right now is left alone: a request that is
+    creating this very session is using it, and handing a second request
+    a fresh lock for the same id would break the exclusion this lock
+    exists for.
+    """
+    lock = _SESSION_CREATE_LOCKS.get(sid)
+    if lock is not None and not lock.locked():
+        _SESSION_CREATE_LOCKS.pop(sid, None)
 
 
 # ---------------------------------------------------------------------------
@@ -947,11 +1006,14 @@ async def list_sessions() -> dict[str, Any]:
     if rc == 0:
         alive = {line.strip() for line in out.splitlines() if line.strip()}
     dead: list[str] = []
-    for sid, info in SESSIONS.items():
-        if info["tmux_name"] not in alive:
-            dead.append(sid)
-    for sid in dead:
-        SESSIONS.pop(sid, None)
+    async with SESSIONS_LOCK:
+        known = list(SESSIONS.items())
+        for sid, info in known:
+            if info["tmux_name"] not in alive:
+                dead.append(sid)
+        for sid in dead:
+            SESSIONS.pop(sid, None)
+            _forget_session_create_lock(sid)
     if dead:
         await _save_sessions()
     return {
@@ -964,7 +1026,7 @@ async def list_sessions() -> dict[str, Any]:
                 "todo": todo_list_state(sid),
                 "question": PENDING_QUESTIONS.get(sid),
             }
-            for sid, info in SESSIONS.items()
+            for sid, info in known
         ]
     }
 
@@ -978,18 +1040,15 @@ class CreateSession(BaseModel):
     )
 
 
-@app.post("/sessions", dependencies=[Depends(_require_token)])
-async def create_session(body: CreateSession) -> dict[str, Any]:
-    """Create a new tmux-backed session or attach to an existing one.
+async def _create_or_adapt_session(sid: str, name: str, requested: str | None) -> dict[str, Any]:
+    """Create the tmux session for ``sid`` or adopt the one that is alive.
 
-    The ``cwd`` field, if provided, is symlink-resolved and must lie inside
-    :data:`WORKSPACE_REAL`. This is the only path-traversal protection in
-    the service — never loosen it without an explicit threat-model update.
+    The caller must hold the creation lock of ``sid``. Two requests for
+    the same id must not interleave here: the second one has to see the
+    session the first one created and adopt it, not replace its window
+    and claim a directory the pane is not running in.
     """
-    sid = safe_id(body.session_id)
-    name = tmux_name(sid)
-    requested = _safe_cwd(body.cwd) if body.cwd else None
-    # The tmux server has just been started by the call above (tmux
+    # The tmux server may have just been started by an earlier call (tmux
     # starts it from its first client). Take the credentials out of its
     # environment before any pane is created, because a pane's
     # environment is fixed when the pane is created.
@@ -1020,16 +1079,21 @@ async def create_session(body: CreateSession) -> dict[str, Any]:
                     f"in {requested}."
                 ),
             )
-        if sid not in SESSIONS:
-            adopted = live or requested or WORKSPACE_REAL
-            SESSIONS[sid] = {"tmux_name": name, "created": time.time(), "cwd": adopted}
+        adopted: str | None = None
+        async with SESSIONS_LOCK:
+            if sid not in SESSIONS:
+                adopted = live or requested or WORKSPACE_REAL
+                SESSIONS[sid] = {"tmux_name": name, "created": time.time(), "cwd": adopted}
+        if adopted is not None:
             await _save_sessions()
             logger.info("session.adopt sid=%s cwd=%s", sid, adopted)
+        async with SESSIONS_LOCK:
+            known_cwd = SESSIONS.get(sid, {}).get("cwd")
         return {
             "session_id": sid,
             "tmux_name": name,
             "existed": True,
-            "cwd": SESSIONS.get(sid, {}).get("cwd"),
+            "cwd": known_cwd,
         }
     cwd = requested or _persisted_cwd(sid) or WORKSPACE_REAL
     rc, _, err = 0, "", ""
@@ -1087,10 +1151,31 @@ async def create_session(body: CreateSession) -> dict[str, Any]:
             actual,
             HISTORY_LIMIT_LINES,
         )
-    SESSIONS[sid] = {"tmux_name": name, "created": time.time(), "cwd": cwd}
+    async with SESSIONS_LOCK:
+        SESSIONS[sid] = {"tmux_name": name, "created": time.time(), "cwd": cwd}
     await _save_sessions()
     logger.info("session.create sid=%s cwd=%s", sid, cwd)
     return {"session_id": sid, "tmux_name": name, "existed": False, "cwd": cwd}
+
+
+@app.post("/sessions", dependencies=[Depends(_require_token)])
+async def create_session(body: CreateSession) -> dict[str, Any]:
+    """Create a new tmux-backed session or attach to an existing one.
+
+    The ``cwd`` field, if provided, is symlink-resolved and must lie inside
+    :data:`WORKSPACE_REAL`. This is the only path-traversal protection in
+    the service — never loosen it without an explicit threat-model update.
+
+    Two requests for the same id are serialized by the creation lock of
+    that id: the second one adopts the session the first one made instead
+    of racing it into a second pane.
+    """
+    sid = safe_id(body.session_id)
+    name = tmux_name(sid)
+    requested = _safe_cwd(body.cwd) if body.cwd else None
+    lock = await _session_create_lock(sid)
+    async with lock:
+        return await _create_or_adapt_session(sid, name, requested)
 
 
 @app.delete("/sessions/{session_id}", dependencies=[Depends(_require_token)])
@@ -1099,7 +1184,9 @@ async def delete_session(session_id: str) -> dict[str, str]:
     sid = safe_id(session_id)
     name = tmux_name(sid)
     await _tmux("kill-session", "-t", name)
-    SESSIONS.pop(sid, None)
+    async with SESSIONS_LOCK:
+        SESSIONS.pop(sid, None)
+    _forget_session_create_lock(sid)
     await _save_sessions()
     logger.info("session.delete sid=%s", sid)
     return {"deleted": sid}
@@ -1174,6 +1261,7 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
             "timed_out": False,
             "duration_ms": 0,
             "refused": True,
+            "command_started": False,
         }
 
     if not await tmux_session_exists(name):
@@ -1322,6 +1410,7 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
                         "exit_code": None,
                         "timed_out": True,
                         "duration_ms": duration_ms,
+                        "command_started": False,
                     }
                 duration_ms = int((time.time() - start) * 1000)
                 METRICS.inc("exec_timeouts_total")
@@ -1338,6 +1427,7 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
                     "exit_code": None,
                     "timed_out": True,
                     "duration_ms": duration_ms,
+                    "command_started": False,
                 }
         if head_survived:
             # The protocol's first line ran, so from now on the shell's
@@ -1365,6 +1455,7 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
             "exit_code": None,
             "timed_out": True,
             "duration_ms": duration_ms,
+            "command_started": True,
         }
 
     # The poll saw the completion marker in the tail. Now take the full
@@ -1417,6 +1508,7 @@ async def exec_cmd(session_id: str, body: ExecRequest) -> dict[str, Any]:
         "exit_code": exit_code,
         "timed_out": False,
         "duration_ms": duration_ms,
+        "command_started": True,
     }
 
 

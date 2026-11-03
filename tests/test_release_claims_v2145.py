@@ -101,8 +101,14 @@ class TestTheSessionIsTheClaim(unittest.TestCase):
     def test_a_known_session_comes_back_where_it_was(self) -> None:
         source = _source("agent_api.py")
         self.assertIn("def _persisted_cwd(", source)
-        block = source.split("async def create_session(", 1)[1].split("\n@app", 1)[0]
-        self.assertIn("_persisted_cwd(sid)", block)
+        # The create path is two functions: the endpoint takes the lock
+        # of the session id, the helper does the work. The claim is about
+        # the path, so the claim is read from the path — reading one
+        # function of it would only prove that the claim survived a
+        # refactor, not that it is true.
+        helper = source.split("async def _create_or_adapt_session(", 1)[1].split("\n@app", 1)[0]
+        endpoint = source.split("async def create_session(", 1)[1].split("\n@app", 1)[0]
+        self.assertIn("_persisted_cwd(sid)", helper + endpoint)
 
     def test_the_auto_create_path_names_no_directory(self) -> None:
         """A directory named here would override the persisted one."""
