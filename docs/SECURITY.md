@@ -250,6 +250,34 @@ would have taken away with it:
   host before this was fixed: the mount carried `rw,relatime`, and
   `chmod u+s` inside the workspace worked.
 
+**The ceiling is a fact only while the filesystem is mounted.** The
+workspace is a volume over a *mount point*, and the ceiling is the
+filesystem that is mounted on it. When the mount is gone, the path is
+a plain directory on the host's disk and the volume still binds it —
+the container then starts on the host's partition (1.8 TB instead of
+the 4 GB that were promised), and the agent refuses to start, because
+the ceiling check measures the filesystem and finds the wrong one.
+
+That is not a corner case: a container that is **removed** takes the
+host mount with it, because Docker cleans up the mounts it made. So a
+deployment that mounts the filesystem and then recreates the containers
+unmounts the filesystem on the way, and the new container binds the
+plain directory. Measured on the production stand on 2026-11-03: the
+deploy was ordered "mount the filesystem, then start the stack", the
+agent container was recreated, the filesystem went away with it, and the
+new container came up on the host's disk and refused to start — with
+the service down.
+
+Two rules follow, and both are now enforced rather than remembered:
+
+* **the order is: stack down, filesystem mounted, stack up.** Nothing
+  removes a container after that point, so the mount is still there
+  when the bind is resolved;
+* **`tools/check-workspace-volume.sh` refuses a path that is not an
+  ext4 filesystem**, before the stack is started. The check runs while
+  the deployment can still stop, instead of letting the agent find out
+  with the service already down.
+
 One surface is still unbounded, and it is the privilege mode's fourth
 setting: `AGENT_READ_ONLY=false` makes the container's root filesystem
 writable, and the writable layer lives on the host's disk with no quota

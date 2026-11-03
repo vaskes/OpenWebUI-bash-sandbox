@@ -38,6 +38,7 @@ cd "$(dirname "$0")/.."
 mutation_require_python
 
 TESTS=tests/test_mcp_browser_v2250.py
+WS_TESTS=tests/test_workspace_volume_check.py
 
 # The tree has to be green before anything is broken: a mutation sweep
 # against a red tree reports catches for a tree nobody broke.
@@ -229,6 +230,40 @@ mutate agent_browser.py \
   '    "XDG_CONFIG_HOME": "/home/agent/.config",' \
   "$TESTS::TestTheDriverLaunchesTheBrowserTheImageCarries::test_the_browser_gets_writable_dirs_on_the_tmpfs" \
   "the browser's config dir is on the read-only rootfs"
+
+echo "== the workspace check waves a plain directory through =="
+# The workspace is a filesystem in a file, mounted on the host. A volume
+# that binds the mount POINT is not yet a workspace with a ceiling: when
+# the mount is gone the path is a plain directory and the container
+# starts on the host's partition. This mutation drops the filesystem
+# check; the test must go red.
+mutate tools/check-workspace-volume.sh \
+  'if [ -e "$WS_PATH" ] && { [ -z "$WS_SRC" ] || [ "$WS_FS" != "ext4" ]; }; then' \
+  'if false; then' \
+  "$WS_TESTS::TestTheWorkspacePathMustBeAFilesystem::test_a_plain_directory_is_refused" \
+  "the workspace check accepts a plain directory"
+
+echo "== the workspace check stops saying what is wrong =="
+mutate tools/check-workspace-volume.sh \
+  'check-workspace-volume: a volume that binds a plain directory has no ceiling.' \
+  'check-workspace-volume: something is off.' \
+  "$WS_TESTS::TestTheWorkspacePathMustBeAFilesystem::test_the_refusal_says_what_is_missing" \
+  "the refusal no longer says that the ceiling is missing"
+
+echo "== the filesystem check comes after the early exit =="
+# The script has an early exit for a deployment that has no workspace
+# volume yet. If that exit comes first, a first deployment with an
+# unmounted workspace starts a stack on the host's partition. This
+# mutation writes the exit above the check; the test must go red.
+mutate tools/check-workspace-volume.sh \
+  'WS_SRC="$(findmnt -no SOURCE "$WS_PATH" 2>/dev/null || true)"' \
+  'if [ -z "$volumes" ]; then
+    echo "check-workspace-volume: there is no workspace volume yet."
+    exit 0
+fi
+WS_SRC="$(findmnt -no SOURCE "$WS_PATH" 2>/dev/null || true)"' \
+  "$WS_TESTS::TestTheWorkspacePathMustBeAFilesystem::test_the_filesystem_check_comes_before_the_early_exit" \
+  "the early exit is written above the filesystem check"
 
 echo
 echo "mutations caught: $PASS, escaped: $FAIL"
