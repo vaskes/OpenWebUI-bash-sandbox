@@ -46,6 +46,39 @@ class _AgentBase(unittest.TestCase):
         self.auth = {"Authorization": "Bearer test-token"}
 
 
+def _alive_session_double(kill_called: list[str]):
+    """A tmux double in which the session looks **alive**.
+
+    Two things have to be true at once for the lifespan test to mean
+    anything, and both were false at some point:
+
+    * the session must survive the startup reaper — the reaper drops the
+      sessions whose tmux backend is gone, and a session that the reaper
+      already dropped is not there to be killed at shutdown;
+    * the shutdown must actually run — the helper that runs it must not
+      be a coroutine that is called and never awaited.
+
+    A double that reported "no sessions" made the test pass without the
+    lifespan ever having had anything to kill: the test was green for a
+    reason that had nothing to do with the lifespan.
+    """
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_tmux(*args):
+        calls.append(args)
+        cmd = args[0] if args else ""
+        if cmd == "kill-session":
+            kill_called.append(args[-1])
+            return (0, "", "")
+        if cmd == "list-sessions":
+            return (0, "agent_preserved\n", "")
+        if cmd == "has-session":
+            return (0, "", "")
+        return (0, "", "")
+
+    return fake_tmux, calls
+
+
 class TestSendKeysLiteral(_AgentBase):
     """#4: send-keys without -l silently corrupts commands containing
     tmux-reserved tokens like ``Enter`` or ``C-a``."""
@@ -178,15 +211,19 @@ class TestLifespanNoLongerKillsSessions(_AgentBase):
 
     def test_lifespan_does_not_call_kill_session(self) -> None:
         kill_called: list[str] = []
-
-        async def fake_tmux(*args):
-            if args[0] == "kill-session":
-                kill_called.append(args[-1])
-            return (0, "", "")
+        fake_tmux, _calls = _alive_session_double(kill_called)
 
         # Simulate the shutdown: the FastAPI lifespan exits and we want
         # to assert that no kill-session calls were made.
-        async def _shutdown():
+        #
+        # This is a PLAIN function on purpose. It was `async def`, and it
+        # was called without `await` — so the body never ran, the lifespan
+        # never exited, `kill_called` stayed empty, and the assertion
+        # below was true for a reason that had nothing to do with the
+        # lifespan. A test that cannot go red is decoration: the proof is
+        # that killing every session in `lifespan` left the whole suite
+        # green. The function that runs the shutdown has to RUN.
+        def _shutdown():
             with patch("agent_api._tmux", new=fake_tmux):
                 # Pre-populate the registry so there's something to kill
                 # if the old behaviour was still in place.
@@ -203,6 +240,86 @@ class TestLifespanNoLongerKillsSessions(_AgentBase):
 
         _shutdown()
         self.assertEqual(kill_called, [])
+
+
+class TestTheLifespanTestCanActuallyFail(unittest.TestCase):
+    """The test that pins the lifespan must be able to fail.
+
+    A test that cannot go red is decoration, and this one was: it ran an
+    ``async def`` helper without awaiting it, so its body never executed.
+    The mutation that killed every session in ``lifespan`` left the whole
+    suite green.
+
+    These two tests are the tripwires for that. The first is behavioural
+    — the session has to survive to the shutdown, or there is nothing
+    there to be killed and the assertion is vacuous. The second is
+    structural — the helper that runs the shutdown must be a plain
+    function, because a coroutine that is called and never awaited never
+    runs.
+    """
+
+    def _run_the_lifespan(self):
+        try:
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+        except ImportError:
+            self.skipTest("fastapi.testclient not available")
+        app, sessions, tmpdir = _fresh_app()
+        client = TestClient(app)
+        kill_called: list[str] = []
+        double, _calls = _alive_session_double(kill_called)
+        sessions["preserved"] = {
+            "tmux_name": "agent_preserved",
+            "created": 0.0,
+            "cwd": tmpdir,
+        }
+        with patch("agent_api._tmux", new=double):
+            with client:
+                pass
+        return sessions, kill_called
+
+    def test_the_session_survives_to_the_shutdown(self) -> None:
+        sessions, _kill_called = self._run_the_lifespan()
+        self.assertIn(
+            "preserved",
+            sessions,
+            "the session did not survive the startup reaper — at shutdown "
+            "there was nothing to kill, and the assertion was vacuous",
+        )
+
+    def test_the_shutdown_helper_is_not_a_coroutine(self) -> None:
+        """The helper that runs the shutdown must not be a coroutine.
+
+        A coroutine that is called and never awaited never runs its body.
+        The test is found by NAME, so moving it to another file does not
+        break this check — only making it a coroutine again does.
+        """
+        import ast  # noqa: PLC0415
+
+        found = None
+        for path in sorted((ROOT / "tests").glob("test_*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if node.name != "test_lifespan_does_not_call_kill_session":
+                    continue
+                for sub in ast.walk(node):
+                    if (
+                        isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and sub.name == "_shutdown"
+                    ):
+                        found = (path, sub)
+        self.assertIsNotNone(
+            found,
+            "the lifespan test is gone — nothing pins the shutdown anymore",
+        )
+        path, node = found
+        self.assertNotIsInstance(
+            node,
+            ast.AsyncFunctionDef,
+            f"{path.name}: the shutdown helper is a coroutine again — called "
+            "without await, its body never runs and the test cannot fail",
+        )
 
 
 # ---------------------------------------------------------------------------
