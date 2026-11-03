@@ -48,6 +48,19 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 # from bytes that are already in the image and the build does not need
 # pypi to be reachable twice.
 #
+# THE WHEELHOUSE HAS TO CARRY THE BUILD BACKENDS TOO, not only the
+# wheels. When pypi serves a source distribution for one of the packages,
+# pip builds it — and the build runs with ``--no-index`` against this
+# directory, so it has to find its backend here. Measured in the CI on
+# 2026-11-03: pypi published SQLAlchemy 2.1.7 (two hours earlier it
+# served 2.1.6, a cp314 wheel), there is no 2.1.7 wheel for the
+# builder's python, and the build died with "Could not find a version
+# that satisfies the requirement setuptools>=77.0.3" — the sdist's
+# build dependency, in a wheelhouse that had never carried a build
+# backend. Nothing in the repository changed; the upstream release did.
+# The tree below is assembled from this directory alone, so the backends
+# have to be in it.
+#
 # The tree lands in /opt/pylibs with ``--target`` instead of in the
 # interpreter's site-packages, for two reasons:
 #
@@ -61,6 +74,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 #     shadow the service's pinned dependencies would break the service
 #     in a way that has nothing to do with the model.
 RUN python3 -m pip download --dest /opt/wheelhouse $AGENT_PYTHON_PACKAGES \
+    && python3 -m pip download --dest /opt/wheelhouse setuptools wheel \
     && python3 -m pip install --no-index --find-links=/opt/wheelhouse \
         --target=/opt/pylibs $AGENT_PYTHON_PACKAGES
 

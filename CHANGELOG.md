@@ -54,6 +54,20 @@ it should not have, and the order the stack is deployed in.
   default stack declared none, so the check never ran where the ceiling
   actually was. `make up`, `make restart` and the CI declare it now,
   from the same values the workspace is made of.
+- **The wheelhouse carries the build backends.** The builder stage
+  downloads the agent's python packages once and assembles the tree from
+  that directory alone (`pip install --no-index
+  --find-links=/opt/wheelhouse`), so the build needs pypi to be
+  reachable exactly once. The moment pypi serves a source distribution
+  for one of the packages, pip builds it — and the build runs **offline,
+  against the same wheelhouse**. Measured in the CI on 2026-11-03: pypi
+  published SQLAlchemy 2.1.7 (two hours earlier it served 2.1.6, a
+  cp314 wheel), there is no 2.1.7 wheel for the builder's python, and
+  the build died with *"Could not find a version that satisfies the
+  requirement setuptools>=77.0.3"*. Nothing in the repository changed
+  that day; the upstream release did. `setuptools` and `wheel` are now
+  downloaded into the wheelhouse with the packages, so a source
+  distribution has a backend to build with.
 
 ### Changed
 
@@ -72,8 +86,12 @@ it should not have, and the order the stack is deployed in.
   mount, start (pinned positionally), the script does not guess the
   ceiling, `make restart` goes through the order, the CI does too, and
   the paths that have a ceiling declare it.
+- `tests/test_wheelhouse_v2280.py` — 3 tests: the wheelhouse carries
+  the build backends, the install really is offline, and the measured
+  failure is recorded.
 - `tools/mutation-check-v2280.sh` — 6 mutations,
-  `tools/mutation-check-v2280-deploy.sh` — 8 mutations. All caught.
+  `tools/mutation-check-v2280-deploy.sh` — 8 mutations,
+  `tools/mutation-check-v2280-wheelhouse.sh` — 3 mutations. All caught.
 - The CI's deploy job measures the ownership on the *shipped image*: a
   write to the root filesystem has to succeed (the control — otherwise
   the refusal would be about a read-only root), a write to the agent's
