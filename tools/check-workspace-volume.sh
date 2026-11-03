@@ -62,8 +62,13 @@ elif [ ! -d "$WS_PATH" ]; then
     echo "check-workspace-volume: $WS_PATH is not a directory." >&2
     exit 1
 else
-    WS_SRC="$(findmnt -no SOURCE "$WS_PATH" 2>/dev/null || true)"
-    WS_FS="$(findmnt -no FSTYPE "$WS_PATH" 2>/dev/null || true)"
+    # --first-only: the path can carry more than one mount (the mount
+    # point itself, and the bind of the volume that points at it), and
+    # findmnt prints one line per mount. Two lines make every string
+    # comparison against the source and the type fail, and a check that
+    # refuses a perfectly good workspace is a check that is turned off.
+    WS_SRC="$(findmnt --first-only -no SOURCE "$WS_PATH" 2>/dev/null || true)"
+    WS_FS="$(findmnt --first-only -no FSTYPE "$WS_PATH" 2>/dev/null || true)"
 fi
 if [ -e "$WS_PATH" ] && { [ -z "$WS_SRC" ] || [ "$WS_FS" != "ext4" ]; }; then
     echo "check-workspace-volume: $WS_PATH is not an ext4 filesystem." >&2
