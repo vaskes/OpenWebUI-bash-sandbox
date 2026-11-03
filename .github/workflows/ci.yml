@@ -68,9 +68,20 @@ jobs:
           # No threshold on the command line: the coverage configuration in
           # pyproject.toml owns it (and omits the test files, so the number
           # describes the sources and not the act of running the tests).
-          pytest --cov=. --cov-report=xml --cov-report=term tests/ || \
-            coverage run --source=. -m unittest discover -s tests && \
-            coverage report
+          #
+          # The fallback is for a runner that has NO pytest -- not for a
+          # pytest that failed. `A || B && C` reads as `(A || B) && C`: a
+          # red pytest would have run B, and if B passed, the step would
+          # have ended green with a red pytest behind it. The gate has to
+          # fail when the suite fails, because a green required check
+          # that hides a red suite is the worst kind of check: it is
+          # green, and it is lying.
+          if command -v pytest >/dev/null 2>&1; then
+            pytest --cov=. --cov-report=xml --cov-report=term tests/
+          else
+            coverage run --source=. -m unittest discover -s tests
+          fi
+          coverage report
       - name: The suite also runs on the stdlib
         # The README promises "stdlib unittest, no pytest required", and
         # the fallback above only runs when pytest is MISSING -- which is
