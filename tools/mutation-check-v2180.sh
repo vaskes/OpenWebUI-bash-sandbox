@@ -100,7 +100,7 @@ echo "== the wheels are fetched into the wrong place =="
 mutate Dockerfile.sandbox \
   'python3 -m pip download --dest /opt/wheelhouse' \
   'python3 -m pip download --dest /tmp/wheelhouse' \
-  "$RULE::TestTheImageCarriesTheTreeAndItsWheels::test_the_wheels_are_fetched_once" \
+  "$RULE::TestTheImageCarriesTheTreeAndItsWheels::test_the_wheels_are_fetched_into_the_wheelhouse" \
   "the wheels are fetched into the wheelhouse"
 
 echo "== the tree is installed into the interpreter instead of --target =="

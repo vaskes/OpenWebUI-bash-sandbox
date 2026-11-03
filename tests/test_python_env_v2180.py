@@ -263,15 +263,26 @@ class TestTheImageCarriesTheTreeAndItsWheels(unittest.TestCase):
             "needs pypi twice is a build that fails when pypi is unreachable",
         )
 
-    def test_the_wheels_are_fetched_once(self) -> None:
+    def test_the_wheels_are_fetched_into_the_wheelhouse(self) -> None:
         commands = _logical_lines(_builder_stage(_dockerfile()))
         downloads = [line for line in commands if "pip download" in line]
         self.assertTrue(downloads, "the wheels are not downloaded into the wheelhouse")
-        self.assertRegex(
-            downloads[0],
-            rf"--dest {re.escape(WHEELHOUSE_PATH)}(?![\w-])",
-            "the wheels are downloaded into another directory",
-        )
+        # EVERY download has to go into the wheelhouse, not only the
+        # first one: the tree is assembled from that directory alone, so
+        # a download into anywhere else is a package the image does not
+        # have. (The build backends are downloaded there too — a source
+        # distribution is built offline, against the same directory.)
+        # The two downloads share one logical line, so the check is on
+        # every ``--dest`` in it, not on the first.
+        for line in downloads:
+            dests = re.findall(r"--dest\s+(\S+)", line)
+            self.assertTrue(dests, "a download without a destination")
+            for dest in dests:
+                self.assertEqual(
+                    dest,
+                    WHEELHOUSE_PATH,
+                    "the wheels are downloaded into another directory",
+                )
 
     def test_the_tree_is_installed_with_target(self) -> None:
         commands = _logical_lines(_builder_stage(_dockerfile()))
