@@ -549,11 +549,22 @@ class TestMakefileAlwaysBuilds(unittest.TestCase):
         self.assertIn("$(COMPOSE) up -d --build", recipe)
 
     def test_restart_builds(self) -> None:
+        """The restart path must rebuild, not serve the old image.
+
+        The build moved into ``tools/recreate.sh`` when the restart path
+        learned the order (remove the container, make the mount, start
+        the stack): a recreate in one command takes the workspace's
+        ceiling with it. The property did not move with it — the image is
+        still rebuilt — so the check follows the call.
+        """
         recipe = self._recipe("restart")
+        self.assertIn("tools/recreate.sh", recipe)
+        script = (ROOT / "tools" / "recreate.sh").read_text(encoding="utf-8")
         self.assertIn(
-            "--build", recipe, "make restart must rebuild, not recreate from the old image"
+            "up -d --build",
+            script,
+            "make restart must rebuild, not recreate from the old image",
         )
-        self.assertIn("--force-recreate", recipe)
 
 
 class TestTheSystemdUnitAlwaysBuilds(unittest.TestCase):

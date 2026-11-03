@@ -627,10 +627,12 @@ jobs:
       - name: The model's uid cannot write the agent's own code
         env:
           TOKEN: ci-smoke-token-not-a-secret-0000
+          AGENT_WORKSPACE_PATH: /tmp/owbs-workspace
+          AGENT_WORKSPACE_SIZE: 1g
           AGENT_READ_ONLY: "false"
         run: |
           set -euo pipefail
-          docker compose -f docker-compose.ci.yml up -d --force-recreate sandbox-agent
+          bash tools/recreate.sh docker-compose.ci.yml sandbox-agent
           timeout 300 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" ci-sandbox-agent 2>/dev/null)" = healthy ]; do sleep 3; done' \
             || { echo "::error::the agent never became healthy"; docker compose -f docker-compose.ci.yml logs sandbox-agent; exit 1; }
 
@@ -711,18 +713,22 @@ jobs:
       - name: Build the agent image with sudo
         env:
           OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
+          AGENT_WORKSPACE_PATH: /tmp/owbs-workspace
+          AGENT_WORKSPACE_SIZE: 1g
           AGENT_ALLOW_SUDO: "1"
         run: docker compose -f docker-compose.ci.yml build sandbox-agent
 
       - name: Escalation works, but a read-only rootfs stops apt
         env:
           OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
+          AGENT_WORKSPACE_PATH: /tmp/owbs-workspace
+          AGENT_WORKSPACE_SIZE: 1g
           AGENT_ALLOW_SUDO: "1"
           AGENT_NO_NEW_PRIVILEGES: "false"
           AGENT_CAP_DROP: SYS_ADMIN
         run: |
           set -euo pipefail
-          docker compose -f docker-compose.ci.yml up -d --force-recreate sandbox-agent
+          bash tools/recreate.sh docker-compose.ci.yml sandbox-agent
           timeout 300 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" ci-sandbox-agent 2>/dev/null)" = healthy ]; do sleep 3; done' \
             || { echo "::error::the agent never became healthy"; docker compose -f docker-compose.ci.yml logs; exit 1; }
 
@@ -743,6 +749,8 @@ jobs:
       - name: The privilege mode is announced at start-up
         env:
           OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
+          AGENT_WORKSPACE_PATH: /tmp/owbs-workspace
+          AGENT_WORKSPACE_SIZE: 1g
           AGENT_ALLOW_SUDO: "1"
           AGENT_NO_NEW_PRIVILEGES: "false"
           AGENT_CAP_DROP: SYS_ADMIN
@@ -766,13 +774,15 @@ jobs:
           # The agent and the proxy share one token, so the agent's own
           # API can be reached with it from inside the container.
           TOKEN: ci-smoke-token-not-a-secret-0000
+          AGENT_WORKSPACE_PATH: /tmp/owbs-workspace
+          AGENT_WORKSPACE_SIZE: 1g
           AGENT_ALLOW_SUDO: "1"
           AGENT_NO_NEW_PRIVILEGES: "false"
           AGENT_CAP_DROP: SYS_ADMIN
           AGENT_READ_ONLY: "false"
         run: |
           set -euo pipefail
-          docker compose -f docker-compose.ci.yml up -d --force-recreate sandbox-agent
+          bash tools/recreate.sh docker-compose.ci.yml sandbox-agent
           timeout 300 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" ci-sandbox-agent 2>/dev/null)" = healthy ]; do sleep 3; done' \
             || { echo "::error::the agent never became healthy"; docker compose -f docker-compose.ci.yml logs; exit 1; }
 

@@ -296,6 +296,33 @@ bash tools/setup-workspace.sh --check "$AGENT_WORKSPACE_PATH" "$AGENT_WORKSPACE_
 that was never set up is an unbounded directory on the host's disk,
 which is exactly the hole the ceiling closes.
 
+### Recreating the stack without losing the ceiling
+
+Removing a container takes the host mount with it — Docker cleans up
+the mounts it made — so the workspace becomes a plain directory on the
+host's partition again. `docker compose up --force-recreate` removes
+the old container and starts the new one in one command, and the mount
+cannot be made in between: the new container binds a plain directory,
+and an agent that was promised a ceiling refuses to serve.
+
+The order that works is **stack down, filesystem mounted, stack up**,
+and `tools/recreate.sh` is that order in one place:
+
+```bash
+AGENT_WORKSPACE_PATH=/opt/owbs-workspace AGENT_WORKSPACE_SIZE=4g \
+  bash tools/recreate.sh docker-compose.yml          # the whole stack
+AGENT_WORKSPACE_PATH=/opt/owbs-workspace AGENT_WORKSPACE_SIZE=4g \
+  bash tools/recreate.sh docker-compose.yml sandbox-agent   # one service
+```
+
+`make restart` goes through it. It needs root — making the mount does
+— and it is the only target that has to: `make up` starts what is
+already there and does not remove anything.
+
+The path and the size are required, not defaulted: the ceiling belongs
+to the deployment, and a script that guessed it would be one more place
+where the guess could be wrong.
+
 ### Filesystem layout inside the container
 
 | Path                | Source                                  | Writable? |
