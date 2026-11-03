@@ -296,6 +296,34 @@ A volume mounted **over** the code directory freezes the release: Docker
 serves the named volume's copy and stops seeing the image's files. Mount
 under a path (`/home/agent/.cache/pip`), never over the code.
 
+## The session registry
+
+The registry (`SESSIONS` in `agent_api.py`) is one plain dict: session
+id → the tmux session that backs it. A listing reads it, a create and a
+delete change it, and every change is dumped to disk — **in a worker
+thread**, because the write is blocking I/O.
+
+That makes it a dict that two requests can touch at once, and a dict
+that changes size while it is iterated raises `RuntimeError: dictionary
+changed size during iteration`. Two locks own it:
+
+* **`SESSIONS_LOCK`** guards the registry itself. The listing reads a
+  snapshot under it, the persist path copies the dict under it and dumps
+  the copy, and every mutation is a short critical section. The persist
+  path must **not** hold the lock while it writes: it takes the lock
+  itself to take the copy, and an `asyncio.Lock` is not reentrant.
+* **one lock per session id** owns the whole create path. Two requests
+  for the same id are serialized: the second one finds the session the
+  first one made and adopts it. Without it, the loser of the race went
+  on as if it had created the session — it replaced the winner's window
+  and wrote **its own** directory into the registry, and the registry
+  then named a directory the pane was not running in.
+
+The create lock of a session that is gone is dropped when the session
+is pruned, but only while it is **not held**: a request that is creating
+that very session is using it, and handing a second request a fresh
+lock for the same id would break the exclusion it exists for.
+
 ## Limits
 
 | Limit | Default | Where |
