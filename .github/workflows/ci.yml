@@ -648,9 +648,16 @@ jobs:
 
           # The control: the root filesystem really is writable in this
           # posture. Without it the refusal below would be about the
-          # rootfs and the check would prove nothing.
-          docker exec ci-sandbox-agent sh -c 'echo probe > /etc/.ownership-probe && rm -f /etc/.ownership-probe' \
-            || { echo "::error::the root filesystem is not writable — the posture under test is wrong"; exit 1; }
+          # rootfs ("Read-only file system") and the check would prove
+          # nothing about the ownership.
+          #
+          # It is checked on the container's configuration and not with a
+          # write: the writable layer is owned by root, so uid 1000
+          # cannot write into it anywhere — a write would be refused
+          # with "Permission denied" for the wrong reason.
+          readonly=$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' ci-sandbox-agent)
+          [ "$readonly" = "false" ] \
+            || { echo "::error::the root filesystem is read-only — the posture under test is wrong"; exit 1; }
 
           # The property: the agent's own code is not the model's to write.
           out=$(docker exec ci-sandbox-agent sh -c 'echo tampered >> /home/agent/agent_api.py' 2>&1 || true)
