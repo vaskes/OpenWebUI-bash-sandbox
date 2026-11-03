@@ -11,7 +11,7 @@ import re
 import subprocess
 import uuid
 
-__version__ = "2.26.0"
+__version__ = "2.27.0"
 
 TMUX_PREFIX = "agent_"
 

@@ -4,6 +4,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.27.0] - 2026-11-03
+
+The gates stop lying. Two of them could hide a failure, and one of them
+had been hiding it for months.
+
+### Fixed
+
+- **The CI coverage step can no longer hide a failing suite.** The step
+  read
+  `pytest … || coverage run … && coverage report`, and the shell parses
+  that as `(A || B) && C`: when pytest failed, the fallback ran, and if
+  the fallback passed, the step ended green — over a red suite. The
+  comment above it claimed the fallback exists for the case where pytest
+  is *missing*, which is not what `||` does.
+  - The fallback now runs only when pytest is **absent**
+    (`command -v pytest`), and the step's script contains no `||` at
+    all: a fallback that fires on failure is exactly what `||` buys.
+- **The test that pins the lifespan can actually fail.** It called an
+  `async def` helper without `await`, so the body never ran, the
+  lifespan never exited, and the assertion was true for a reason that
+  had nothing to do with the lifespan.
+  - The proof: killing every session in `lifespan` left the whole suite
+    green. A test that cannot go red is decoration.
+  - Two things had to be true at once, and both were false at some
+    point — the helper that runs the shutdown must be a plain function,
+    and the session must survive the startup reaper, or there is
+    nothing at the shutdown that *could* be killed.
+  - Both are now pinned by their own tripwires, so the decoration cannot
+    come back.
+
+### Tests
+
+- `tests/test_ci_gate_v2270.py` — 4 tests: the fallback is guarded by
+  pytest's absence, the script has no `||`, the stdlib promise has its
+  own unconditional step, and the workflow still runs the suite.
+- `tests/test_wave2_fixes.py` — the lifespan test now runs the
+  shutdown, plus two tripwires for it: the session survives to the
+  shutdown, and the helper is not a coroutine.
+- `tools/mutation-check-v2270.sh` — 6 mutations, 6 caught. The first
+  one is the reviewer's own proof, turned into a permanent tripwire:
+  killing every session in the lifespan must turn the suite red.
+
+### Notes
+
+- The door's contract did not change: the same five routes, the same
+  status codes. Nothing about the requests the door answers.
+- The full mutation sweep: **28 scripts, 344 mutations, 344 caught, 0
+  escaped**, and every script left the tree byte-for-byte as it found it.
+
 ## [2.26.0] - 2026-11-03
 
 The session registry gets a lock, and the exec answer says whether the
