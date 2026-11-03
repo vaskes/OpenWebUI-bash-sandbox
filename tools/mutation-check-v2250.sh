@@ -256,12 +256,12 @@ echo "== the filesystem check comes after the early exit =="
 # unmounted workspace starts a stack on the host's partition. This
 # mutation writes the exit above the check; the test must go red.
 mutate tools/check-workspace-volume.sh \
-  'WS_SRC="$(findmnt -no SOURCE "$WS_PATH" 2>/dev/null || true)"' \
+  'WS_SRC="$(findmnt --first-only -no SOURCE "$WS_PATH" 2>/dev/null || true)"' \
   'if [ -z "$volumes" ]; then
     echo "check-workspace-volume: there is no workspace volume yet."
     exit 0
 fi
-WS_SRC="$(findmnt -no SOURCE "$WS_PATH" 2>/dev/null || true)"' \
+WS_SRC="$(findmnt --first-only -no SOURCE "$WS_PATH" 2>/dev/null || true)"' \
   "$WS_TESTS::TestTheWorkspacePathMustBeAFilesystem::test_the_filesystem_check_comes_before_the_early_exit" \
   "the early exit is written above the filesystem check"
 
