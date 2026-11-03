@@ -72,6 +72,11 @@ services:
     environment:
       - AGENT_WORKSPACE=/workspace
       - AGENT_SESSIONS_FILE=/workspace/.agent-sessions.json
+      # The ceiling the CI job mounts. Declared, so the agent checks the
+      # filesystem it is looking at against the ceiling it was promised:
+      # a workspace that is a plain directory (because a container was
+      # removed and took the mount with it) is refused instead of served.
+      - AGENT_WORKSPACE_SIZE=${AGENT_WORKSPACE_SIZE:-1g}
       # INFO, not WARNING: the deploy job reads the logs to prove they
       # are JSON, and the access log is INFO by nature.
       - AGENT_LOG_LEVEL=INFO

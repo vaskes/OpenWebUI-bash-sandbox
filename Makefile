@@ -30,8 +30,12 @@ build: check-env ## Build all Docker images (refuses to run with placeholder .en
 # Verified 2026-10-20: after editing agent_core.py, plain `up -d` kept the
 # old version while `up -d --build` picked the change up immediately.
 # Layer caching keeps this cheap when nothing changed.
+# The ceiling is declared here, not only in the .env: the workspace on
+# this path IS a filesystem with that ceiling, and an agent that was
+# promised one has to check it. A deployment that declares no ceiling is
+# not checked by this — the check is about a ceiling that was promised.
 up: check-env workspace-check ## Start the full stack in the background (refuses with placeholder .env)
-	AGENT_WORKSPACE_PATH="$(WORKSPACE_PATH)" $(COMPOSE) up -d --build
+	AGENT_WORKSPACE_PATH="$(WORKSPACE_PATH)" AGENT_WORKSPACE_SIZE="$(WORKSPACE_SIZE)" $(COMPOSE) up -d --build
 	@echo "Waiting for services to become healthy…"
 	@$(COMPOSE) ps
 
@@ -68,8 +72,15 @@ ps: ## Show service status
 # --force-recreate without --build is the most misleading invocation in this
 # file: it rebuilds the containers from the *existing* image, so it looks
 # like a fresh restart while serving the code from the previous deploy.
-restart: check-env workspace-check ## Recreate all containers (refuses with placeholder .env)
-	AGENT_WORKSPACE_PATH="$(WORKSPACE_PATH)" $(COMPOSE) up -d --build --force-recreate
+#
+# And --force-recreate on its own breaks the workspace: removing the
+# container takes the host mount with it (Docker cleans up the mounts it
+# made), and the new container then binds a plain directory — a
+# workspace with no ceiling. The order that works is: stack down,
+# filesystem mounted, stack up, and tools/recreate.sh is that order in
+# one place. It needs root: the mount does.
+restart: check-env ## Recreate all containers, with the workspace's ceiling (needs sudo)
+	AGENT_WORKSPACE_PATH="$(WORKSPACE_PATH)" AGENT_WORKSPACE_SIZE="$(WORKSPACE_SIZE)" bash tools/recreate.sh docker-compose.yml
 
 test: ## Run the unit test suite (stdlib unittest runner; needs requirements-dev.txt)
 	@python3 -m unittest discover -s tests -v

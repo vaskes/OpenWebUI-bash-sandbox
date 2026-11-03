@@ -278,6 +278,25 @@ Two rules follow, and both are now enforced rather than remembered:
   the deployment can still stop, instead of letting the agent find out
   with the service already down.
 
+**And the repository's own paths follow that order now.** They did not,
+and the gap between the rule and the code was the whole defect:
+`make restart` ran `up -d --build --force-recreate`, which removes the
+container and starts the new one in one command — the mount cannot be
+made in between, so a restart took the ceiling with it. `tools/recreate.sh`
+is the order in one place: remove the container, make the mount, start
+the container. `make restart` goes through it, and so does every
+recreate in the CI. The ceiling it mounts is not a default in the
+script but a value the deployment passes in, so the script cannot
+quietly work on a different workspace than the one the agent was told
+about.
+
+**And the ceiling is declared on the paths that have one.** The agent
+checks the filesystem it is looking at against the ceiling the
+deployment promised — but only a deployment that declared one is
+checked, and the default stack declares none, so the check never ran
+where the ceiling actually was. `make up`, `make restart` and the CI
+declare it now, from the same values the workspace is made of.
+
 One surface is still unbounded, and it is the privilege mode's fourth
 setting: `AGENT_READ_ONLY=false` makes the container's root filesystem
 writable, and the writable layer lives on the host's disk with no quota
