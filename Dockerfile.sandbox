@@ -109,6 +109,7 @@ ARG AGENT_ALLOW_SUDO=0
 # see agent_api._tmux_environment.
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH="/home/agent" \
     PIP_FIND_LINKS="/opt/wheelhouse" \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -250,7 +251,15 @@ RUN chmod -R a+rX /opt/pylibs /opt/wheelhouse
 #     then fails, and every later ``chown agent:agent`` fails too.
 #
 # The container stays unprivileged; only the passwd entry is gone.
-RUN mkdir -p /home/agent && chown 1000:1000 /home/agent
+# The agent's own code must not be writable by the uid the model's shell
+# runs as. Owned by uid 1000 (the model's uid) and mode 644, a command in
+# the sandbox rewrites agent_api.py in place -- no sudo needed -- and the
+# write survives `docker restart`, so the agent comes back up running the
+# code the model wrote. Measured on a polygon stack, 2026-11-04: the
+# agent went into a restart loop and stopped serving. The modules are only
+# ever read (PYTHONPATH=/home/agent), so root ownership costs the service
+# nothing. See docs/SECURITY.md section 9.
+RUN mkdir -p /home/agent && chown root:root /home/agent && chmod 755 /home/agent
 
 WORKDIR /home/agent
 
@@ -264,12 +273,12 @@ WORKDIR /home/agent
 # Leaving it out of the image does not fail the build — it fails the
 # container, with "ModuleNotFoundError: No module named 'agent_config'" on
 # the first request, which is the same class of defect v2.5.0 was about.
-COPY --chown=1000:1000 body_limit.py  /home/agent/body_limit.py
-COPY --chown=1000:1000 agent_core.py  /home/agent/agent_core.py
-COPY --chown=1000:1000 agent_config.py /home/agent/agent_config.py
-COPY --chown=1000:1000 agent_api.py   /home/agent/agent_api.py
-COPY --chown=1000:1000 json_logging.py /home/agent/json_logging.py
-COPY --chown=1000:1000 metrics.py       /home/agent/metrics.py
+COPY body_limit.py  /home/agent/body_limit.py
+COPY agent_core.py  /home/agent/agent_core.py
+COPY agent_config.py /home/agent/agent_config.py
+COPY agent_api.py   /home/agent/agent_api.py
+COPY json_logging.py /home/agent/json_logging.py
+COPY metrics.py       /home/agent/metrics.py
 
 # ``agent_browser.py`` is the browser door of wave F: the policy (which
 # hosts the tool may fetch), the driver (Chromium, in this container) and
@@ -277,20 +286,20 @@ COPY --chown=1000:1000 metrics.py       /home/agent/metrics.py
 # for the same reason: a module that is left out of the image does not
 # fail the build — it fails the container, on the first call that reaches
 # the browser.
-COPY --chown=1000:1000 agent_browser.py /home/agent/agent_browser.py
+COPY agent_browser.py /home/agent/agent_browser.py
 #
 # ``token_rules.py`` holds the rule about the bearer token that both
 # services share — in particular that the template's placeholder is a
 # published string, not a secret. It must be in the image: the agent
 # imports it at startup, and a missing module would fail the container
 # on the first request instead of the build.
-COPY --chown=1000:1000 token_rules.py  /home/agent/token_rules.py
+COPY token_rules.py  /home/agent/token_rules.py
 #
 # ``mcp_server.py`` is the MCP face of the sandbox: the same tools, in
 # the protocol an MCP caller speaks. The agent imports it at startup to
 # mount the endpoint, so leaving it out does not fail the build — it
 # fails the container, on the first request that reaches the endpoint.
-COPY --chown=1000:1000 mcp_server.py  /home/agent/mcp_server.py
+COPY mcp_server.py  /home/agent/mcp_server.py
 
 # The writable mount points. All three are tmpfs mounts at runtime, and a
 # tmpfs mount point has to exist in the image: the container's root

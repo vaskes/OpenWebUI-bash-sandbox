@@ -521,6 +521,37 @@ is the container's own — it is discarded when the container is
 recreated, so a modified `/usr` does not survive a redeploy. The
 boundary is the container, and the boundary did not move.
 
+**The agent's own code is writable without `sudo` — and a restart runs
+it.** Measured on a polygon stack on 2026-11-04: `/home/agent` is
+`uid=1000 mode=755` and `agent_api.py` is `uid=1000 mode=644` — owned
+by the *model's own uid*. A command in the sandbox therefore rewrites
+the agent's code in place: no escalation, no `sudo`. The write lands in
+the container's writable layer, and that layer survives `docker
+restart` (the container is restarted in place, the layer is not
+rebuilt) — so the agent starts the next time on the code the model last
+wrote, with the agent's token in its environment. Measured: an agent
+whose `agent_api.py` the sandbox had overwritten went into a restart
+loop and stopped serving. `docker compose up -d --force-recreate` — the
+redeploy path — does discard the layer, and there the change is gone.
+
+So the boundary moves in one place: not out of the container, but *into*
+the code that enforces it. With `AGENT_ALLOW_SUDO=1` it moves further,
+because the model's shell is root and root rewrites root-owned files
+too — there no ownership change helps and the privilege mode itself is
+the only lever. The ownership half is fixable in the image: the
+agent's modules owned by root, the directory left unwritable by uid
+1000. Measured by applying that ownership to a running container: the
+agent restarted healthy and imported its modules (they are read, never
+written), while the sandbox's write to the directory and to
+`agent_api.py` was refused with `Permission denied`.
+
+The CI's deploy job measures it on the *shipped image*, in a posture
+where the root filesystem is writable (so the refusal cannot be blamed
+on a read-only root) and without sudo (so what is measured is the
+stock posture, the model's shell being uid 1000 and nothing else): the
+same write has to succeed on the root filesystem and fail with
+`Permission denied` on the agent's code.
+
 The stock deployment keeps the root filesystem read-only, and a
 deployment that wants the privilege mode should decide deliberately
 which half of "root" it wants: escalation, usefulness, or both.

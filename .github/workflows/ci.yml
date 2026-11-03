@@ -605,6 +605,63 @@ jobs:
           grep -qE '^sandbox_proxy_requests_total [0-9]+' /tmp/metrics.txt \
             || { echo "::error::the request counter has no value"; exit 1; }
 
+      # The agent's own code must not belong to the uid the model's shell
+      # runs as.
+      #
+      # Owned by uid 1000 and mode 644, a command in the sandbox rewrites
+      # agent_api.py in place — no escalation, no sudo — and the write
+      # lands in the container's writable layer, which survives `docker
+      # restart`. The agent then comes up on the code the model wrote,
+      # with the agent's token in its environment. Measured on a polygon
+      # stack, 2026-11-04: an agent whose agent_api.py the sandbox had
+      # overwritten went into a restart loop and stopped serving.
+      #
+      # The check runs with a WRITABLE root filesystem on purpose. With a
+      # read-only one every write is refused, and the refusal says
+      # "Read-only file system" — which would hide the ownership defect
+      # behind a different reason. So the rootfs has to be writable here
+      # (that is the control), and the same write to the agent's code has
+      # to fail with "Permission denied" (that is the property). No sudo
+      # either: this measures the stock posture, where the model's shell
+      # is uid 1000 and nothing else.
+      - name: The model's uid cannot write the agent's own code
+        env:
+          TOKEN: ci-smoke-token-not-a-secret-0000
+          AGENT_READ_ONLY: "false"
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.ci.yml up -d --force-recreate sandbox-agent
+          timeout 300 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" ci-sandbox-agent 2>/dev/null)" = healthy ]; do sleep 3; done' \
+            || { echo "::error::the agent never became healthy"; docker compose -f docker-compose.ci.yml logs sandbox-agent; exit 1; }
+
+          owner=$(docker exec ci-sandbox-agent stat -c %u /home/agent/agent_api.py)
+          [ "$owner" = "0" ] \
+            || { echo "::error::agent_api.py is owned by uid $owner, not by root"; exit 1; }
+          dir_owner=$(docker exec ci-sandbox-agent stat -c %u /home/agent)
+          [ "$dir_owner" = "0" ] \
+            || { echo "::error::/home/agent is owned by uid $dir_owner, not by root"; exit 1; }
+
+          # The control: the root filesystem really is writable in this
+          # posture. Without it the refusal below would be about the
+          # rootfs and the check would prove nothing.
+          docker exec ci-sandbox-agent sh -c 'echo probe > /etc/.ownership-probe && rm -f /etc/.ownership-probe' \
+            || { echo "::error::the root filesystem is not writable — the posture under test is wrong"; exit 1; }
+
+          # The property: the agent's own code is not the model's to write.
+          out=$(docker exec ci-sandbox-agent sh -c 'echo tampered >> /home/agent/agent_api.py' 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -qi 'permission denied' \
+            || { echo "::error::the model was allowed to write the agent's code"; exit 1; }
+          if echo "$out" | grep -qi 'read-only file system'; then
+            echo "::error::the write was refused by the root filesystem, not by the ownership"
+            exit 1
+          fi
+          # And the agent still serves: a tampered agent_api.py would not.
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
+            -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8099/healthz)
+          [ "$code" = "200" ] \
+            || { echo "::error::the agent answered $code after the refusal, expected 200"; exit 1; }
+
       # The monitoring example must parse. It is a separate compose
       # project, so nothing else in this job touches it — and a compose
       # file that does not parse is an example that does not run.
