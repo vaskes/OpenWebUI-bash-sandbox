@@ -626,6 +626,9 @@ jobs:
       # is uid 1000 and nothing else.
       - name: The model's uid cannot write the agent's own code
         env:
+          # compose refuses to interpolate the file without this one, and
+          # the recreate below is a compose call.
+          OPENAPI_PROXY_TOKEN: ci-smoke-token-not-a-secret-0000
           TOKEN: ci-smoke-token-not-a-secret-0000
           AGENT_WORKSPACE_PATH: /tmp/owbs-workspace
           AGENT_WORKSPACE_SIZE: 1g

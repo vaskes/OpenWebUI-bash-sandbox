@@ -89,6 +89,11 @@ it should not have, and the order the stack is deployed in.
 - `tests/test_wheelhouse_v2280.py` — 3 tests: the wheelhouse carries
   the build backends, the install really is offline, and the measured
   failure is recorded.
+- The v2.18.0 tripwire that watched the wheelhouse was strengthened
+  rather than left as it was: it checked the **first** `--dest` in the
+  builder's download, so the second download (the build backends) kept
+  it green when the first one was mutated. It now checks every
+  `--dest`, and the mutation that used to escape is caught.
 - `tools/mutation-check-v2280.sh` — 6 mutations,
   `tools/mutation-check-v2280-deploy.sh` — 8 mutations,
   `tools/mutation-check-v2280-wheelhouse.sh` — 3 mutations. All caught.
