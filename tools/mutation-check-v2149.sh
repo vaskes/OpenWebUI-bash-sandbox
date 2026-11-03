@@ -162,7 +162,7 @@ mutate openapi_proxy.py \
 
 echo "== the shared module is not in the agent's image =="
 mutate Dockerfile.sandbox \
-  'COPY --chown=1000:1000 token_rules.py  /home/agent/token_rules.py' \
+  'COPY token_rules.py  /home/agent/token_rules.py' \
   '# (removed)' \
   "$RULE_TOKEN" \
   "the shared module is in the image that runs it"
