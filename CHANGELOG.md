@@ -4,6 +4,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.28.0] - 2026-11-04
+
+The boundary is not the model's to move. Two things it could reach that
+it should not have, and the order the stack is deployed in.
+
+### Fixed
+
+- **The agent's own code belongs to root, not to the model.** Measured on
+  a polygon stack on 2026-11-04: `/home/agent` and `agent_api.py` were
+  owned by **uid 1000** — the uid the *model's own shell* runs as. A
+  command in the sandbox could therefore rewrite the agent's code in
+  place: no escalation, no `sudo`. The write landed in the container's
+  writable layer, that layer survives `docker restart`, and the agent
+  came up on the next start running the code the model had written, with
+  the agent's token in its environment. Measured: an agent whose
+  `agent_api.py` the sandbox had overwritten went into a restart loop and
+  stopped serving.
+  - The modules are copied into the image as root, and `/home/agent` is
+    owned by root and is not writable by group or by others.
+  - `PYTHONDONTWRITEBYTECODE=1`, so the image does not try to write
+    `.pyc` files next to modules it may not write.
+  - The model's own scratch space is untouched: its pip cache and its
+    workspace are still uid 1000's, so `pip install` keeps working.
+  - **The privilege mode is a separate matter.** With
+    `AGENT_ALLOW_SUDO=1` the model's shell is root, and root rewrites
+    root-owned files too: there no ownership change helps and the
+    posture itself is the only lever. The mode stays as the operator
+    decided it; `docs/SECURITY.md` §9 says so where the reader needs it.
+- **The stack's lifecycle no longer takes the ceiling with it.**
+  `docs/SECURITY.md` §4 has stated the rule since v2.21.0 — *stack down,
+  filesystem mounted, stack up* — and the repository's own paths did not
+  follow it: `make restart` ran `up -d --build --force-recreate`, which
+  removes the container and starts the new one in one command, and the
+  mount cannot be made in between. Measured on the production stand on
+  2026-11-03: the deploy was ordered "mount the filesystem, then start
+  the stack", the agent container was recreated, the filesystem went away
+  with it, and the new container came up on the host's disk and refused
+  to start.
+  - `tools/recreate.sh` is that order in one place: remove the
+    container, make the mount, start the container. `make restart` goes
+    through it, and so does every recreate in the CI.
+  - The path and the size are required, not defaulted: the ceiling
+    belongs to the deployment, and a script that guessed it would be one
+    more place where the guess could be wrong.
+- **The ceiling is declared where there is one.** The agent checks the
+  filesystem it is looking at against the ceiling the deployment
+  promised — but only a deployment that declared one is checked, and the
+  default stack declared none, so the check never ran where the ceiling
+  actually was. `make up`, `make restart` and the CI declare it now,
+  from the same values the workspace is made of.
+
+### Changed
+
+- `make restart` needs root now: making the mount does. `make up` does
+  not.
+- `make restart` does not use `--force-recreate` any more: the
+  container is removed first, which is what the order requires.
+
+### Tests
+
+- `tests/test_image_ownership_v2280.py` — 8 tests: the image hands the
+  model's uid nothing of the agent's own, the mode is not writable by
+  others, the bytecode is off, the model's own scratch space survives,
+  and the document names the rule.
+- `tests/test_deploy_order_v2280.py` — 13 tests: the order is remove,
+  mount, start (pinned positionally), the script does not guess the
+  ceiling, `make restart` goes through the order, the CI does too, and
+  the paths that have a ceiling declare it.
+- `tools/mutation-check-v2280.sh` — 6 mutations,
+  `tools/mutation-check-v2280-deploy.sh` — 8 mutations. All caught.
+- The CI's deploy job measures the ownership on the *shipped image*: a
+  write to the root filesystem has to succeed (the control — otherwise
+  the refusal would be about a read-only root), a write to the agent's
+  code has to be refused with `Permission denied`, and that refusal must
+  not be `Read-only file system`.
+
 ## [2.27.0] - 2026-11-03
 
 The gates stop lying. Two of them could hide a failure, and one of them

@@ -2,7 +2,7 @@
 
 **For:** the agent that maintains the bot (`vaskes/llama.cpp_telegram`).
 **From:** the sandbox side (`vaskes/OpenWebUI-bash-sandbox`).
-**Code against:** sandbox tag **`v2.27.0`** (the contract below was written
+**Code against:** sandbox tag **`v2.28.0`** (the contract below was written
 against `v2.7.0`; §6 lists what changed since, and the status-code table
 in §3 is the current one).
 **Written:** 2026-10-25. **Status codes last verified:** 2026-11-03 against
@@ -429,6 +429,7 @@ know:
 | v2.25.0 | the MCP door grew `browser_open`, `browser_screenshot` and `browser_close` — the browser lives in the sandbox's own container | the door's contract did not change: the same five routes, the same status codes; the three new tools are on the MCP door only, they fetch only the hosts the operator listed, and they are closed while `AGENT_BROWSER_ALLOWED_HOSTS` is empty |
 | v2.26.0 | the session registry is locked, and every exec answer says whether the command started | the door's contract did not change: the same five routes, the same status codes; `POST /sessions/{id}/exec` gained one field, `command_started`, and the door's own routes are unchanged |
 | v2.27.0 | the CI gate can no longer hide a failing suite, and the lifespan test can actually fail | the door's contract did not change: the same five routes, the same status codes; nothing about the requests the door answers |
+| v2.28.0 | the agent's own code is root's, and the stack's lifecycle no longer takes the workspace's ceiling with it | the door's contract did not change: the same five routes, the same status codes; nothing about the requests the door answers |
 
 The route list itself did not change until **v2.15.0**, which added
 `POST /files`: `POST /sessions/{id}/exec`, `GET /files`,
