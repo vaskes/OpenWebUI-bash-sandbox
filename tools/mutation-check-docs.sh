@@ -47,6 +47,20 @@ mutate docs/ARCHITECTURE.md \
   "$TESTS::TestTheMcpToolsAreDocumented::test_the_documented_tools_are_the_code_tools" \
   "the documented tools are the code tools"
 
+echo "== a tool disappears from the README's table =="
+mutate README.md \
+  '| `clarify`       | put a question to the operator, for the caller to answer  |' \
+  '| `clarify_away`  | put a question to the operator, for the caller to answer  |' \
+  "$TESTS::TestTheReadmeListsTheMcpTools::test_the_readme_lists_the_code_tools" \
+  "the README's tool table is no longer the door's tool list"
+
+echo "== the README's count stops matching the door =="
+mutate README.md \
+  'Fifteen tools — the capabilities the HTTP API exposes' \
+  'Seven tools — the capabilities the HTTP API exposes' \
+  "$TESTS::TestTheReadmeListsTheMcpTools::test_the_prose_says_the_same_number" \
+  "the README says seven tools while the door has fifteen"
+
 echo "== a component section disappears =="
 mutate docs/ARCHITECTURE.md \
   '### 3. `open-webui` (upstream image, optional)' \

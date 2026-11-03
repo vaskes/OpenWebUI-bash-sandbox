@@ -297,6 +297,90 @@ class TestTheMcpToolsAreDocumented(unittest.TestCase):
         self.assertEqual(doc, code)
 
 
+class TestTheReadmeListsTheMcpTools(unittest.TestCase):
+    """The README's tool table is the server's tool list.
+
+    The README said "Seven tools" for four releases after the door had
+    fifteen. ``docs/ARCHITECTURE.md`` was compared with the code on every
+    wave; the README was not, and the front door of the repository was
+    the one copy nobody checked against anything. A reader planning an
+    MCP client would have written one for a door that had grown eight
+    tools since they last looked.
+
+    Both halves are pinned: the table lists exactly the tools the code
+    registers, and the prose in front of it says the same number.
+    """
+
+    #: The number words a README may use for the tool count. The door
+    #: cannot grow past twenty and still have a readable sentence, and
+    #: a number it cannot spell is a number nobody wrote by hand.
+    NUMBER_WORDS = {
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+        "eleven": 11,
+        "twelve": 12,
+        "thirteen": 13,
+        "fourteen": 14,
+        "fifteen": 15,
+        "sixteen": 16,
+        "seventeen": 17,
+        "eighteen": 18,
+        "nineteen": 19,
+        "twenty": 20,
+    }
+
+    def setUp(self) -> None:
+        self.readme = README.read_text(encoding="utf-8")
+
+    def _section(self) -> str:
+        """The README's MCP section, up to the next heading."""
+        match = re.search(
+            r"^##\s+Talking to it over MCP\s*$(.*?)(?=^##\s|\Z)",
+            self.readme,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(match, "the README has no 'Talking to it over MCP' section")
+        return match.group(1)
+
+    def _readme_tools(self) -> set[str]:
+        """The tools the README's MCP table names."""
+        return set(re.findall(r"^\|\s*`(\w+)`\s*\|", self._section(), re.MULTILINE))
+
+    def test_the_readme_lists_the_code_tools(self) -> None:
+        """The table is the tool list, not a selection of it."""
+        code = _mcp_tools(REPO_ROOT / "mcp_server.py")
+        self.assertTrue(code, "no MCP tools found in mcp_server.py — the parser is broken")
+        doc = self._readme_tools()
+        self.assertTrue(doc, "the README's MCP tool table names no tools — the parser is broken")
+        self.assertEqual(doc, code)
+
+    def test_the_prose_says_the_same_number(self) -> None:
+        """The sentence in front of the table counts the same tools."""
+        code = _mcp_tools(REPO_ROOT / "mcp_server.py")
+        section = self._section()
+        match = re.search(r"^([A-Z][a-z]+) tools\b", section, re.MULTILINE)
+        self.assertIsNotNone(match, "the README does not say how many tools there are")
+        word = match.group(1).lower()
+        self.assertIn(
+            word,
+            self.NUMBER_WORDS,
+            f"the README says {match.group(1)!r} tools, which is not a number this "
+            "check can read — write the count as a word it knows",
+        )
+        self.assertEqual(
+            self.NUMBER_WORDS[word],
+            len(code),
+            f"the README says {match.group(1)} tools, but the door has {len(code)}",
+        )
+
+
 class TestTheComponentsAreTheComposeServices(unittest.TestCase):
     """The architecture draws the stack that is actually shipped."""
 

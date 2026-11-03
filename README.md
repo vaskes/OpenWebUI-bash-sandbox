@@ -10,7 +10,7 @@
 [![Open WebUI: compatible](https://img.shields.io/badge/Open_WebUI-compatible-blue)](https://github.com/open-webui/open-webui)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
-[![Tests: 1241](https://img.shields.io/badge/tests-1241_total-brightgreen)](tests/)
+[![Tests: 1243](https://img.shields.io/badge/tests-1243_total-brightgreen)](tests/)
 
 > ## ⚠️ NOT MULTI-TENANT — single operator only
 >
@@ -57,10 +57,18 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 ## Features
 
 - ✅ **One `bash` tool** — runs any shell command in a persistent sandbox
+- ✅ **The sandbox has its own browser** — Chromium inside the sandbox's own
+  container, driven by `browser_open`, `browser_screenshot` and
+  `browser_close`. The host list is **empty by default**, and an empty list
+  is a **closed door**
+- ✅ **Tools for a session that plans and remembers** — `todo_list`,
+  `memory`, `session_search`, `clarify`, and `vision_analyze` for a picture
+  in the workspace
 - ✅ **MCP endpoint** — the same sandbox over the Model Context Protocol
   (`POST /mcp`): `bash`, `read_file`, `file_info`, `delete_file`,
-  `write_file`, `patch`, `search_files`, for any client that is not
-  Open WebUI
+  `write_file`, `patch`, `search_files`, `vision_analyze`, `browser_open`,
+  `browser_screenshot`, `browser_close`, `todo_list`, `memory`,
+  `session_search`, `clarify`, for any client that is not Open WebUI
 - ✅ **Persistent state** — cwd, env vars, history survive across LLM calls
 - ✅ **Auto-wire** — `TOOL_SERVER_CONNECTIONS` env var pre-loads the tool
 - ✅ **Zero patches** — uses Open WebUI's built-in External Tool Servers
@@ -74,7 +82,7 @@ MCP:   User ──▶ any MCP client ──▶ openapi-proxy (POST /mcp, bearer 
 - ✅ **Multi-stage Dockerfiles** — small images
 - ✅ **Python packages out of the box** — pip in the image, a wheelhouse
   for instant offline installs, and the usual suspects preinstalled
-- ✅ **1241 unit + integration tests** (stdlib `unittest`, no pytest required)
+- ✅ **1243 unit + integration tests** (stdlib `unittest`, no pytest required)
 - ✅ **CI: ruff + ruff B-rules (SAST) + gitleaks + coverage threshold**
 
 ## Quick start (60 seconds)
@@ -165,6 +173,8 @@ Short version:
         │  HTTP door:  /sessions · /files · /metrics · /healthz     │
         │  MCP door:   POST /mcp → bash · read_file · file_info ·   │
         │              delete_file · write_file · patch · search_files│
+        │              vision_analyze · browser_* · todo_list ·      │
+        │              memory · session_search · clarify             │
         └────────────────────────────┬───────────────────────────────┘
                                      ▼
                  tmux session `agent_<id>`  ·  /workspace files
@@ -200,6 +210,12 @@ The most important knobs:
   to name the hosts the endpoint answers for — a request with any other
   `Host` is refused with a 421. The bearer token is the guard either
   way; this is one more layer.
+- **`AGENT_BROWSER_ALLOWED_HOSTS`** — the hosts the browser door may
+  fetch, comma-separated. **Empty = the door is closed**, and
+  `browser_open` refuses and says so. This is a policy about **one
+  tool**, not a boundary: the jail's egress is unrestricted, so the
+  model's own shell reaches the open web anyway. What the list buys is
+  that *our* tool does not become a second, unaudited door to the web.
 - **`AGENT_WORKSPACE_SIZE`** — how much space the sandbox's workspace
   may occupy (default `4g`). The workspace is a **volume over a
   filesystem of exactly that size**: Docker has no quota for a
@@ -318,8 +334,8 @@ curl -sS -H "Authorization: Bearer $OPENAPI_PROXY_TOKEN" \
      http://127.0.0.1:8099/mcp
 ```
 
-Seven tools — the capabilities the HTTP API exposes, and the three
-checked paths through the file fence:
+Fifteen tools — the capabilities the HTTP API exposes, and the checked
+paths through the file fence:
 
 | Tool            | What it does                                              |
 |-----------------|-----------------------------------------------------------|
@@ -330,6 +346,14 @@ checked paths through the file fence:
 | `write_file`    | write a text file into the workspace — atomically          |
 | `patch`         | apply a unified diff to a file; a diff that does not apply changes nothing |
 | `search_files`  | find files by name, or lines by content                    |
+| `vision_analyze` | ask a vision model about a picture in the workspace        |
+| `browser_open`  | open a URL in the sandbox's own Chromium; returns the text |
+| `browser_screenshot` | PNG of the open page, into the workspace              |
+| `browser_close` | drop the browser context: the page, its cookies and profile |
+| `todo_list`     | the session's checklist, with the items it finished       |
+| `memory`        | notes the session keeps for itself                         |
+| `session_search` | find a command an earlier session ran                     |
+| `clarify`       | put a question to the operator, for the caller to answer  |
 
 The full contract — the tool schemas, the error shapes, what the
 session handling means — is in
