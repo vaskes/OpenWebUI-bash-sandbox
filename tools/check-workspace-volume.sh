@@ -38,6 +38,44 @@ fi
 WS_PATH="${1:?usage: check-workspace-volume.sh [--remove] <workspace-path>}"
 LOGICAL=owbs-workspace
 
+# THE CEILING HAS TO BE A FACT, NOT A PATH.
+#
+# A volume that binds the workspace path is not yet a workspace with a
+# ceiling: the path is only the workspace while a FILESYSTEM is mounted
+# on it. When the mount is gone the path is a plain directory on the
+# host's disk, the volume still binds it, and the container starts on
+# the host's partition -- 1.8 TB instead of the 4 GB that were
+# promised. The agent notices and refuses to start, which is the
+# ceiling check doing its job, but by then the stack is down: the
+# deployment took the service away to find out.
+#
+# So the mount is checked HERE, while the stack is still up and the
+# deployment can stop before anything is started. A deployment that
+# finds the workspace unmounted says so and stops.
+if [ ! -e "$WS_PATH" ]; then
+    # Nothing is there yet: the deployment makes the filesystem before
+    # the stack starts, and there is nothing to check until then.
+    echo "check-workspace-volume: $WS_PATH does not exist yet."
+    WS_SRC=""
+    WS_FS=""
+elif [ ! -d "$WS_PATH" ]; then
+    echo "check-workspace-volume: $WS_PATH is not a directory." >&2
+    exit 1
+else
+    WS_SRC="$(findmnt -no SOURCE "$WS_PATH" 2>/dev/null || true)"
+    WS_FS="$(findmnt -no FSTYPE "$WS_PATH" 2>/dev/null || true)"
+fi
+if [ -e "$WS_PATH" ] && { [ -z "$WS_SRC" ] || [ "$WS_FS" != "ext4" ]; }; then
+    echo "check-workspace-volume: $WS_PATH is not an ext4 filesystem." >&2
+    echo "check-workspace-volume:   source: '${WS_SRC:-nothing is mounted there}'" >&2
+    echo "check-workspace-volume:   type:   '${WS_FS:-nothing is mounted there}'" >&2
+    echo "check-workspace-volume: a volume that binds a plain directory has no ceiling." >&2
+    echo "check-workspace-volume: run tools/setup-workspace.sh $WS_PATH first." >&2
+    exit 1
+fi
+echo "check-workspace-volume: the workspace is $WS_SRC ($WS_FS)."
+
+
 if ! command -v docker >/dev/null 2>&1; then
     echo "check-workspace-volume: docker is not installed." >&2
     exit 2
