@@ -4,6 +4,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.26.0] - 2026-11-03
+
+The session registry gets a lock, and the exec answer says whether the
+command started.
+
+### Fixed
+
+- **Two requests for the same `session_id` no longer race into two
+  sessions.** The create path of one session id is now owned by one lock:
+  the second request waits, finds the session the first one made, and
+  adopts it.
+  - Before: the tmux server refuses a duplicate session name, so the
+    loser of the race did not get a second pane — it got something
+    worse. It went on as if it had created the session, replaced the
+    winner's window, and wrote **its own** directory into the registry.
+    The registry then named a directory the pane was not running in, and
+    the next command for that session answered from somewhere else.
+- **The session registry is guarded by a lock.** The registry is one
+  plain dict that a listing iterates, a create and a delete change, and
+  the persist path dumps **in a worker thread**. A dict that changes
+  size while it is iterated raises `RuntimeError: dictionary changed
+  size during iteration`, so:
+  - the persist path copies the dict **under the lock** and dumps the
+    copy — dumping the live dict is the crash;
+  - the listing reads a snapshot and answers from it — a registry that
+    changes underneath it does not leak into the answer;
+  - every mutation of the registry is a short critical section.
+- **The creation lock of a session that is in use is not dropped.** It
+  is dropped only while it is **not held**: a request that is creating
+  that very session is using it, and handing a second request a fresh
+  lock for the same id would break the exclusion the lock exists for.
+
+### Added
+
+- **`command_started` in every exec answer.** `true` when the command
+  ran — its stdout and its exit code are real — and `false` when it
+  never started, because the session was busy or the shell was stuck.
+  - Before: a queued command and a killed one looked the same to a
+    caller that read the fields: empty stdout, no exit code,
+    `timed_out: true`. The prose in `stderr` said which it was, but a
+    machine caller had to read English to tell "queued" from "killed".
+    A queued command is not a failed command, and the field is what says
+    so.
+
+### Tests
+
+- `tests/test_session_lock_v2260.py` — 15 tests: the create path is
+  serialized, the registry is written under the lock, the listing
+  answers from its own snapshot, the persist path dumps a copy, a
+  creation lock in use survives, and every answer that reports a
+  timeout also reports whether the command started.
+- `tools/mutation-check-v2260.sh` — 14 mutations, 14 caught. Two of
+  them are the reviewer's own claims: the lock really serializes the
+  create path (removing it makes two tmux sessions appear for one id),
+  and the answer really carries the field (removing it makes the busy
+  answer and the timeout answer unreadable).
+
+### Notes
+
+- The door's contract did not change: the same five routes, the same
+  status codes. `POST /sessions/{id}/exec` gained one field.
+- `docs/ARCHITECTURE.md` gained a section on the session registry and
+  its two locks; `docs/HANDOFF-mcp.md` documents the answer contract.
+
 ## [2.25.0] - 2026-11-02
 
 The sandbox gets a browser — in its own container, under our own tools.
