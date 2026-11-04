@@ -92,7 +92,7 @@ mutate docs/CONFIGURATION.md \
 
 echo "== the CI comment names a stale count =="
 mutate .github/workflows/ci.yml \
-  '# The sweep is 32 scripts' \
+  '# The sweep is 33 scripts' \
   '# The sweep is 26 scripts' \
   "$TESTS::TestTheSweepCountInTheCommentIsTrue::test_the_comment_names_the_number_of_scripts_on_disk" \
   "the CI comment names a number of scripts that is not the real one"
