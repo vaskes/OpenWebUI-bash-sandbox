@@ -204,6 +204,25 @@ fails with `ENOSPC` *inside the workspace*.
 
 Default: `4g`.
 
+**One profile, one number.** The template, the Makefile, the setup
+script and this document all name `4g`, and they have to. A deployment
+that copies the template and then makes the workspace with the script
+has declared the ceiling of one and built the ceiling of another, and
+the agent refuses to serve against that. The CI keeps a smaller profile
+of its own (`1g`), because it is a throwaway filesystem on a throwaway
+runner — that one is deliberately different, and it is deliberate
+*inside* the CI.
+
+**The declared ceiling must equal the filesystem that was made.**
+`tools/setup-workspace.sh` makes the filesystem, and `AGENT_WORKSPACE_SIZE`
+declares it. When the two disagree — a template that says 1g and a
+filesystem that is 4g — the agent refuses to serve: it compares the
+size of the filesystem it is looking at with the number it was given,
+and a plain directory, or a filesystem of another size, is a different
+size. So the number in the deployment's environment and the number the
+setup script was given have to be the same number. The rule fits on a
+line: **declare the ceiling you make.**
+
 **The workspace is on disk, in a filesystem of exactly that size.** The
 ceiling cannot come from Docker: compose has no per-volume storage
 option, and `--storage-opt size` only ever worked with the devicemapper

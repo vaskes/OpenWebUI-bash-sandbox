@@ -93,11 +93,13 @@ test-cov: ## Run tests with coverage (requires pytest + pytest-cov)
 # decoration, and decoration rots: the patterns drift away from the
 # code, the mutation stops applying, and the script writes SKIP into a
 # line nobody reads. They run in CI too (the "Mutation checks" job).
+#
+# The sweep goes through tools/run-sweep.sh, which is the same runner
+# CI uses: it refuses to start on a dirty tree, runs one script at a
+# time, checks the tree after every script, and never restores the
+# tree by itself.
 mutation: ## Run the mutation checks (each tripwire must be able to go red)
-	@for script in tools/mutation-check-*.sh; do \
-		echo "== $$script"; \
-		PY="$$(command -v python3)" bash "$$script" || exit 1; \
-	done
+	@bash tools/run-sweep.sh tools/mutation-check-*.sh
 
 lint: ## Lint with ruff (requires `pip install ruff`)
 	@ruff check .

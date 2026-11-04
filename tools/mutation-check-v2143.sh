@@ -73,8 +73,8 @@ CI="tests/test_ci_runs_the_mutation_checks.py"
 
 echo "== the mutation checks stop running in CI =="
 mutate .github/workflows/ci.yml \
-    'for script in tools/mutation-check-*.sh; do' \
-    'for script in tools/mutation-check-none.sh; do' \
+    'bash tools/run-sweep.sh tools/mutation-check-*.sh' \
+    'bash tools/run-sweep.sh tools/mutation-check-none.sh' \
     "$CI::TestTheMutationChecksRunInCI::test_the_workflow_runs_the_whole_family" \
     "the mutation checks run in CI"
 
@@ -101,7 +101,7 @@ mutate CONTRIBUTING.md \
 
 echo "== the contribution guide stops saying how =="
 mutate CONTRIBUTING.md \
-    'make mutation     # or:  for s in tools/mutation-check-*.sh; do bash "$s"; done' \
+    'make mutation     # or:  bash tools/run-sweep.sh tools/mutation-check-*.sh' \
     'make something-else' \
     "$CI::TestTheMutationChecksRunInCI::test_contributing_says_how_to_run_them" \
     "the contribution guide says how to run them"
