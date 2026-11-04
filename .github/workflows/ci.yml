@@ -852,7 +852,7 @@ jobs:
   mutation-checks:
     name: Mutation checks (the tripwires can still go red)
     runs-on: ubuntu-26.04
-    # The sweep is 26 scripts, and each one runs a slice of the suite
+    # The sweep is 32 scripts, and each one runs a slice of the suite
     # against a deliberately broken tree. Measured on a full sweep:
     # ~25-30 minutes. The old limit of 30 was already at the edge, and
     # a job that is killed by its own timeout leaves a MUTATION in the

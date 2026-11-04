@@ -4,6 +4,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.29.0] - 2026-11-04
+
+The template carries the two knobs the operator's own stands run with.
+
+### Fixed
+
+- **The template's token separation is on.** `AGENT_INBOUND_TOKEN` was
+  commented out in `.env.example`, so a deployment that copied the
+  template and filled in the rest ran with **one** token for the whole
+  stack: the model's shell inherits the agent's environment, so the
+  operator's public door token was in it — and the sandbox has
+  unrestricted outbound access.
+  - The knob is active now, and it carries a **placeholder**
+    (`CHANGE_ME_openssl_rand_hex_32`), not a value: a published token
+    would be a token every deployment that copies the template shares,
+    which is worse than the knob being off. `make check-env` refuses a
+    `.env` that still holds the placeholder, and the services refuse a
+    placeholder token themselves — so an unfilled template does not
+    start at all.
+  - `docs/CONFIGURATION.md` has a section on it: what the separation
+    buys, what a forged agent code would run with (the public token
+    without the separation, the internal one with it), and that `.env`
+    is not a shell script, so `$(openssl rand -hex 32)` is not expanded
+    there.
+- **The template's workspace ceiling is declared.** `AGENT_WORKSPACE_SIZE`
+  was commented out too, so the ceiling the workspace actually has was
+  not declared — and the agent's check that refuses a workspace without
+  a ceiling only runs for a deployment that declared one. It is
+  declared now.
+- **The CI's comment about the sweep is true again.** It said 26
+  scripts; there are 32. A tripwire now compares the number in the
+  comment with the number of scripts on disk, so the next wave cannot
+  leave a stale count behind.
+
+### Tests
+
+- `tests/test_env_defaults_v2290.py` — 8 tests: the knobs are active,
+  the token is a placeholder and not a value, the recipe is written
+  down, the document says what the separation buys, and the sweep count
+  in the CI comment is the real one.
+- `tools/mutation-check-v2290.sh` — 8 mutations. All caught.
+
 ## [2.28.0] - 2026-11-04
 
 The boundary is not the model's to move. Two things it could reach that

@@ -48,6 +48,53 @@ are set in `docker-compose.yml` unless noted otherwise.
 If `AGENT_TOKEN` is empty, the agent refuses to serve any request
 except `/healthz` (returns 503). This is fail-closed by design.
 
+### `AGENT_INBOUND_TOKEN` — the token the model may see
+
+One token for the whole stack is the usual shape, and the shape the
+compose files default to. It has a price, and the price is paid by the
+operator's own credential: the model's shell inherits the agent's
+environment, so the token in the agent's environment is in the model's
+hands — and the sandbox has unrestricted outbound access, so a token
+that leaves the container is a token that left.
+
+`AGENT_INBOUND_TOKEN` gives the agent a **different** token for its own
+doors. The proxy keeps the operator's token for its public door and
+forwards the internal one to the agent. The model then reads the
+internal token out of `/proc/<pid>/environ` (the model and the agent
+run as the same uid — that part is not fixable without a redesign), and
+**the operator's public token is not in that container at all**.
+
+| | one token | `AGENT_INBOUND_TOKEN` set |
+|---|---|---|
+| the model can read a token | the **public** one | the internal one only |
+| that token opens | the public door and the agent's doors | the agent's internal doors only |
+| forged agent code would run with | the public token | the internal token |
+
+The last row is why the separation is not a nicety. The privilege mode
+lets the model's shell rewrite the agent's code (`docs/SECURITY.md`
+§9), and the code comes back with the agent's token in its environment:
+with one token for the stack, that is the **public** token, and a
+privileged deployment becomes a theft of the public door rather than a
+documented remainder.
+
+The template carries a **placeholder**, not a value:
+`AGENT_INBOUND_TOKEN=CHANGE_ME_openssl_rand_hex_32`. A published token
+would be a token every deployment that copies the template shares, so
+the template refuses to be a secret — `make check-env` refuses a `.env`
+that still holds the placeholder, and the services refuse a placeholder
+token themselves.
+
+Generate one and put it in `.env`:
+
+```bash
+openssl rand -hex 32
+```
+
+`.env` is not a shell script: `$(openssl rand -hex 32)` is **not**
+expanded there. Write the literal hex into the file — or export it in
+the shell that starts the stack
+(`AGENT_INBOUND_TOKEN=$(openssl rand -hex 32) docker compose up -d`).
+
 ### The privilege mode
 
 `AGENT_ALLOW_SUDO=1` builds the agent image with `sudo` and a
