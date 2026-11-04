@@ -2,7 +2,7 @@
 
 **For:** the agent that maintains the bot (`vaskes/llama.cpp_telegram`).
 **From:** the sandbox side (`vaskes/OpenWebUI-bash-sandbox`).
-**Code against:** sandbox tag **`v2.29.0`** (the contract below was written
+**Code against:** sandbox tag **`v2.30.0`** (the contract below was written
 against `v2.7.0`; §6 lists what changed since, and the status-code table
 in §3 is the current one).
 **Written:** 2026-10-25. **Status codes last verified:** 2026-11-03 against
@@ -431,6 +431,7 @@ know:
 | v2.27.0 | the CI gate can no longer hide a failing suite, and the lifespan test can actually fail | the door's contract did not change: the same five routes, the same status codes; nothing about the requests the door answers |
 | v2.28.0 | the agent's own code is root's, and the stack's lifecycle no longer takes the workspace's ceiling with it | the door's contract did not change: the same five routes, the same status codes; nothing about the requests the door answers |
 | v2.29.0 | the template's token separation and its workspace ceiling are on by default | the door's contract did not change: the same five routes, the same status codes; nothing about the requests the door answers |
+| v2.30.0 | the release notes count the sweep and the count is true, the deployment profile names one ceiling, and the sweep runner is in the repository | the door's contract did not change: the same five routes, the same status codes; nothing about the requests the door answers |
 
 The route list itself did not change until **v2.15.0**, which added
 `POST /files`: `POST /sessions/{id}/exec`, `GET /files`,

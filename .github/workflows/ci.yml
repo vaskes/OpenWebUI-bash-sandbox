@@ -852,12 +852,12 @@ jobs:
   mutation-checks:
     name: Mutation checks (the tripwires can still go red)
     runs-on: ubuntu-26.04
-    # The sweep is 33 scripts, and each one runs a slice of the suite
+    # The sweep is 34 scripts, and each one runs a slice of the suite
     # against a deliberately broken tree. Measured on a full sweep:
     # ~25-30 minutes. The old limit of 30 was already at the edge, and
     # a job that is killed by its own timeout leaves a MUTATION in the
     # tree — which the next script would then measure as if it were the
-    # code. The limit is raised, and the tree is checked below.
+    # code. The limit is raised, and the tree is checked by the runner.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -883,42 +883,16 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
       - name: Every mutation check must catch its mutation
         run: |
-          set -uo pipefail
-          # Each script breaks one property of the code on purpose and
-          # expects the named test to go red. A check that cannot be
-          # made red is not a check — and it rots silently: four of
-          # these patterns had drifted away from the code, so their
-          # mutations did not even apply, and the scripts were not run
-          # anywhere at all. They run here now, on every push.
-          #
-          # And the tree is checked after every script. A script that is
-          # killed between the mutation and the restore leaves the
-          # mutation behind — and the next script backs up that
-          # ALREADY MUTATED file, so one leak travels through the whole
-          # sweep and every later verdict is measured against a tree
-          # nobody wrote. Measured: a script killed under load leaves
-          # exactly that, and the symptom is a later script whose
-          # mutation "does not go red" for no reason of its own.
-          #
-          # The check is "the tree is clean", not "the tree is the same
-          # as it was before this script": the checkout starts clean, so
-          # anything different from HEAD after a script is that script's
-          # doing. Comparing before and after would miss a leak that
-          # the next script cleans up, and would cry wolf about one.
-          for script in tools/mutation-check-*.sh; do
-            echo "::group::${script}"
-            if ! PY="$(command -v python3)" bash "${script}"; then
-              echo "::error::${script} did not hold — a tripwire that cannot be made red is decoration"
-              exit 1
-            fi
-            if [ -n "$(git status --porcelain)" ]; then
-              echo "::error::${script} left the tree dirty — the next script would measure a tree nobody wrote"
-              git status --porcelain
-              git diff --stat || true
-              exit 1
-            fi
-            echo "::endgroup::"
-          done
+          # The sweep runs through tools/run-sweep.sh, which is in the
+          # repository for the same reason the tests are: the rules
+          # that keep a mutation sweep from eating uncommitted work
+          # have to run in CI, or they are only the habit of whoever
+          # typed them last. The runner refuses to start on a dirty
+          # tree, runs one script at a time, checks the tree after
+          # every script, and never restores the tree itself: a
+          # leftover mutation is a finding, not something to tidy up
+          # behind the operator's back.
+          bash tools/run-sweep.sh tools/mutation-check-*.sh
 
   secrets:
     name: Secret scan (gitleaks)

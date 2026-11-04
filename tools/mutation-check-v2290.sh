@@ -52,9 +52,9 @@ mutate .env.example \
 echo "== the ceiling is commented out again =="
 mutate .env.example \
   '
-AGENT_WORKSPACE_SIZE=1g' \
+AGENT_WORKSPACE_SIZE=4g' \
   '
-# AGENT_WORKSPACE_SIZE=1g' \
+# AGENT_WORKSPACE_SIZE=4g' \
   "$TESTS::TestTheTemplateTurnsTheKnobsOn::test_the_ceiling_is_not_commented_out" \
   "the template declares no ceiling, so the agent's check never runs"
 
@@ -92,7 +92,7 @@ mutate docs/CONFIGURATION.md \
 
 echo "== the CI comment names a stale count =="
 mutate .github/workflows/ci.yml \
-  '# The sweep is 33 scripts' \
+  '# The sweep is 34 scripts' \
   '# The sweep is 26 scripts' \
   "$TESTS::TestTheSweepCountInTheCommentIsTrue::test_the_comment_names_the_number_of_scripts_on_disk" \
   "the CI comment names a number of scripts that is not the real one"

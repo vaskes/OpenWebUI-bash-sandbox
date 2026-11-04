@@ -92,7 +92,7 @@ class TestTheMutationChecksRunInCI(unittest.TestCase):
         )
         self.assertRegex(
             _source("CONTRIBUTING.md"),
-            r"make mutation\s+# or:\s+for s in tools/mutation-check-\*\.sh",
+            r"make mutation\s+# or:\s+bash tools/run-sweep\.sh tools/mutation-check-\*\.sh",
             "the contribution guide does not say how to run the mutation checks",
         )
 

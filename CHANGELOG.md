@@ -4,6 +4,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.30.0] - 2026-11-04
+
+Three leftovers from the review of v2.29.0, closed: a number that lied,
+a ceiling that was declared in three places, and a runner that lived in
+somebody's shell.
+
+### Fixed
+
+- **The release notes count the sweep, and the count is true.** The
+  v2.29.0 notes said 32 scripts and the disk held 33 — a script had
+  been added after the sentence was written, and nothing compared the
+  two. The newest section now names the size of the sweep, and a
+  tripwire compares that number with the number of scripts on disk, so
+  the next wave cannot leave a stale count behind. The sweep is 34
+  scripts.
+- **One deployment profile, one ceiling.** The template declared 1g
+  while the Makefile, the setup script and the documentation declared
+  4g — so a deployment that copied the template got a declared ceiling
+  that did not match the filesystem it was given, and the agent refuses
+  to serve against that. The template says 4g now, the CI keeps its own
+  deliberate 1g (a throwaway filesystem on a throwaway runner), the
+  product compose files keep declaring no ceiling of their own, and
+  `docs/CONFIGURATION.md` writes the rule down: the declared ceiling
+  must equal the filesystem that was made.
+- **The sweep runner is in the repository.** The rules that keep a
+  mutation sweep from eating uncommitted work lived in the operator's
+  shell, so they could not run in CI, and the runner was one
+  `git checkout -- .` away from throwing work away. `tools/run-sweep.sh`
+  is the runner now: it refuses to start on a dirty tree, refuses to
+  start while another runner is live in the same tree, runs one script
+  at a time, checks the tree after every script, never restores the
+  tree itself, and writes its logs outside the repository. CI and
+  `make mutation` both call it, so there is one implementation of the
+  rules and not a habit in two shells.
+
+### Tests
+
+- `tests/test_release_hygiene_v2300.py` — 13 tests: the newest section
+  names the sweep's size and the size is the real one; the product
+  profile names one ceiling and the CI profile names its own; the
+  product compose declares no ceiling; the deploy rule is written down;
+  and the runner keeps every promise it makes — a dirty tree is
+  refused, a leftover mutation fails the sweep, the tree is not
+  restored behind the operator's back, the scripts run one at a time,
+  and a second runner is refused.
+- `tools/mutation-check-v2300.sh` — 11 mutations, one for each of those
+  properties, so each check can still be made red.
+
+### Changed
+
+- The CI's **Mutation checks** job and `make mutation` run the sweep
+  through `tools/run-sweep.sh` instead of a loop of their own. The
+  contribution guide says so too.
+
 ## [2.29.0] - 2026-11-04
 
 The template carries the two knobs the operator's own stands run with.
@@ -48,7 +102,7 @@ The template carries the two knobs the operator's own stands run with.
   skip-handling to prove the check can still go red.
 
 - **The CI's comment about the sweep is true again.** It said 26
-  scripts; there are 32. A tripwire now compares the number in the
+  scripts; there are 33. A tripwire now compares the number in the
   comment with the number of scripts on disk, so the next wave cannot
   leave a stale count behind.
 

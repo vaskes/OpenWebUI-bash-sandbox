@@ -35,8 +35,17 @@ checks in `tools/`. Each script breaks **one** property of the code on
 purpose and expects the **named** test to go red:
 
 ```bash
-make mutation     # or:  for s in tools/mutation-check-*.sh; do bash "$s"; done
+make mutation     # or:  bash tools/run-sweep.sh tools/mutation-check-*.sh
 ```
+
+Both go through `tools/run-sweep.sh`, which is the runner CI uses. It
+**refuses to start on a dirty tree** (a mutation sweep breaks the tree
+on purpose and puts it back, so it must run on a tree that holds
+nothing but committed work), runs **one script at a time**, checks the
+tree after **every** script, and **never restores the tree itself**: a
+leftover mutation is a finding, and the runner says what is left and
+stops. It also refuses to start while another runner is live in the
+same tree, and it writes its logs outside the repository.
 
 The point is not the mutation but the *counter-test*: a check that
 cannot be made red is decoration, and decoration rots silently. Four
