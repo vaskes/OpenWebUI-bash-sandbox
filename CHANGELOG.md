@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.31.0] - 2026-11-05
+
+The review of v2.30.0 found no blockers and two NITs. Both are closed
+here: one was a rough edge in the sweep runner, the other was a
+behaviour that was correct but not written down.
+
+### Fixed
+
+- **The runner refuses to write its logs into the tree it is checking.**
+  `OWBS_SWEEP_LOG_DIR` was used as given: pointed inside the repository,
+  the runner made the tree dirty, the sweep stopped on its own dirt, and
+  it said it had found a leftover mutation — which is not what happened.
+  The runner now says so and stops (exit **2**) before it writes
+  anything. The logs still go wherever the operator points them, as
+  long as that is outside the repository.
+- **The interpreter search is written down where the reader is.** The
+  scripts look for a python with pytest in `PATH`, and a python outside
+  it has to be named with `PY`. That was true and unwritten; the
+  contribution guide says it now, with the command.
+
+### Tests
+
+- `tests/test_release_hygiene_v2300.py` — 14 tests: the runner's
+  promises, including the new one — a log directory inside the
+  repository is refused, and nothing is written there.
+- `tools/mutation-check-v2300.sh` — 12 mutations, one for each of those
+  properties.
+- The sweep is 34 scripts: the count did not change, because the new
+  tripwire and its mutation live in files that were already there.
+
 ## [2.30.0] - 2026-11-04
 
 Three leftovers from the review of v2.29.0, closed: a number that lied,

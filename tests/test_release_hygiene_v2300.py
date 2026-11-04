@@ -232,11 +232,18 @@ class TestTheSweepRunnerLivesInTheRepo(unittest.TestCase):
             f"stub {name}",
         )
 
-    def _sweep(self, repo: pathlib.Path, *patterns: str) -> subprocess.CompletedProcess[str]:
+    def _sweep(
+        self,
+        repo: pathlib.Path,
+        *patterns: str,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         environ = dict(os.environ)
         # The logs go outside the repository: a sweep that logs into the
         # tree it is checking is a sweep that dirties it.
         environ["OWBS_SWEEP_LOG_DIR"] = str(repo.parent / "logs")
+        if env:
+            environ.update(env)
         return subprocess.run(
             ["bash", "tools/run-sweep.sh", *patterns],
             cwd=str(repo),
@@ -329,6 +336,30 @@ class TestTheSweepRunnerLivesInTheRepo(unittest.TestCase):
             result = self._sweep(repo, "tools/mutation-check-*.sh")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("the fast stub ran alone", result.stdout)
+
+    def test_the_runner_refuses_to_log_into_the_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(pathlib.Path(tmp))
+            self._stub(repo, "mutation-check-stub.sh", 'touch "ran"\n')
+            result = self._sweep(
+                repo,
+                "tools/mutation-check-stub.sh",
+                env={"OWBS_SWEEP_LOG_DIR": str(repo / "sweep-logs")},
+            )
+            self.assertEqual(
+                result.returncode,
+                2,
+                "a log directory inside the repository must be refused: "
+                f"{result.stdout}{result.stderr}",
+            )
+            self.assertFalse(
+                (repo / "ran").exists(),
+                "the sweep ran a script with its logs inside the tree",
+            )
+            self.assertFalse(
+                (repo / "sweep-logs").exists(),
+                "the runner created the log directory inside the repository",
+            )
 
     def test_a_second_runner_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

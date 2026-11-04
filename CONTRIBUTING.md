@@ -88,6 +88,17 @@ used to report ten and eleven catches for tests that never started —
 the release notes counted them as caught, and nobody noticed for a
 release.
 
+The search is limited to `PATH`. A python outside it — a virtualenv in a
+sandbox, for instance — has to be named:
+
+```bash
+PY=/path/to/venv/bin/python3 make mutation
+```
+
+Without it the sweep does not start at all: the script says `no python
+with pytest found` and exits **2**. That is the intended behaviour — a
+sweep that ran against a python without pytest would measure nothing.
+
 ## Project layout
 
 ```

@@ -62,6 +62,27 @@ if [ -n "$dirty" ]; then
 fi
 
 LOG_DIR="${OWBS_SWEEP_LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/owbs-sweep-XXXXXX")}"
+
+# The logs are written outside the repository, and the runner says so
+# out loud rather than finding out later: a log directory inside the
+# tree makes the tree dirty, and the sweep then stops on its own dirt
+# with a message about a leftover mutation, which is not what happened.
+case "$LOG_DIR" in
+    /*) log_abs="$LOG_DIR" ;;
+    *) log_abs="$PWD/$LOG_DIR" ;;
+esac
+log_abs="$(realpath -m "$log_abs" 2>/dev/null || printf '%s' "$log_abs")"
+repo_abs="$(realpath -m "$REPO_ROOT" 2>/dev/null || printf '%s' "$REPO_ROOT")"
+case "$log_abs/" in
+    "$repo_abs"/*)
+        echo "the log directory is inside the repository -- refusing to sweep" >&2
+        echo "the sweep writes its logs outside the tree it is checking: a log" >&2
+        echo "directory inside the repository makes the tree dirty, and the" >&2
+        echo "sweep would stop on its own dirt and call it a leftover mutation." >&2
+        echo "point OWBS_SWEEP_LOG_DIR somewhere outside $repo_abs" >&2
+        exit 2
+        ;;
+esac
 mkdir -p "$LOG_DIR"
 
 # The arguments are file names or globs; a glob is expanded here, so
