@@ -51,6 +51,29 @@ mutation_require_python() {
 #
 # So the script says it out loud and stops, instead of printing a green
 # line for a mutation that proved nothing.
+# A skipped test is not a green test.
+#
+# pytest exits 0 when every selected test was skipped, and the harness
+# used to read that exit code as "the test stayed green" -- so a
+# mutation whose test was SKIPPED looked exactly like a mutation whose
+# property is not pinned. Measured 2026-11-04: a sandbox without tmux
+# made the @requires_tmux tests skip, and three mutations reported
+# "the test stayed GREEN" for tests that never ran.
+#
+# The summary line is what says it: "1 skipped in 0.07s", or
+# "1212 passed, 87 skipped in 127s". A run that skipped is a run that
+# did not test anything, and it is reported as INVALID.
+mutation_run_skipped() {
+    # mutation_run_skipped <out-file>
+    local out="$1" summary
+    summary="$(grep -E '^[0-9]+ (passed|failed|error|skipped)' "$out" | tail -1)"
+    [ -n "$summary" ] || summary="$(tail -3 "$out" | tr '\n' ' ')"
+    case "$summary" in
+        *skipped*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 mutation_require_green() {
     # mutation_require_green <selector>
     local selector="$1" out rc=0
@@ -60,6 +83,15 @@ mutation_require_green() {
         echo "INVALID — the tripwire is not green on the clean tree (pytest exited $rc)."
         echo "         Every mutation below would 'go red' for a reason that has"
         echo "         nothing to do with the mutation. Fix the tree first."
+        tail -30 "$out"
+        rm -f "$out"
+        exit 2
+    fi
+    if mutation_run_skipped "$out"; then
+        echo "INVALID — the tripwire did not RUN on the clean tree: pytest skipped it."
+        echo "         A skipped test is not a green test, and a mutation against a"
+        echo "         test that never ran proves nothing. (A missing tmux is the"
+        echo "         usual reason: the @requires_tmux tests skip without it.)"
         tail -30 "$out"
         rm -f "$out"
         exit 2
@@ -156,6 +188,11 @@ mutation_run_pytest() {
         return 0
     fi
     if [ "$rc" -eq 0 ]; then
+        if mutation_run_skipped "$out"; then
+            echo "INVALID $label — the test was SKIPPED, not green: it did not run"
+            FAIL=$((FAIL+1))
+            return 2
+        fi
         echo "FAIL  $label — the test stayed GREEN under the mutation"
         FAIL=$((FAIL+1))
         return 1

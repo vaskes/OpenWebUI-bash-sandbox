@@ -33,6 +33,20 @@ The template carries the two knobs the operator's own stands run with.
   not declared — and the agent's check that refuses a workspace without
   a ceiling only runs for a deployment that declared one. It is
   declared now.
+- **A skipped test is not a green test.** The mutation harness read
+  pytest's exit code as the verdict — and pytest exits **0** when every
+  selected test was *skipped*. A sandbox without `tmux` made the
+  `@requires_tmux` tests skip, and the harness reported "the test
+  stayed GREEN" for tests that never ran: the property looked unpinned
+  when in fact the environment had swallowed the test. The harness now
+  reads pytest's summary: a run that skipped is **INVALID** — the
+  preflight stops the sweep before it starts, and the verdict of a
+  mutation says the test was skipped instead of calling it green.
+  `tests/test_mutation_scripts_skip_v2290.py` runs a real mutation
+  script against a python whose pytest skips, and
+  `tools/mutation-check-v2290-harness.sh` breaks the harness's own
+  skip-handling to prove the check can still go red.
+
 - **The CI's comment about the sweep is true again.** It said 26
   scripts; there are 32. A tripwire now compares the number in the
   comment with the number of scripts on disk, so the next wave cannot
