@@ -124,8 +124,7 @@ class TestASkippedTestIsNotAGreenTest(unittest.TestCase):
         self.assertIn(
             "SKIPPED",
             output,
-            "the verdict must say the test was skipped, not that it stayed green:\n"
-            + output,
+            "the verdict must say the test was skipped, not that it stayed green:\n" + output,
         )
         self.assertNotEqual(
             result.returncode,
@@ -148,8 +147,7 @@ class TestASkippedTestIsNotAGreenTest(unittest.TestCase):
             "the preflight does not consult the summary",
         )
         self.assertIn(
-            'if mutation_run_skipped "$out"; then\n'
-            '            echo "INVALID $label',
+            'if mutation_run_skipped "$out"; then\n            echo "INVALID $label',
             text,
             "the verdict of a mutation does not consult the summary",
         )
