@@ -80,6 +80,13 @@ mutate tools/run-sweep.sh \
   "$TESTS::TestTheSweepRunnerLivesInTheRepo::test_a_dirty_tree_is_refused" \
   "the runner sweeps a tree that holds uncommitted work"
 
+echo "== the runner logs into the tree it is checking =="
+mutate tools/run-sweep.sh \
+  '    "$repo_abs"/*)' \
+  '    "$repo_abs"/never)' \
+  "$TESTS::TestTheSweepRunnerLivesInTheRepo::test_the_runner_refuses_to_log_into_the_tree" \
+  "the runner writes its logs into the repository it is checking"
+
 echo "== the runner ignores a leftover mutation =="
 mutate tools/run-sweep.sh \
   '        status=1' \
